@@ -16,10 +16,6 @@ decision and document it in the PR description.
 
 struct IssueProcessor: Sendable {
     let workspace: WorkspaceConfig
-    private let git = "/opt/homebrew/bin/git"
-    private let tmux = "/opt/homebrew/bin/tmux"
-    private let make = "/usr/bin/make"
-    private let ln = "/bin/ln"
 
     func process(issue: LinearIssue) async throws -> Bool {
         let branchName = issue.branchName
@@ -52,8 +48,8 @@ struct IssueProcessor: Sendable {
             return
         }
 
-        _ = try await Shell.run(
-            git,
+        try await Shell.run(
+            command: "git",
             arguments: ["-C", repoPath, "worktree", "add", worktreePath, "-b", branchName],
             workingDirectory: repoPath
         )
@@ -85,7 +81,7 @@ struct IssueProcessor: Sendable {
             return false
         }
         do {
-            _ = try await Shell.run(make, arguments: ["init"], workingDirectory: worktreePath)
+            try await Shell.run(command: "make", arguments: ["init"], workingDirectory: worktreePath)
             log("  make init succeeded")
             return false
         } catch {
@@ -102,8 +98,8 @@ struct IssueProcessor: Sendable {
         let escapedPrompt = autonomousPrompt.replacingOccurrences(of: "'", with: "'\\''")
         let command = "\(claudePath) --dangerously-skip-permissions '\(escapedPrompt)'"
 
-        try Shell.runDetached(
-            tmux,
+        try Shell.runDetachedCommand(
+            "tmux",
             arguments: [
                 "new-session", "-d",
                 "-s", sessionName,
@@ -125,19 +121,7 @@ struct IssueProcessor: Sendable {
         return prefix + String(sanitized.prefix(maxLen))
     }
 
-    private func claudeExecutablePath() -> String {
-        // Prefer Homebrew location; fall back to PATH-resolved location
-        let candidates = [
-            "/opt/homebrew/bin/claude",
-            "/usr/local/bin/claude",
-        ]
-        for path in candidates {
-            if FileManager.default.fileExists(atPath: path) {
-                return path
-            }
-        }
-        return "claude"
-    }
+    private func claudeExecutablePath() -> String { "claude" }
 
     private func log(_ message: String) {
         let timestamp = ISO8601DateFormatter().string(from: Date())

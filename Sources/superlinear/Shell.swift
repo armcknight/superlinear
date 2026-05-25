@@ -6,6 +6,27 @@ enum ShellError: Error {
 }
 
 enum Shell {
+    // Resolve `command` via PATH (using /usr/bin/env) rather than requiring an absolute path.
+    @discardableResult
+    static func run(
+        command: String,
+        arguments: [String],
+        workingDirectory: String? = nil,
+        environment: [String: String]? = nil
+    ) async throws -> String {
+        try await run("/usr/bin/env", arguments: [command] + arguments,
+                      workingDirectory: workingDirectory, environment: environment)
+    }
+
+    static func runDetachedCommand(
+        _ command: String,
+        arguments: [String],
+        workingDirectory: String?
+    ) throws {
+        try runDetached("/usr/bin/env", arguments: [command] + arguments,
+                        workingDirectory: workingDirectory)
+    }
+
     static func run(
         _ executable: String,
         arguments: [String],
