@@ -36,7 +36,7 @@ config:
 	else \
 		echo "Config already exists at $(CONFIG)"; \
 	fi
-	$${EDITOR:-vi} $(CONFIG)
+	$${EDITOR:-emacs} $(CONFIG)
 
 status:
 	@launchctl list | grep $(LABEL) || echo "Not running"
