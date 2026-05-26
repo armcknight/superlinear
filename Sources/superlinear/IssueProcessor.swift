@@ -102,6 +102,9 @@ struct IssueProcessor: Sendable {
         // tee logs output so it's readable after the session closes
         let command = "claude -p --dangerously-skip-permissions < '\(promptFile)' 2>&1 | tee '\(logPath)'"
 
+        // Kill any existing session with this name (e.g. after a state reset)
+        _ = try? await Shell.run(command: "tmux", arguments: ["kill-session", "-t", sessionName])
+
         try Shell.runDetachedCommand(
             "tmux",
             arguments: [
