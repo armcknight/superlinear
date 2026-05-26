@@ -17,106 +17,27 @@ decision and document it in the PR description.
 struct IssueProcessor: Sendable {
     let workspace: WorkspaceConfig
 
-    func process(issue: LinearIssue) async throws -> Bool {
-        let branchName = issue.branchName
+    func process(issue: LinearIssue) async throws {
         let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
-        let worktreePath = (repoPath as NSString).appendingPathComponent("worktrees/\(branchName)")
-
-        log("Processing issue \(issue.identifier): \(issue.title)")
-        log("  Branch: \(branchName)")
-        log("  Worktree: \(worktreePath)")
-
-        try await createWorktree(branchName: branchName, repoPath: repoPath, worktreePath: worktreePath)
-        try symlinkEnvFiles(repoPath: repoPath, worktreePath: worktreePath)
-        let makeInitFailed = await runMakeInit(worktreePath: worktreePath)
-        try await launchClaudeSession(issue: issue, branchName: branchName, worktreePath: worktreePath)
-
-        return makeInitFailed
-    }
-
-    private func createWorktree(branchName: String, repoPath: String, worktreePath: String) async throws {
-        // Create parent directory for nested branch paths (e.g. linear/arm-123-foo)
-        let worktreeParent = (worktreePath as NSString).deletingLastPathComponent
-        try FileManager.default.createDirectory(
-            atPath: worktreeParent,
-            withIntermediateDirectories: true
-        )
-
-        // Check if worktree already exists
-        if FileManager.default.fileExists(atPath: worktreePath) {
-            log("  Worktree already exists, reusing")
-            return
-        }
-
-        try await Shell.run(
-            command: "git",
-            arguments: ["-C", repoPath, "worktree", "add", worktreePath, "-b", branchName],
-            workingDirectory: repoPath
-        )
-        log("  Worktree created")
-    }
-
-    private func symlinkEnvFiles(repoPath: String, worktreePath: String) throws {
-        let candidates = [".env", ".envrc", "fastlane/.env"]
-        for relative in candidates {
-            let source = (repoPath as NSString).appendingPathComponent(relative)
-            let dest = (worktreePath as NSString).appendingPathComponent(relative)
-            guard FileManager.default.fileExists(atPath: source) else { continue }
-
-            // Create parent dir for nested paths (e.g. fastlane/.env)
-            let destParent = (dest as NSString).deletingLastPathComponent
-            try? FileManager.default.createDirectory(atPath: destParent, withIntermediateDirectories: true)
-
-            // Remove existing link if present
-            try? FileManager.default.removeItem(atPath: dest)
-            try FileManager.default.createSymbolicLink(atPath: dest, withDestinationPath: source)
-        }
-        log("  Environment files symlinked")
-    }
-
-    private func runMakeInit(worktreePath: String) async -> Bool {
-        let makefile = (worktreePath as NSString).appendingPathComponent("Makefile")
-        guard FileManager.default.fileExists(atPath: makefile) else {
-            log("  No Makefile found, skipping make init")
-            return false
-        }
-        do {
-            try await Shell.run(command: "make", arguments: ["init"], workingDirectory: worktreePath)
-            log("  make init succeeded")
-            return false
-        } catch {
-            log("  make init failed: \(error) — continuing anyway")
-            return true
-        }
-    }
-
-    private func launchClaudeSession(issue: LinearIssue, branchName: String, worktreePath: String) async throws {
-        let sessionName = tmuxSessionName(for: branchName)
+        let promptFile = "/tmp/superlinear-\(issue.identifier).prompt"
         let logPath = issueLogPath(for: issue.identifier)
 
-        // Write prompt to a file to avoid quoting/newline issues when embedding in a shell command
-        let promptFile = "/tmp/superlinear-\(sessionName).prompt"
+        log("Processing issue \(issue.identifier): \(issue.title)")
+        log("  Branch: \(issue.branchName)")
+        log("  Log: tail -f \(logPath)")
+
         try autonomousPrompt.write(toFile: promptFile, atomically: true, encoding: .utf8)
 
-        // -p runs headless (skips the --dangerously-skip-permissions confirmation dialog)
-        // tee logs output so it's readable after the session closes
-        let command = "claude -p --dangerously-skip-permissions < '\(promptFile)' 2>&1 | tee '\(logPath)'"
-
-        // Kill any existing session with this name (e.g. after a state reset)
-        _ = try? await Shell.run(command: "tmux", arguments: ["kill-session", "-t", sessionName])
-
-        try Shell.runDetachedCommand(
-            "tmux",
+        try await Shell.run(
+            command: "fish",
             arguments: [
-                "new-session", "-d",
-                "-s", sessionName,
-                "-c", worktreePath,
-                command
+                "-c",
+                "work start --headless --prompt-file '\(promptFile)' --log-file '\(logPath)' '\(issue.branchName)'"
             ],
-            workingDirectory: worktreePath
+            workingDirectory: repoPath
         )
-        log("  Claude session started: tmux attach -t \(sessionName)")
-        log("  Log: tail -f \(logPath)")
+
+        log("  Claude completed for \(issue.identifier)")
     }
 
     private func issueLogPath(for identifier: String) -> String {
@@ -125,18 +46,6 @@ struct IssueProcessor: Sendable {
         try? FileManager.default.createDirectory(atPath: logsDir, withIntermediateDirectories: true)
         return (logsDir as NSString).appendingPathComponent("\(identifier).log")
     }
-
-    private func tmuxSessionName(for branchName: String) -> String {
-        let sanitized = branchName
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ".", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
-        let prefix = "superlinear_"
-        let maxLen = 50 - prefix.count
-        return prefix + String(sanitized.prefix(maxLen))
-    }
-
-    private func claudeExecutablePath() -> String { "claude" }
 
     private func log(_ message: String) {
         let timestamp = ISO8601DateFormatter().string(from: Date())

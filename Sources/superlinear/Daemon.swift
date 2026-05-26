@@ -51,11 +51,8 @@ actor Daemon {
         issues.filter { !state.isProcessed($0.id, workspace: workspace) }
     }
 
-    func markProcessed(_ issueId: String, workspace: String, makeInitFailed: Bool) {
+    func markProcessed(_ issueId: String, workspace: String) {
         state.markProcessed(issueId, workspace: workspace)
-        if makeInitFailed {
-            state.markMakeInitFailed(issueId, workspace: workspace)
-        }
         try? state.save()
     }
 

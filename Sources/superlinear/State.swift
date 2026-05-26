@@ -3,12 +3,10 @@ import Foundation
 struct WorkspaceState: Codable, Sendable {
     var processedIssueIds: Set<String>
     var lastPollTimestamp: Date
-    var makeInitFailedIds: Set<String>
 
     init() {
         processedIssueIds = []
         lastPollTimestamp = .distantPast
-        makeInitFailedIds = []
     }
 }
 
@@ -44,10 +42,6 @@ struct State: Codable, Sendable {
 
     mutating func markProcessed(_ issueId: String, workspace: String) {
         workspaces[workspace, default: WorkspaceState()].processedIssueIds.insert(issueId)
-    }
-
-    mutating func markMakeInitFailed(_ issueId: String, workspace: String) {
-        workspaces[workspace, default: WorkspaceState()].makeInitFailedIds.insert(issueId)
     }
 
     mutating func updateLastPoll(_ date: Date, workspace: String) {

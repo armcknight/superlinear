@@ -26,8 +26,8 @@ struct WorkspaceProcessor: Sendable {
             for issue in newIssues {
                 group.addTask {
                     do {
-                        let makeInitFailed = try await processor.process(issue: issue)
-                        await self.daemon.markProcessed(issue.id, workspace: self.workspace.name, makeInitFailed: makeInitFailed)
+                        try await processor.process(issue: issue)
+                        await self.daemon.markProcessed(issue.id, workspace: self.workspace.name)
                     } catch {
                         self.log("Error processing issue \(issue.identifier): \(error)")
                     }
