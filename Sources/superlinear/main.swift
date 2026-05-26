@@ -10,6 +10,7 @@ let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 sigterm.setEventHandler {
     print("[superlinear] Received SIGTERM, shutting down...")
     daemonTask?.cancel()
+    exit(0)
 }
 sigterm.resume()
 
@@ -17,6 +18,7 @@ let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
 sigint.setEventHandler {
     print("[superlinear] Received SIGINT, shutting down...")
     daemonTask?.cancel()
+    exit(0)
 }
 sigint.resume()
 
