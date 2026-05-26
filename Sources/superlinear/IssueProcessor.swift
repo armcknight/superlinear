@@ -92,11 +92,15 @@ struct IssueProcessor: Sendable {
 
     private func launchClaudeSession(issue: LinearIssue, branchName: String, worktreePath: String) throws {
         let sessionName = tmuxSessionName(for: branchName)
-        let claudePath = claudeExecutablePath()
+        let logPath = issueLogPath(for: issue.identifier)
 
-        // Shell-escape the prompt for single-quoted shell string
-        let escapedPrompt = autonomousPrompt.replacingOccurrences(of: "'", with: "'\\''")
-        let command = "\(claudePath) --dangerously-skip-permissions '\(escapedPrompt)'"
+        // Write prompt to a file to avoid quoting/newline issues when embedding in a shell command
+        let promptFile = "/tmp/superlinear-\(sessionName).prompt"
+        try autonomousPrompt.write(toFile: promptFile, atomically: true, encoding: .utf8)
+
+        // -p runs headless (skips the --dangerously-skip-permissions confirmation dialog)
+        // tee logs output so it's readable after the session closes
+        let command = "claude -p --dangerously-skip-permissions < '\(promptFile)' 2>&1 | tee '\(logPath)'"
 
         try Shell.runDetachedCommand(
             "tmux",
@@ -109,6 +113,14 @@ struct IssueProcessor: Sendable {
             workingDirectory: worktreePath
         )
         log("  Claude session started: tmux attach -t \(sessionName)")
+        log("  Log: tail -f \(logPath)")
+    }
+
+    private func issueLogPath(for identifier: String) -> String {
+        let logsDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/share/superlinear/logs").path
+        try? FileManager.default.createDirectory(atPath: logsDir, withIntermediateDirectories: true)
+        return (logsDir as NSString).appendingPathComponent("\(identifier).log")
     }
 
     private func tmuxSessionName(for branchName: String) -> String {
