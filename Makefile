@@ -4,9 +4,11 @@ PLIST_SRC     = LaunchAgents/com.armcknight.superlinear.plist
 PLIST_DEST    = $(HOME)/Library/LaunchAgents/com.armcknight.superlinear.plist
 LABEL         = com.armcknight.superlinear
 LOG           = $(HOME)/.local/share/superlinear/daemon.log
+STATE         = $(HOME)/.local/share/superlinear/state.json
+LOGS_DIR      = $(HOME)/.local/share/superlinear/logs
 CONFIG        = $(HOME)/.config/superlinear/config.json
 
-.PHONY: build install load unload reload logs config status
+.PHONY: build install load unload reload logs config status reset
 
 build:
 	swift build -c release
@@ -37,6 +39,12 @@ config:
 		echo "Config already exists at $(CONFIG)"; \
 	fi
 	$${EDITOR:-emacs} $(CONFIG)
+
+reset:
+	rm -f $(STATE)
+	rm -f $(LOGS_DIR)/*.log
+	-tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^superlinear_' | xargs -I{} tmux kill-session -t {}
+	@echo "State, logs, and tmux sessions cleared. Daemon will reprocess all issues on next poll."
 
 status:
 	@launchctl list | grep $(LABEL) || echo "Not running"
