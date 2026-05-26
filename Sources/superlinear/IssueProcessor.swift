@@ -29,7 +29,7 @@ struct IssueProcessor: Sendable {
         try await createWorktree(branchName: branchName, repoPath: repoPath, worktreePath: worktreePath)
         try symlinkEnvFiles(repoPath: repoPath, worktreePath: worktreePath)
         let makeInitFailed = await runMakeInit(worktreePath: worktreePath)
-        try launchClaudeSession(issue: issue, branchName: branchName, worktreePath: worktreePath)
+        try await launchClaudeSession(issue: issue, branchName: branchName, worktreePath: worktreePath)
 
         return makeInitFailed
     }
@@ -90,7 +90,7 @@ struct IssueProcessor: Sendable {
         }
     }
 
-    private func launchClaudeSession(issue: LinearIssue, branchName: String, worktreePath: String) throws {
+    private func launchClaudeSession(issue: LinearIssue, branchName: String, worktreePath: String) async throws {
         let sessionName = tmuxSessionName(for: branchName)
         let logPath = issueLogPath(for: issue.identifier)
 
