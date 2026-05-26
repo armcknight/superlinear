@@ -24,7 +24,7 @@ struct IssueProcessor: Sendable {
 
         log("Processing issue \(issue.identifier): \(issue.title)")
         log("  Branch: \(issue.branchName)")
-        log("  Log: tail -f \(logPath)")
+        log("  Log: \(logPath)")
 
         try autonomousPrompt.write(toFile: promptFile, atomically: true, encoding: .utf8)
 
