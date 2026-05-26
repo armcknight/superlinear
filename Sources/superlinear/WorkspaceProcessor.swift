@@ -22,12 +22,16 @@ struct WorkspaceProcessor: Sendable {
         }
 
         let processor = IssueProcessor(workspace: workspace)
-        for issue in newIssues {
-            do {
-                let makeInitFailed = try await processor.process(issue: issue)
-                await daemon.markProcessed(issue.id, workspace: workspace.name, makeInitFailed: makeInitFailed)
-            } catch {
-                log("Error processing issue \(issue.identifier): \(error)")
+        await withTaskGroup(of: Void.self) { group in
+            for issue in newIssues {
+                group.addTask {
+                    do {
+                        let makeInitFailed = try await processor.process(issue: issue)
+                        await self.daemon.markProcessed(issue.id, workspace: self.workspace.name, makeInitFailed: makeInitFailed)
+                    } catch {
+                        self.log("Error processing issue \(issue.identifier): \(error)")
+                    }
+                }
             }
         }
 
