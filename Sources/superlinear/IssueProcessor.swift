@@ -8,7 +8,7 @@ Your task:
 1. Run /start to read the issue details, create a work plan, and set the issue to "In Progress".
 2. Implement all the changes needed to complete the issue, following the plan from /start.
 3. When implementation is complete, run /commit to stage and commit your changes.
-4. Run /pr to open a pull request, monitor CI until it passes, and address any review comments.
+4. Run /pr --autonomous to open a pull request without opening a browser, monitor CI until it passes, and address any review comments.
 
 Work autonomously. Do not pause to ask questions. If you encounter ambiguity, make a reasonable \
 decision and document it in the PR description.
