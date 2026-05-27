@@ -37,6 +37,7 @@ Supply the rest yourself:
 - Swift 6 toolchain, from Xcode
 - A Linear API key
 - The [`claude-armcknight` plugin](https://github.com/armcknight/claude-armcknight), which Homebrew cannot install — see [External dependencies](#external-dependencies)
+- Target repositories with a `make init` target and a `CLAUDE.md` describing the project
 
 `make init` trusts the two third-party taps in the Brewfile before bundling. Homebrew refuses to load formulae from untrusted taps, and `brew bundle` aborts on the first one it meets without installing anything at all. `work start` runs `make init` in every new worktree, so it is written to be idempotent.
 
@@ -53,7 +54,7 @@ The `claude-armcknight` plugin also needs `linctl`, `direnv` and `gh` to talk to
 
 To substitute your own tooling, supply a `work` function with the same interface, or edit the prompt in `Sources/superlinear/IssueProcessor.swift`, which is where the command names live.
 
-## Install
+## Installation
 
 From the Homebrew tap:
 
@@ -74,20 +75,13 @@ make load     # build, install into ~/.local/bin, then register the agent
 
 The agent is generated rather than checked in because launchd expands neither `~` nor `$HOME` inside a plist — every path in it has to be absolute, so no single file can serve every machine. The cask cannot do this either: Homebrew has no launchd support for casks, and the `service` stanza installs to `~/Library/Services`, which is the Services menu, not an agent.
 
-## Releasing
-
-```sh
-make patch      # or minor / major — bumps Sources/superlinear/Version.swift
-make deploy     # tag and push, which ships the cask
-```
-
-The tag triggers the release workflow, which checks the tag against the version in source, builds, Developer ID signs and notarizes, then bumps `Casks/superlinear.rb` in the tap. `make deploy-beta` cuts a release candidate into the `superlinear-rc` cask instead.
-
-Signing is on because launchd starts this binary, not your shell. An unsigned CLI is fine when a shell runs it; a quarantined binary launched by launchd is not.
-
 ## Configuration
 
-`~/.config/superlinear/config.json`:
+```sh
+make config
+```
+
+Creates `~/.config/superlinear/config.json` from the included example and opens it in your editor. The config is never tracked in git — keep your API keys local.
 
 ```json
 {
@@ -112,6 +106,17 @@ Signing is on because launchd starts this binary, not your shell. An unsigned CL
 | `pollIntervalSeconds` | no | Seconds between polls. Defaults to `60`. |
 
 Each workspace entry is one Linear-account-to-repository pairing. List several to watch more than one repository.
+
+## Releasing
+
+```sh
+make patch      # or minor / major — bumps Sources/superlinear/Version.swift
+make deploy     # tag and push, which ships the cask
+```
+
+The tag triggers the release workflow, which checks the tag against the version in source, builds, Developer ID signs and notarizes, then bumps `Casks/superlinear.rb` in the tap. `make deploy-beta` cuts a release candidate into the `superlinear-rc` cask instead.
+
+Signing is on because launchd starts this binary, not your shell. An unsigned CLI is fine when a shell runs it; a quarantined binary launched by launchd is not.
 
 ## Make targets
 

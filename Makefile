@@ -66,9 +66,9 @@ logs:
 ## config: create the example config if absent, then open it
 config:
 	@if [ ! -f $(CONFIG) ]; then \
-		echo "Creating example config at $(CONFIG)"; \
+		echo "Creating config from example at $(CONFIG)"; \
 		mkdir -p $(HOME)/.config/superlinear; \
-		echo '{\n  "workspaces": [\n    {\n      "name": "my-workspace",\n      "apiKey": "lin_api_YOUR_KEY_HERE",\n      "repoPath": "~/Code/my-repo",\n      "teamIds": [],\n      "pollIntervalSeconds": 60\n    }\n  ]\n}' > $(CONFIG); \
+		cp config.example.json $(CONFIG); \
 	else \
 		echo "Config already exists at $(CONFIG)"; \
 	fi

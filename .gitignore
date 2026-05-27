@@ -1,4 +1,5 @@
 /.build/
 /.swiftpm/
+/config.json
 **/xcuserdata/
 .DS_Store
