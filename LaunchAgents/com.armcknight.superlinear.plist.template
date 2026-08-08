@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/andrewmcknight/.local/bin/superlinear</string>
+        <string>__HOME__/.local/bin/superlinear</string>
     </array>
 
     <key>EnvironmentVariables</key>
@@ -15,7 +15,7 @@
         <key>PATH</key>
         <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
-        <string>/Users/andrewmcknight</string>
+        <string>__HOME__</string>
     </dict>
 
     <key>RunAtLoad</key>
@@ -25,13 +25,13 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/andrewmcknight/.local/share/superlinear/daemon.log</string>
+    <string>__HOME__/.local/share/superlinear/daemon.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/andrewmcknight/.local/share/superlinear/daemon.log</string>
+    <string>__HOME__/.local/share/superlinear/daemon.log</string>
 
     <key>WorkingDirectory</key>
-    <string>/Users/andrewmcknight</string>
+    <string>__HOME__</string>
 
     <key>ThrottleInterval</key>
     <integer>30</integer>

@@ -1,6 +1,6 @@
 BINARY        = .build/release/superlinear
 INSTALL_PATH  = $(HOME)/.local/bin/superlinear
-PLIST_SRC     = LaunchAgents/com.armcknight.superlinear.plist
+PLIST_SRC     = LaunchAgents/com.armcknight.superlinear.plist.template
 PLIST_DEST    = $(HOME)/Library/LaunchAgents/com.armcknight.superlinear.plist
 LABEL         = com.armcknight.superlinear
 LOG           = $(HOME)/.local/share/superlinear/daemon.log
@@ -18,7 +18,8 @@ install: build
 	cp $(BINARY) $(INSTALL_PATH)
 
 load: install
-	cp $(PLIST_SRC) $(PLIST_DEST)
+	mkdir -p $(HOME)/Library/LaunchAgents
+	sed 's|__HOME__|$(HOME)|g' $(PLIST_SRC) > $(PLIST_DEST)
 	launchctl load -w $(PLIST_DEST)
 	@echo "Loaded. Check logs with: make logs"
 
