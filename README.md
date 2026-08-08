@@ -35,7 +35,7 @@ Branch names come from Linear's own `branchName` field, so the branch matches wh
 - [Claude Code](https://claude.com/claude-code) (`claude` on your `PATH`)
 - A Linear API key
 - `tmux`, if you want `make reset` to clean up leftover sessions
-- [workr](https://github.com/armcknight/workr) and the [`workflow` plugin](https://github.com/armcknight/claude-plugins), covered below
+- [workr](https://github.com/armcknight/workr) and the [`claude-armcknight` plugin](https://github.com/armcknight/claude-armcknight), covered below
 
 ### External dependencies
 
@@ -44,13 +44,13 @@ The daemon does the polling. Everything after that — the worktree, and the wor
 | Dependency | Provides | Install |
 | --- | --- | --- |
 | [workr](https://github.com/armcknight/workr) | `work start --headless --prompt-file <path> --log-file <path> <branch>`, which creates the worktree, prepares it, and pipes the prompt into `claude -p`. | `brew install --cask armcknight/tools/work` |
-| [claude-plugins](https://github.com/armcknight/claude-plugins) | The `/start`, `/commit` and `/pr` slash commands the prompt drives, as the `workflow` plugin. | `claude plugin marketplace add armcknight/claude-plugins` then `claude plugin install workflow@armcknight` |
+| [claude-armcknight](https://github.com/armcknight/claude-armcknight) | The `start`, `commit` and `pr` slash commands the prompt drives. | `claude plugin marketplace add armcknight/claude-armcknight` then `claude plugin install claude-armcknight@armcknight` |
 
-The `workflow` plugin also needs `linctl`, `direnv` and `gh` to talk to Linear and GitHub. Its README lists them, with a Brewfile.
+The `claude-armcknight` plugin also needs `linctl`, `direnv` and `gh` to talk to Linear and GitHub. Its README lists them, with a Brewfile.
 
 To substitute your own tooling, supply a `work` function with the same interface, or edit the command string in `Sources/superlinear/IssueProcessor.swift`.
 
-**Known gap:** the prompt in `IssueProcessor.swift` still names the commands `/start`, `/commit` and `/pr --autonomous`. Plugin commands are namespaced, so with the plugin installed these are `/workflow:start`, `/workflow:commit` and `/workflow:pr --autonomous`. Until the prompt is updated, the agent only finds them if you also keep unnamespaced copies in `~/.claude/commands/`.
+**Known gap:** the prompt in `IssueProcessor.swift` still names the commands `/start`, `/commit` and `/pr --autonomous`. Plugin commands are namespaced, so with the plugin installed these are `/claude-armcknight:start`, `/claude-armcknight:commit` and `/claude-armcknight:pr --autonomous`. Until the prompt is updated, the agent only finds them if you also keep unnamespaced copies in `~/.claude/commands/`.
 
 ## Install
 
