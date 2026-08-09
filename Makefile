@@ -7,8 +7,22 @@ LOG           = $(HOME)/.local/share/superlinear/daemon.log
 STATE         = $(HOME)/.local/share/superlinear/state.json
 LOGS_DIR      = $(HOME)/.local/share/superlinear/logs
 CONFIG        = $(HOME)/.config/superlinear/config.json
+BREWFILE      = Brewfile
+# Third-party taps in the Brewfile. Homebrew refuses to load formulae from
+# untrusted taps, and brew bundle aborts on the first one without installing
+# anything, so these are trusted before the bundle runs.
+UNTRUSTED_TAPS = dorkitude/linctl armcknight/tools
 
-.PHONY: build install load unload reload logs config status reset
+.PHONY: init build install load unload reload logs config status reset
+
+# Run by `work start` in each new worktree, so it must stay idempotent.
+init:
+	@command -v brew >/dev/null 2>&1 || { echo "Homebrew is required: https://brew.sh"; exit 1; }
+	@for tap in $(UNTRUSTED_TAPS); do \
+		echo "Trusting tap $$tap"; \
+		brew trust $$tap; \
+	done
+	brew bundle --file=$(BREWFILE)
 
 build:
 	swift build -c release

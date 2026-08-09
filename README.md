@@ -29,13 +29,16 @@ Branch names come from Linear's own `branchName` field, so the branch matches wh
 
 ## Requirements
 
+`make init` installs everything Homebrew can provide — fish, tmux, Claude Code, workr, and the `linctl`, `direnv` and `gh` that the agent's slash commands need. See the [Brewfile](Brewfile).
+
+Supply the rest yourself:
+
 - macOS 14 or later
-- Swift 6 toolchain
-- [fish](https://fishshell.com) shell
-- [Claude Code](https://claude.com/claude-code) (`claude` on your `PATH`)
+- Swift 6 toolchain, from Xcode
 - A Linear API key
-- `tmux`, if you want `make reset` to clean up leftover sessions
-- [workr](https://github.com/armcknight/workr) and the [`claude-armcknight` plugin](https://github.com/armcknight/claude-armcknight), covered below
+- The [`claude-armcknight` plugin](https://github.com/armcknight/claude-armcknight), which Homebrew cannot install — see [External dependencies](#external-dependencies)
+
+`make init` trusts the two third-party taps in the Brewfile before bundling. Homebrew refuses to load formulae from untrusted taps, and `brew bundle` aborts on the first one it meets without installing anything at all. `work start` runs `make init` in every new worktree, so it is written to be idempotent.
 
 ### External dependencies
 
@@ -53,6 +56,7 @@ To substitute your own tooling, supply a `work` function with the same interface
 ## Install
 
 ```sh
+make init     # trust the third-party taps, then install the Brewfile
 make config   # write an example config, then open it in $EDITOR
 make load     # build, install, render the LaunchAgent, and start it
 ```
@@ -91,6 +95,7 @@ Each workspace entry is one Linear-account-to-repository pairing. List several t
 
 | Target | Effect |
 | --- | --- |
+| `init` | Trust the third-party taps, then install the [Brewfile](Brewfile). Run by `work start` in each new worktree, so it is idempotent. |
 | `build` | Build the release binary. |
 | `install` | Build, then copy the binary to `~/.local/bin`. |
 | `load` | Install, render the LaunchAgent, and start it. |
