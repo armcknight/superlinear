@@ -23,7 +23,7 @@ This is a personal tool, published as a reference. It is opinionated about how w
    This creates a worktree at `worktrees/<branch>`, runs `make init`, and pipes the prompt into `claude -p`.
 6. The issue ID is written to the state file, which is saved atomically.
 
-The prompt instructs the agent to run `/start`, implement the change, run `/commit`, then run `/pr --autonomous` to open a PR and monitor CI. The agent is told not to pause for confirmation.
+The prompt instructs the agent to run `/claude-armcknight:start`, implement the change, run `/claude-armcknight:commit`, then run `/claude-armcknight:pr --autonomous` to open a PR and monitor CI. The agent is told not to pause for confirmation.
 
 Branch names come from Linear's own `branchName` field, so the branch matches what the Linear UI shows and Linear links the PR to the issue automatically.
 
@@ -48,9 +48,7 @@ The daemon does the polling. Everything after that — the worktree, and the wor
 
 The `claude-armcknight` plugin also needs `linctl`, `direnv` and `gh` to talk to Linear and GitHub. Its README lists them, with a Brewfile.
 
-To substitute your own tooling, supply a `work` function with the same interface, or edit the command string in `Sources/superlinear/IssueProcessor.swift`.
-
-**Known gap:** the prompt in `IssueProcessor.swift` still names the commands `/start`, `/commit` and `/pr --autonomous`. Plugin commands are namespaced, so with the plugin installed these are `/claude-armcknight:start`, `/claude-armcknight:commit` and `/claude-armcknight:pr --autonomous`. Until the prompt is updated, the agent only finds them if you also keep unnamespaced copies in `~/.claude/commands/`.
+To substitute your own tooling, supply a `work` function with the same interface, or edit the prompt in `Sources/superlinear/IssueProcessor.swift`, which is where the command names live.
 
 ## Install
 
