@@ -95,16 +95,10 @@ minor:
 major:
 	vrsn major -f $(VERSION_FILE) -k $(VRSN_KEY) --commit
 
-## deploy: tag and push the current version, shipping the stable cask
+## deploy: migrate the changelog, tag, and push the release (ships the stable cask)
 deploy:
-	@VERSION=$$(vrsn -r -f $(VERSION_FILE) -k $(VRSN_KEY)) && \
-	echo "Tagging $$VERSION..." && \
-	git tag -a "$$VERSION" -m "$$VERSION" && \
-	git push && git push origin "$$VERSION"
+	prepare-release --file $(VERSION_FILE) --key $(VRSN_KEY) --push
 
-## deploy-beta: same, but cut a release candidate
+## deploy-beta: same, but cut a release candidate (ships the -rc cask)
 deploy-beta:
-	@VERSION=$$(vrsn -r -f $(VERSION_FILE) -k $(VRSN_KEY)) && \
-	echo "Tagging $$VERSION-rc.1..." && \
-	git tag -a "$$VERSION-rc.1" -m "$$VERSION-rc.1" && \
-	git push && git push origin "$$VERSION-rc.1"
+	prepare-release rc --file $(VERSION_FILE) --key $(VRSN_KEY) --push
