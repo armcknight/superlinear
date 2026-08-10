@@ -7,7 +7,9 @@ name: release
 #
 # Signing is on because launchd, not the user's shell, starts this binary. An
 # unsigned CLI is fine when a shell runs it, but a quarantined binary launched
-# by launchd is subject to the Gatekeeper check a shell invocation skips.
+# by launchd is subject to the Gatekeeper check a shell invocation skips. The
+# Developer ID certificate comes from the fastlane match repo (readonly), so the
+# release needs the MATCH_PASSWORD + MATCH_DEPLOY_KEY secrets (plus NOTARY_*).
 #
 # The cask installs the binary. It does not set up the launchd agent — casks
 # have no launchd support at all, and the `service` stanza installs to
@@ -22,7 +24,7 @@ on:
 
 jobs:
   release:
-    uses: armcknight/workflows/.github/workflows/swiftpm-cask-release.yml@main
+    uses: armcknight/workflows/.github/workflows/swiftpm-cask-release.yml@1
     secrets: inherit
     with:
       cask-name: superlinear
@@ -30,3 +32,5 @@ jobs:
       version-file: Sources/superlinear/Version.swift
       version-regex: '.*static let version = "([^"]+)".*'
       sign: true
+      match-git-url: git@github.com:armcknight/fastlane-match.git
+      team-id: 29274SF4VL
