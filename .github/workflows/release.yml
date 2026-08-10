@@ -1,0 +1,32 @@
+name: release
+
+# Cut a release with `make deploy` (or `make deploy-beta` for an RC), which tags
+# the version in Sources/superlinear/Version.swift and pushes. This reacts to
+# that tag: builds, signs, and ships the binary to the superlinear cask in
+# armcknight/homebrew-tools.
+#
+# Signing is on because launchd, not the user's shell, starts this binary. An
+# unsigned CLI is fine when a shell runs it, but a quarantined binary launched
+# by launchd is subject to the Gatekeeper check a shell invocation skips.
+#
+# The cask installs the binary. It does not set up the launchd agent — casks
+# have no launchd support at all, and the `service` stanza installs to
+# ~/Library/Services, which is the Services menu, not an agent. `superlinear
+# install` does that instead, generating the agent for whichever binary runs it.
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-*'
+
+jobs:
+  release:
+    uses: armcknight/workflows/.github/workflows/swiftpm-cask-release.yml@main
+    secrets: inherit
+    with:
+      cask-name: superlinear
+      binaries: superlinear
+      version-file: Sources/superlinear/Version.swift
+      version-regex: '.*static let version = "([^"]+)".*'
+      sign: true

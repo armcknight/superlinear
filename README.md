@@ -55,13 +55,35 @@ To substitute your own tooling, supply a `work` function with the same interface
 
 ## Install
 
+From the Homebrew tap:
+
+```sh
+brew install --cask armcknight/tools/superlinear
+superlinear install     # register the launch agent
+```
+
+Or from a checkout:
+
 ```sh
 make init     # trust the third-party taps, then install the Brewfile
 make config   # write an example config, then open it in $EDITOR
-make load     # build, install, render the LaunchAgent, and start it
+make load     # build, install into ~/.local/bin, then register the agent
 ```
 
-`make load` renders `LaunchAgents/com.armcknight.superlinear.plist.template` into `~/Library/LaunchAgents/`, substituting your `$HOME`. Edit the template, not the installed copy — `make reload` overwrites the installed copy.
+`superlinear install` writes `~/Library/LaunchAgents/com.armcknight.superlinear.plist` and loads it, pointing the agent at whichever binary you ran it from. Re-running it reloads. `superlinear uninstall` stops the agent and removes it.
+
+The agent is generated rather than checked in because launchd expands neither `~` nor `$HOME` inside a plist — every path in it has to be absolute, so no single file can serve every machine. The cask cannot do this either: Homebrew has no launchd support for casks, and the `service` stanza installs to `~/Library/Services`, which is the Services menu, not an agent.
+
+## Releasing
+
+```sh
+make patch      # or minor / major — bumps Sources/superlinear/Version.swift
+make deploy     # tag and push, which ships the cask
+```
+
+The tag triggers the release workflow, which checks the tag against the version in source, builds, Developer ID signs and notarizes, then bumps `Casks/superlinear.rb` in the tap. `make deploy-beta` cuts a release candidate into the `superlinear-rc` cask instead.
+
+Signing is on because launchd starts this binary, not your shell. An unsigned CLI is fine when a shell runs it; a quarantined binary launched by launchd is not.
 
 ## Configuration
 
@@ -97,14 +119,19 @@ Each workspace entry is one Linear-account-to-repository pairing. List several t
 | --- | --- |
 | `init` | Trust the third-party taps, then install the [Brewfile](Brewfile). Run by `work start` in each new worktree, so it is idempotent. |
 | `build` | Build the release binary. |
+| `test` | Run the unit tests. |
 | `install` | Build, then copy the binary to `~/.local/bin`. |
-| `load` | Install, render the LaunchAgent, and start it. |
-| `unload` | Stop the daemon. |
+| `load` | Install, then register and start the launch agent. |
+| `unload` | Stop the launch agent and remove it. |
 | `reload` | `unload` then `load`. |
 | `logs` | Follow the daemon log. |
 | `config` | Create the example config if absent, then open it. |
 | `status` | Show whether launchd is running the daemon. |
 | `reset` | Delete state and per-issue logs, and kill leftover `superlinear_*` tmux sessions. Every issue is reprocessed on the next poll. |
+| `patch` | Bump the version and commit. Also `minor`, `major`. |
+| `deploy` | Tag and push the current version, shipping the stable cask. Also `deploy-beta` for an RC. |
+
+`make help` prints this list too.
 
 ## Files
 
@@ -120,10 +147,12 @@ Per-issue logs are written only when the agent exits. `claude -p` buffers its ou
 ## Usage
 
 ```
-superlinear [--config <path>] [--help]
+superlinear [--config <path>]
+superlinear install
+superlinear uninstall
 ```
 
-Run it directly to test a configuration without installing a LaunchAgent. `--config` overrides the default path.
+With no subcommand it runs the daemon in the foreground, which is how to test a configuration without registering a launch agent. `--config` overrides the default path, `--version` prints the version, and `--help` prints this.
 
 ## Security
 
