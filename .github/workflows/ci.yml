@@ -1,0 +1,10 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    uses: armcknight/workflows/.github/workflows/swift-package-ci.yml@main

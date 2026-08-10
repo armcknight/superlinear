@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "superlinear",
             path: "Sources/superlinear"
+        ),
+        .testTarget(
+            name: "superlinearTests",
+            dependencies: ["superlinear"],
+            path: "Tests/superlinearTests"
         )
     ]
 )
