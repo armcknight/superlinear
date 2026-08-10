@@ -7,4 +7,4 @@ on:
 
 jobs:
   ci:
-    uses: armcknight/workflows/.github/workflows/swift-package-ci.yml@1
+    uses: armcknight/workflows/.github/workflows/swift-package-ci.yml@2
