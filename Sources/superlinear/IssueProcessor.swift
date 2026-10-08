@@ -5,10 +5,10 @@ You are working autonomously on a Linear issue. Do not ask for confirmation at a
 proceed through the entire workflow without pausing.
 
 Your task:
-1. Run /claude-armcknight:start to read the issue details, create a work plan, and set the issue to "In Progress".
-2. Implement all the changes needed to complete the issue, following the plan from /claude-armcknight:start.
-3. When implementation is complete, run /claude-armcknight:commit to stage and commit your changes.
-4. Run /claude-armcknight:pr --autonomous to open a pull request without opening a browser, monitor CI until it passes, and address any review comments.
+1. Run /armcknight-claude:start to read the issue details, create a work plan, and set the issue to "In Progress".
+2. Implement all the changes needed to complete the issue, following the plan from /armcknight-claude:start.
+3. When implementation is complete, run /armcknight-claude:commit to stage and commit your changes.
+4. Run /armcknight-claude:pr --autonomous to open a pull request without opening a browser, monitor CI until it passes, and address any review comments.
 
 Work autonomously. Do not pause to ask questions. If you encounter ambiguity, make a reasonable \
 decision and document it in the PR description.

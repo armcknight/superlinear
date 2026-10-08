@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The agent prompt runs the plugin's commands by its new name,
+  `/armcknight-claude:start`, `:commit` and `:pr`. The plugin was renamed from
+  `claude-armcknight` in its 0.2.0, because Claude Code now reserves plugin
+  names that start with `claude-`. Install it as
+  `claude plugin install armcknight-claude@armcknight`, and uninstall the old
+  one; with only the old one installed, the agent's commands do not exist.
+
 ## [1.0.1] 2026-08-10
 
 ### Fixed

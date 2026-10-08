@@ -23,7 +23,7 @@ This is a personal tool, published as a reference. It is opinionated about how w
    This creates a worktree at `worktrees/<branch>`, runs `make init`, and pipes the prompt into `claude -p`.
 6. The issue ID is written to the state file, which is saved atomically.
 
-The prompt instructs the agent to run `/claude-armcknight:start`, implement the change, run `/claude-armcknight:commit`, then run `/claude-armcknight:pr --autonomous` to open a PR and monitor CI. The agent is told not to pause for confirmation.
+The prompt instructs the agent to run `/armcknight-claude:start`, implement the change, run `/armcknight-claude:commit`, then run `/armcknight-claude:pr --autonomous` to open a PR and monitor CI. The agent is told not to pause for confirmation.
 
 Branch names come from Linear's own `branchName` field, so the branch matches what the Linear UI shows and Linear links the PR to the issue automatically.
 
@@ -36,7 +36,7 @@ Supply the rest yourself:
 - macOS 14 or later
 - Swift 6 toolchain, from Xcode
 - A Linear API key
-- The [`claude-armcknight` plugin](https://github.com/armcknight/claude-armcknight), which Homebrew cannot install — see [External dependencies](#external-dependencies)
+- The [`armcknight-claude` plugin](https://github.com/armcknight/claude-armcknight), which Homebrew cannot install — see [External dependencies](#external-dependencies)
 - Target repositories with a `make init` target and a `CLAUDE.md` describing the project
 
 `make init` trusts the two third-party taps in the Brewfile before bundling. Homebrew refuses to load formulae from untrusted taps, and `brew bundle` aborts on the first one it meets without installing anything at all. `work start` runs `make init` in every new worktree, so it is written to be idempotent.
@@ -48,9 +48,9 @@ The daemon does the polling. Everything after that — the worktree, and the wor
 | Dependency | Provides | Install |
 | --- | --- | --- |
 | [workr](https://github.com/armcknight/workr) | `work start --headless --prompt-file <path> --log-file <path> <branch>`, which creates the worktree, prepares it, and pipes the prompt into `claude -p`. | `brew install --cask armcknight/tools/work` |
-| [claude-armcknight](https://github.com/armcknight/claude-armcknight) | The `start`, `commit` and `pr` slash commands the prompt drives. | `claude plugin marketplace add armcknight/claude-armcknight` then `claude plugin install claude-armcknight@armcknight` |
+| [armcknight-claude](https://github.com/armcknight/claude-armcknight) | The `start`, `commit` and `pr` slash commands the prompt drives. | `claude plugin marketplace add armcknight/claude-armcknight` then `claude plugin install armcknight-claude@armcknight` |
 
-The `claude-armcknight` plugin also needs `linctl`, `direnv` and `gh` to talk to Linear and GitHub. Its README lists them, with a Brewfile.
+The `armcknight-claude` plugin also needs `linctl`, `direnv` and `gh` to talk to Linear and GitHub. Its README lists them, with a Brewfile.
 
 To substitute your own tooling, supply a `work` function with the same interface, or edit the prompt in `Sources/superlinear/IssueProcessor.swift`, which is where the command names live.
 

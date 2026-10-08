@@ -21,7 +21,7 @@ cask "claude-code@latest"
 tap "armcknight/tools"
 cask "armcknight/tools/work"
 
-# the claude-armcknight plugin's commands shell out to these once the agent runs
+# the armcknight-claude plugin's commands shell out to these once the agent runs
 tap "dorkitude/linctl"
 brew "dorkitude/linctl/linctl" # read and update Linear issues
 brew "direnv"                  # supplies the Linear token to every linctl call
