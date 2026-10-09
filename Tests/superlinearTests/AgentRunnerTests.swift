@@ -1,0 +1,111 @@
+import Darwin
+import Foundation
+import Testing
+@testable import superlinear
+
+@Suite("AgentRunner")
+struct AgentRunnerTests {
+    private let run = AgentRun(
+        issueId: "id-1", identifier: "SL-1", branchName: "me/sl-1-fix", sessionId: "abc"
+    )
+
+    @Test("A new run names its session; a resumed one continues it")
+    func workArguments() {
+        let start = AgentRunner.workArguments(run: run, mode: .start, promptFile: "p", logFile: "l")
+        #expect(start == [
+            "work", "start", "--headless", "--prompt-file", "p", "--log-file", "l",
+            "--session-id", "abc", "me/sl-1-fix",
+        ])
+        let resume = AgentRunner.workArguments(run: run, mode: .resume, promptFile: "p", logFile: "l")
+        #expect(resume.contains("--resume"))
+        #expect(!resume.contains("--session-id"))
+    }
+
+    // The order matters: a status means the agent ended, whatever else is true,
+    // and a live agent must never be resumed alongside itself.
+    @Test("Recovery prefers a status, then a live process, then resuming")
+    func recoveryDecisions() {
+        #expect(AgentRunner.recovery(status: 0, running: true, sessionExists: true, resumes: 9) == .finished(0))
+        #expect(AgentRunner.recovery(status: nil, running: true, sessionExists: true, resumes: 9) == .adopt)
+        #expect(AgentRunner.recovery(status: nil, running: false, sessionExists: true, resumes: 0) == .resume)
+        #expect(AgentRunner.recovery(status: nil, running: false, sessionExists: false, resumes: 0) == .restart)
+        #expect(AgentRunner.recovery(
+            status: nil, running: false, sessionExists: true, resumes: AgentRunner.maxResumes
+        ) == .abandon)
+    }
+
+    @Test("A live process is recognised by its pid and start time")
+    func recognisesLiveProcess() throws {
+        let pid = getpid()
+        let started = try #require(AgentRunner.startTime(of: pid))
+
+        var live = run
+        live.pid = pid
+        live.processStartedAt = started
+        #expect(AgentRunner.isRunning(live))
+
+        // The same pid with another start time is a different process.
+        var reused = live
+        reused.processStartedAt = started.addingTimeInterval(-3600)
+        #expect(!AgentRunner.isRunning(reused))
+
+        var unlaunched = run
+        unlaunched.pid = nil
+        #expect(!AgentRunner.isRunning(unlaunched))
+    }
+
+    @Test("A session can be resumed only when Claude saved its transcript")
+    func findsTranscripts() throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let runner = AgentRunner(home: home, environment: [:])
+        #expect(!runner.claudeSessionExists("abc"))
+
+        let project = "\(home)/.claude/projects/-Users-me-repo-worktrees-x"
+        try FileManager.default.createDirectory(atPath: project, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: "\(project)/abc.jsonl", contents: Data())
+        #expect(runner.claudeSessionExists("abc"))
+        #expect(!runner.claudeSessionExists("other"))
+    }
+
+    // Runs the real wrapper against a stand-in `work`, to check that the exit
+    // status reaches both the status file and the exit handler.
+    @Test("A launched agent reports work's exit status")
+    func launchReportsStatus() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let bin = "\(home)/bin"
+        try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        try "#!/bin/sh\necho \"work $*\"\nexit 3\n".write(toFile: "\(bin)/work", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: "\(bin)/work")
+
+        let runner = AgentRunner(home: home, environment: ["PATH": "\(bin):/usr/bin:/bin"])
+        let status: Int32? = try await withCheckedThrowingContinuation { continuation in
+            do {
+                let (launched, _) = try runner.launch(run, mode: .start, repoPath: home) { status in
+                    continuation.resume(returning: status)
+                }
+                #expect(launched.pid != nil)
+                #expect(launched.processStartedAt != nil)
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+
+        #expect(status == 3)
+        #expect(AgentRunner.readStatus(atPath: runner.statusFile(for: run)) == 3)
+        let workLog = try String(contentsOfFile: runner.workLog(for: run), encoding: .utf8)
+        #expect(workLog.contains("--session-id abc me/sl-1-fix"))
+        let prompt = try String(contentsOfFile: runner.promptFile(for: run), encoding: .utf8)
+        #expect(prompt.contains("/armcknight-claude:start"))
+
+        runner.cleanUp(run)
+        #expect(!FileManager.default.fileExists(atPath: runner.statusFile(for: run)))
+    }
+
+    private func temporaryDirectory() throws -> String {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        return path
+    }
+}

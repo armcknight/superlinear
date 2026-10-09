@@ -14,14 +14,22 @@ This is a personal tool, published as a reference. It is opinionated about how w
 2. Each configured workspace polls on its own loop, concurrently.
 3. Each poll queries the Linear GraphQL API for issues created since the last poll, in the `backlog` or `unstarted` state, optionally filtered by team. Results are paginated 50 at a time.
 4. Issue IDs already recorded in the state file are discarded, so an issue is processed once.
-5. Each remaining issue is processed concurrently. The daemon writes a fixed prompt to a temporary file, then runs, in the repository directory:
+5. For each remaining issue, the daemon records the issue as processed and starts its agent, without waiting for it — the next poll runs on schedule however long agents take. It picks a Claude session ID, writes the prompt to a file, then runs, in the repository directory:
 
    ```
-   work start --headless --prompt-file <prompt> --log-file <log> <issue-branch-name>
+   work start --headless --prompt-file <prompt> --log-file <log> --session-id <uuid> <issue-branch-name>
    ```
 
-   This creates a worktree at `worktrees/<branch>`, runs `make init`, and pipes the prompt into `claude -p`.
-6. The issue ID is written to the state file, which is saved atomically.
+   This creates a worktree at `worktrees/<branch>`, runs `make init`, and pipes the prompt into `claude -p` under that session ID.
+6. The run — issue, branch, session ID, and the process running it — is kept in the state file until the agent exits.
+
+### Restarts
+
+Agents outlive the daemon, so restarting it — an upgrade, `make reload`, a crash — does not stop work in flight. On start, the daemon checks each run left in the state file:
+
+- **Still running:** it waits for that process and records the run finished when it exits.
+- **Finished while the daemon was down:** a small wrapper around `work` leaves its exit status in a file, so the run is recorded finished.
+- **Interrupted**, as by a reboot: it runs `work start --headless --resume <uuid>`, which continues the same Claude session with a prompt to work out where it stopped and carry on. If Claude had not saved the session yet, it starts again under the same ID instead. A run interrupted three times is abandoned, with a message in the daemon log.
 
 The prompt instructs the agent to run `/armcknight-claude:start`, implement the change, run `/armcknight-claude:commit`, then run `/armcknight-claude:pr --autonomous` to open a PR and monitor CI. The agent is told not to pause for confirmation.
 
@@ -29,7 +37,7 @@ Branch names come from Linear's own `branchName` field, so the branch matches wh
 
 ## Requirements
 
-`make init` installs everything Homebrew can provide — fish, tmux, Claude Code, workr, and the `linctl`, `direnv` and `gh` that the agent's slash commands need. See the [Brewfile](Brewfile).
+`make init` installs everything Homebrew can provide — tmux, Claude Code, workr, and the `linctl`, `direnv` and `gh` that the agent's slash commands need. See the [Brewfile](Brewfile).
 
 Supply the rest yourself:
 
@@ -52,7 +60,7 @@ The daemon does the polling. Everything after that — the worktree, and the wor
 
 The `armcknight-claude` plugin also needs `linctl`, `direnv` and `gh` to talk to Linear and GitHub. Its README lists them, with a Brewfile.
 
-To substitute your own tooling, supply a `work` function with the same interface, or edit the prompt in `Sources/superlinear/IssueProcessor.swift`, which is where the command names live.
+To substitute your own tooling, put a `work` executable with the same interface on the agent's PATH, or edit the prompts in `Sources/superlinear/AgentRunner.swift`, which is where the command names live. Resuming needs `--session-id` and `--resume`, from workr 1.1.0.
 
 ## Installation
 
@@ -134,7 +142,7 @@ Signing is on because launchd starts this binary, not your shell. An unsigned CL
 | `logs` | Follow the daemon log. |
 | `config` | Create the example config if absent, then open it. |
 | `status` | Show whether launchd is running the daemon. |
-| `reset` | Delete state and per-issue logs, and kill leftover `superlinear_*` tmux sessions. Every issue is reprocessed on the next poll. |
+| `reset` | Delete state, run records and per-issue logs, and kill leftover `superlinear_*` tmux sessions. Every issue is reprocessed on the next poll. Agents already running are not stopped. |
 | `patch` | Bump the version and commit. Also `minor`, `major`. |
 | `deploy` | Tag and push the current version, shipping the stable cask. Also `deploy-beta` for an RC. |
 
@@ -145,9 +153,11 @@ Signing is on because launchd starts this binary, not your shell. An unsigned CL
 | Path | Contents |
 | --- | --- |
 | `~/.config/superlinear/config.json` | Configuration, including API keys. |
-| `~/.local/share/superlinear/state.json` | Last poll time and processed issue IDs, per workspace. |
+| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, and runs in flight, per workspace. |
+| `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. |
 | `~/.local/share/superlinear/daemon.log` | Daemon output. |
-| `~/.local/share/superlinear/logs/<ISSUE-ID>.log` | Agent output for one issue. |
+| `~/.local/share/superlinear/logs/<ISSUE-ID>.log` | Agent output for one issue. A resumed run appends to it. |
+| `~/.local/share/superlinear/logs/<ISSUE-ID>.work.log` | Output of `work` itself for one issue, such as worktree setup and errors. |
 
 Per-issue logs are written only when the agent exits. `claude -p` buffers its output, so following the file during a run shows nothing.
 

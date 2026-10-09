@@ -4,6 +4,7 @@ LABEL         = com.armcknight.superlinear
 LOG           = $(HOME)/.local/share/superlinear/daemon.log
 STATE         = $(HOME)/.local/share/superlinear/state.json
 LOGS_DIR      = $(HOME)/.local/share/superlinear/logs
+RUNS_DIR      = $(HOME)/.local/share/superlinear/runs
 CONFIG        = $(HOME)/.config/superlinear/config.json
 VERSION_FILE  = Sources/superlinear/Version.swift
 VRSN_KEY      = version
@@ -98,6 +99,7 @@ status:
 reset:
 	rm -f $(STATE)
 	rm -f $(LOGS_DIR)/*.log
+	rm -rf $(RUNS_DIR)
 	-tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^superlinear_' | xargs -I{} tmux kill-session -t {}
 	@echo "State, logs, and tmux sessions cleared. Daemon will reprocess all issues on next poll."
 

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agents survive daemon restarts, and interrupted ones are resumed. Each agent
+  gets a Claude session ID, and its run is kept in the state file until it
+  exits. A restarted daemon waits for agents still running, records those that
+  finished while it was down, and continues interrupted ones with
+  `work start --headless --resume`. Needs workr 1.1.0.
 - `make install` builds with semver build metadata, so `superlinear --version`
   prints e.g. `1.1.0+d0a4bc2` for a local build, with `.dirty` appended when the
   working tree had uncommitted or untracked changes. Releases print the bare
@@ -16,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A poll starts agents without waiting for them, so new issues are picked up
+  on schedule while earlier agents are still working. An issue counts as
+  processed from the moment its agent starts.
+- The daemon runs `work` directly instead of through `fish -c`, so a stale
+  `work` fish function can no longer shadow workr. fish is no longer a
+  dependency.
+- The daemon reads `$HOME` for its config, state and logs, falling back to the
+  account's home directory.
 - A local build takes precedence over Homebrew. `superlinear install` from the
   Homebrew binary leaves an agent that runs an existing local build in place;
   pass `--force` to replace it. `make install` warns when another
@@ -23,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The state file is read back correctly. Dates were written as ISO 8601 and
+  read as numbers, so every load failed and each restart started from empty
+  state, sending agents again to every backlog issue.
 - `brew uninstall --cask superlinear` removes the launch agent, and
   `brew upgrade` restarts a registered daemon on the new version. Before, an
   uninstall left an agent that launchd retried every 30 seconds, and an upgrade

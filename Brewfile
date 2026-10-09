@@ -7,9 +7,6 @@
 # untrusted taps, and `brew bundle` aborts on the first one it meets without
 # installing anything at all — so `make init` trusts them before it runs.
 
-# the daemon shells out through `fish -c`
-brew "fish"
-
 # `make reset` kills leftover superlinear_* sessions
 brew "tmux"
 
@@ -17,7 +14,8 @@ brew "tmux"
 cask "claude-code@latest"
 
 # workr: `work start --headless` creates the worktree and pipes the prompt into
-# `claude -p`. Ships as the `work` binary.
+# `claude -p`. Ships as the `work` binary. Needs 1.1.0 or later, for
+# `--session-id` and `--resume`; a cask cannot pin a minimum, so `brew upgrade`.
 tap "armcknight/tools"
 cask "armcknight/tools/work"
 

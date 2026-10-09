@@ -21,18 +21,8 @@ struct WorkspaceProcessor: Sendable {
             log("Found \(newIssues.count) new issue(s)")
         }
 
-        let processor = IssueProcessor(workspace: workspace)
-        await withTaskGroup(of: Void.self) { group in
-            for issue in newIssues {
-                group.addTask {
-                    do {
-                        try await processor.process(issue: issue)
-                        await self.daemon.markProcessed(issue.id, workspace: self.workspace.name)
-                    } catch {
-                        self.log("Error processing issue \(issue.identifier): \(error)")
-                    }
-                }
-            }
+        for issue in newIssues {
+            await daemon.startAgent(for: issue, workspace: workspace)
         }
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)

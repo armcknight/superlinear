@@ -25,8 +25,7 @@ struct Config: Codable, Sendable {
     let workspaces: [WorkspaceConfig]
 
     static func load(from path: String? = nil) throws -> Config {
-        let configPath = path ?? (FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/superlinear/config.json").path)
+        let configPath = path ?? "\(Paths.home)/.config/superlinear/config.json"
         let url = URL(fileURLWithPath: configPath)
         let data = try Data(contentsOf: url)
         return try JSONDecoder().decode(Config.self, from: data)
