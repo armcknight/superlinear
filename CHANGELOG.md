@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The daemon follows `brew upgrade` and `brew uninstall` by itself. It checks
+  the Homebrew link it was started through every minute: when an upgrade
+  repoints it, the daemon exits and launchd restarts it on the new version, and
+  when the link has been gone for five minutes, the daemon removes its own
+  launch agent. A daemon running a local build does not watch.
+
+### Removed
+
+- `superlinear install --from-homebrew` and `uninstall --from-homebrew`. They
+  were for cask hooks, which never shipped: Homebrew 7 deprecates cask flight
+  blocks and sandboxes their replacements away from launchd. The 1.2.0 notes
+  that describe those hooks did not hold for 1.2.0.
+
 ## [1.2.0] 2026-10-09
 
 ### Added

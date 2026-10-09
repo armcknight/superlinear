@@ -156,35 +156,3 @@ struct LaunchAgentStablePathTests {
         #expect(LaunchAgent.stableExecutablePath(for: dev, fileExists: { _ in true }) == dev)
     }
 }
-
-// Homebrew runs the cask's uninstall hook on an upgrade as well as an
-// uninstall, so the install hook decides from what it finds afterwards.
-@Suite("LaunchAgent Homebrew hooks")
-struct LaunchAgentHomebrewHookTests {
-    @Test("A registered agent is reloaded onto the new binary")
-    func reloadsRegisteredAgent() {
-        #expect(LaunchAgent.shouldInstallAfterHomebrew(agentInstalled: true, keepsDevBuild: false, markerAge: nil))
-    }
-
-    @Test("An agent the upgrade's uninstall hook removed is restored")
-    func restoresAfterUpgrade() {
-        #expect(LaunchAgent.shouldInstallAfterHomebrew(agentInstalled: false, keepsDevBuild: false, markerAge: 5))
-    }
-
-    @Test("A stale marker from a past uninstall registers nothing")
-    func staleMarkerIgnored() {
-        #expect(!LaunchAgent.shouldInstallAfterHomebrew(
-            agentInstalled: false, keepsDevBuild: false, markerAge: LaunchAgent.homebrewMarkerLifetime + 1
-        ))
-    }
-
-    @Test("A fresh install registers nothing")
-    func freshInstallLeftAlone() {
-        #expect(!LaunchAgent.shouldInstallAfterHomebrew(agentInstalled: false, keepsDevBuild: false, markerAge: nil))
-    }
-
-    @Test("A local build's agent is left alone")
-    func localBuildWins() {
-        #expect(!LaunchAgent.shouldInstallAfterHomebrew(agentInstalled: true, keepsDevBuild: true, markerAge: 5))
-    }
-}
