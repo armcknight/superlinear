@@ -34,16 +34,78 @@ struct LaunchAgent {
     /// The agent for the currently running binary.
     static func current() -> LaunchAgent {
         LaunchAgent(
-            executablePath: runningExecutablePath(),
+            executablePath: stableExecutablePath(
+                for: resolvingSymlinks(Bundle.main.executablePath ?? CommandLine.arguments[0]),
+                fileExists: FileManager.default.isExecutableFile(atPath:)
+            ),
             home: FileManager.default.homeDirectoryForCurrentUser.path
         )
     }
 
-    /// Resolves the running binary to an absolute, symlink-free path, so a
-    /// Homebrew install records the real Cellar path rather than `bin/` shim.
-    private static func runningExecutablePath() -> String {
-        let raw = Bundle.main.executablePath ?? CommandLine.arguments[0]
-        return URL(fileURLWithPath: raw).resolvingSymlinksInPath().path
+    /// An absolute, symlink-free form of `path`.
+    static func resolvingSymlinks(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+
+    /// The path the agent should record for a resolved binary. A Homebrew
+    /// binary lives under a versioned directory, such as
+    /// `/opt/homebrew/Caskroom/superlinear/1.1.0/superlinear`, which an upgrade
+    /// deletes; an agent pointing there would stop starting. So a Homebrew
+    /// binary is recorded as its link in the prefix's `bin`, which upgrades
+    /// repoint, when that link exists. Anything else is recorded as is.
+    static func stableExecutablePath(
+        for resolved: String, fileExists: (String) -> Bool
+    ) -> String {
+        for marker in ["/Caskroom/", "/Cellar/"] {
+            guard let range = resolved.range(of: marker) else { continue }
+            let name = URL(fileURLWithPath: resolved).lastPathComponent
+            let link = "\(resolved[..<range.lowerBound])/bin/\(name)"
+            return fileExists(link) ? link : resolved
+        }
+        return resolved
+    }
+
+    /// Whether a resolved binary path belongs to a Homebrew install rather than
+    /// a local `make install`. Resolve first: the agent records Homebrew
+    /// binaries by their `bin` link.
+    static func isHomebrewBinary(_ path: String) -> Bool {
+        path.contains("/Caskroom/") || path.contains("/Cellar/")
+    }
+
+    /// The local build an install from this binary should leave in place, if
+    /// any. A local build takes precedence over Homebrew: when this binary is a
+    /// Homebrew one and the installed agent runs a local build that still
+    /// exists, replacing the agent would silently swap the daemon back. Both
+    /// paths must already be resolved.
+    static func devBinaryToKeep(
+        installing: String, installed: String?, fileExists: (String) -> Bool
+    ) -> String? {
+        guard isHomebrewBinary(installing),
+              let installed,
+              installed != installing,
+              !isHomebrewBinary(installed),
+              fileExists(installed)
+        else { return nil }
+        return installed
+    }
+
+    func devBinaryToKeep() -> String? {
+        Self.devBinaryToKeep(
+            installing: Self.resolvingSymlinks(executablePath),
+            installed: installedExecutablePath().map(Self.resolvingSymlinks),
+            fileExists: FileManager.default.isExecutableFile(atPath:)
+        )
+    }
+
+    /// The binary the agent on disk runs, or nil when none is installed.
+    func installedExecutablePath() -> String? {
+        guard let data = FileManager.default.contents(atPath: plistPath),
+              let list = try? PropertyListSerialization.propertyList(
+                  from: data, options: [], format: nil
+              ) as? [String: Any],
+              let arguments = list["ProgramArguments"] as? [String]
+        else { return nil }
+        return arguments.first
     }
 
     var plistPath: String { "\(home)/Library/LaunchAgents/\(Self.label).plist" }

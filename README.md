@@ -73,6 +73,8 @@ make load     # build, install into ~/.local/bin, then register the agent
 
 `superlinear install` writes `~/Library/LaunchAgents/com.armcknight.superlinear.plist` and loads it, pointing the agent at whichever binary you ran it from. Re-running it reloads. `superlinear uninstall` stops the agent and removes it.
 
+If both installs are present, the local build wins. `superlinear install` from the Homebrew binary leaves an agent that runs an existing local build in place; pass `--force` to replace it. `superlinear --version` tells them apart: a local build appends the commit, as in `1.1.0+d0a4bc2`, plus `.dirty` when the working tree had uncommitted changes.
+
 The agent is generated rather than checked in because launchd expands neither `~` nor `$HOME` inside a plist — every path in it has to be absolute, so no single file can serve every machine. The cask cannot do this either: Homebrew has no launchd support for casks, and the `service` stanza installs to `~/Library/Services`, which is the Services menu, not an agent.
 
 ## Configuration
@@ -125,7 +127,7 @@ Signing is on because launchd starts this binary, not your shell. An unsigned CL
 | `init` | Trust the third-party taps, then install the [Brewfile](Brewfile). Run by `work start` in each new worktree, so it is idempotent. |
 | `build` | Build the release binary. |
 | `test` | Run the unit tests. |
-| `install` | Build, then copy the binary to `~/.local/bin`. |
+| `install` | Build with the git commit in the version, then copy the binary to `~/.local/bin`. Warns when another `superlinear` shadows it in `PATH`. |
 | `load` | Install, then register and start the launch agent. |
 | `unload` | Stop the launch agent and remove it. |
 | `reload` | `unload` then `load`. |

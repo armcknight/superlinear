@@ -3,3 +3,4 @@
 /config.json
 **/xcuserdata/
 .DS_Store
+/Sources/superlinear/BuildMetadata.generated.swift

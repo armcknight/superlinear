@@ -88,3 +88,71 @@ struct LaunchAgentTests {
         #expect(current.plistPath.hasSuffix("com.armcknight.superlinear.plist"))
     }
 }
+
+// A local build takes precedence over Homebrew, so a Homebrew `install` must not
+// point the agent back at itself while a local build is registered and present.
+@Suite("LaunchAgent precedence")
+struct LaunchAgentPrecedenceTests {
+    private let brew = "/opt/homebrew/Caskroom/superlinear/1.1.0/superlinear"
+    private let dev = "/Users/example/.local/bin/superlinear"
+
+    @Test("Homebrew keeps an agent that runs an existing local build")
+    func homebrewKeepsLocalBuild() {
+        #expect(LaunchAgent.devBinaryToKeep(installing: brew, installed: dev, fileExists: { _ in true }) == dev)
+    }
+
+    @Test("Homebrew replaces an agent whose local build is gone")
+    func homebrewReplacesMissingLocalBuild() {
+        #expect(LaunchAgent.devBinaryToKeep(installing: brew, installed: dev, fileExists: { _ in false }) == nil)
+    }
+
+    @Test("Homebrew replaces an older Homebrew agent")
+    func homebrewReplacesHomebrew() {
+        let older = "/opt/homebrew/Caskroom/superlinear/1.0.1/superlinear"
+        #expect(LaunchAgent.devBinaryToKeep(installing: brew, installed: older, fileExists: { _ in true }) == nil)
+    }
+
+    @Test("A local build always replaces the agent")
+    func localBuildReplacesAnything() {
+        #expect(LaunchAgent.devBinaryToKeep(installing: dev, installed: brew, fileExists: { _ in true }) == nil)
+        #expect(LaunchAgent.devBinaryToKeep(installing: dev, installed: "/elsewhere/superlinear", fileExists: { _ in true }) == nil)
+    }
+
+    @Test("Nothing to keep on a first install")
+    func firstInstall() {
+        #expect(LaunchAgent.devBinaryToKeep(installing: brew, installed: nil, fileExists: { _ in true }) == nil)
+    }
+}
+
+// The agent outlives upgrades, so it must not record a versioned directory that
+// `brew upgrade` deletes.
+@Suite("LaunchAgent stable path")
+struct LaunchAgentStablePathTests {
+    @Test("A cask binary is recorded by its bin link")
+    func caskUsesBinLink() {
+        let path = LaunchAgent.stableExecutablePath(
+            for: "/opt/homebrew/Caskroom/superlinear/1.1.0/superlinear", fileExists: { _ in true }
+        )
+        #expect(path == "/opt/homebrew/bin/superlinear")
+    }
+
+    @Test("A formula binary is recorded by its bin link")
+    func formulaUsesBinLink() {
+        let path = LaunchAgent.stableExecutablePath(
+            for: "/usr/local/Cellar/superlinear/1.1.0/bin/superlinear", fileExists: { _ in true }
+        )
+        #expect(path == "/usr/local/bin/superlinear")
+    }
+
+    @Test("Without a bin link, the versioned path is kept")
+    func missingLinkKeepsResolved() {
+        let resolved = "/opt/homebrew/Caskroom/superlinear/1.1.0/superlinear"
+        #expect(LaunchAgent.stableExecutablePath(for: resolved, fileExists: { _ in false }) == resolved)
+    }
+
+    @Test("A local build is recorded as is")
+    func localBuildUnchanged() {
+        let dev = "/Users/example/.local/bin/superlinear"
+        #expect(LaunchAgent.stableExecutablePath(for: dev, fileExists: { _ in true }) == dev)
+    }
+}

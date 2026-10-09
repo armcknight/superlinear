@@ -2,7 +2,7 @@ import Foundation
 
 let usage = """
 Usage: superlinear [--config <path>]
-       superlinear install
+       superlinear install [--force]
        superlinear uninstall
 
 Watches Linear for new issues and starts an autonomous Claude Code agent
@@ -10,7 +10,9 @@ for each one. With no subcommand, runs the daemon in the foreground.
 
 Subcommands:
   install     Write the launchd agent for this binary and load it, so the
-              daemon starts at login. Reinstalling reloads it.
+              daemon starts at login. Reinstalling reloads it. A Homebrew
+              binary leaves an agent that runs a local build in place;
+              --force replaces it anyway.
   uninstall   Unload the launchd agent and remove it.
 
 Options:
@@ -23,6 +25,13 @@ Options:
 switch CommandLine.arguments.dropFirst().first {
 case "install":
     let agent = LaunchAgent.current()
+    let force = CommandLine.arguments.dropFirst(2).contains("--force")
+    if !force, let devBinary = agent.devBinaryToKeep() {
+        print("[superlinear] Kept the agent for the local build at \(devBinary)")
+        print("  A local build takes precedence over Homebrew. Use --force to replace it,")
+        print("  or `make unload` in the superlinear repo to remove it first.")
+        exit(0)
+    }
     do {
         try agent.install()
         print("[superlinear] Loaded \(LaunchAgent.label)")
@@ -80,7 +89,7 @@ while let arg = args.first {
         configPath = next
         args = args.dropFirst(2)
     } else if arg == "--version" {
-        print(Superlinear.version)
+        print(Superlinear.fullVersion)
         exit(0)
     } else if arg == "--help" || arg == "-h" {
         print(usage)

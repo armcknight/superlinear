@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `make install` builds with semver build metadata, so `superlinear --version`
+  prints e.g. `1.1.0+d0a4bc2` for a local build, with `.dirty` appended when the
+  working tree had uncommitted or untracked changes. Releases print the bare
+  version.
+
+### Changed
+
+- A local build takes precedence over Homebrew. `superlinear install` from the
+  Homebrew binary leaves an agent that runs an existing local build in place;
+  pass `--force` to replace it. `make install` warns when another
+  `superlinear` shadows `~/.local/bin` in your `PATH`.
+
+### Fixed
+
+- `superlinear install` from Homebrew points the agent at
+  `/opt/homebrew/bin/superlinear` instead of the versioned Caskroom directory,
+  which `brew upgrade` deletes. Before, the agent stopped starting after an
+  upgrade until `superlinear install` ran again. Run it once more to move an
+  existing agent to the new path.
+
 ## [1.1.0] 2026-10-08
 
 ### Changed
