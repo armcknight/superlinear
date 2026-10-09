@@ -36,7 +36,7 @@ Supply the rest yourself:
 - macOS 14 or later
 - Swift 6 toolchain, from Xcode
 - A Linear API key
-- The [`armcknight-claude` plugin](https://github.com/armcknight/claude-armcknight), which Homebrew cannot install — see [External dependencies](#external-dependencies)
+- The [`armcknight-claude` plugin](https://github.com/armcknight/armcknight-claude), which Homebrew cannot install — see [External dependencies](#external-dependencies)
 - Target repositories with a `make init` target and a `CLAUDE.md` describing the project
 
 `make init` trusts the two third-party taps in the Brewfile before bundling. Homebrew refuses to load formulae from untrusted taps, and `brew bundle` aborts on the first one it meets without installing anything at all. `work start` runs `make init` in every new worktree, so it is written to be idempotent.
@@ -48,7 +48,7 @@ The daemon does the polling. Everything after that — the worktree, and the wor
 | Dependency | Provides | Install |
 | --- | --- | --- |
 | [workr](https://github.com/armcknight/workr) | `work start --headless --prompt-file <path> --log-file <path> <branch>`, which creates the worktree, prepares it, and pipes the prompt into `claude -p`. | `brew install --cask armcknight/tools/work` |
-| [armcknight-claude](https://github.com/armcknight/claude-armcknight) | The `start`, `commit` and `pr` slash commands the prompt drives. | `claude plugin marketplace add armcknight/claude-armcknight` then `claude plugin install armcknight-claude@armcknight` |
+| [armcknight-claude](https://github.com/armcknight/armcknight-claude) | The `start`, `commit` and `pr` slash commands the prompt drives. | `claude plugin marketplace add armcknight/armcknight-claude` then `claude plugin install armcknight-claude@armcknight` |
 
 The `armcknight-claude` plugin also needs `linctl`, `direnv` and `gh` to talk to Linear and GitHub. Its README lists them, with a Brewfile.
 
