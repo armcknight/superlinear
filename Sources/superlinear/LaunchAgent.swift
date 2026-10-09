@@ -108,6 +108,63 @@ struct LaunchAgent {
         return arguments.first
     }
 
+    // MARK: Homebrew hooks
+    //
+    // The cask runs `uninstall --from-homebrew` before it removes the binary and
+    // `install --from-homebrew` after it installs one. Homebrew runs the
+    // uninstall hook on an upgrade too, and gives the hook no way to tell the
+    // two apart, so the uninstall hook leaves a marker and the install hook that
+    // follows an upgrade restores the agent from it. After a real uninstall the
+    // marker goes stale, so a much later `brew install` does not register an
+    // agent nobody asked for.
+
+    /// Marks that the Homebrew uninstall hook removed a registered agent.
+    var homebrewMarkerPath: String { "\(home)/.local/share/superlinear/agent-removed-by-homebrew" }
+
+    /// How long the marker counts. An upgrade takes seconds.
+    static let homebrewMarkerLifetime: TimeInterval = 60 * 60
+
+    /// Whether the install hook should register the agent: when one is
+    /// registered already, which reloads it onto the new binary, or when the
+    /// uninstall hook of the upgrade in progress removed one. Never over a
+    /// local build.
+    static func shouldInstallAfterHomebrew(
+        agentInstalled: Bool, keepsDevBuild: Bool, markerAge: TimeInterval?
+    ) -> Bool {
+        if keepsDevBuild { return false }
+        if agentInstalled { return true }
+        guard let markerAge else { return false }
+        return markerAge < homebrewMarkerLifetime
+    }
+
+    /// The uninstall hook. Removes an agent that runs a Homebrew binary and
+    /// leaves the marker. Returns whether it removed one.
+    func uninstallForHomebrew() throws -> Bool {
+        guard installedExecutablePath() != nil, devBinaryToKeep() == nil else { return false }
+        try uninstall()
+        try FileManager.default.createDirectory(
+            atPath: "\(home)/.local/share/superlinear", withIntermediateDirectories: true
+        )
+        FileManager.default.createFile(atPath: homebrewMarkerPath, contents: nil)
+        return true
+    }
+
+    /// The install hook. Consumes the marker, then installs, which also
+    /// restarts a daemon that is running. Returns whether it installed.
+    func installForHomebrew(now: Date = Date()) throws -> Bool {
+        let fm = FileManager.default
+        let markedAt = (try? fm.attributesOfItem(atPath: homebrewMarkerPath))?[.modificationDate] as? Date
+        try? fm.removeItem(atPath: homebrewMarkerPath)
+
+        guard Self.shouldInstallAfterHomebrew(
+            agentInstalled: installedExecutablePath() != nil,
+            keepsDevBuild: devBinaryToKeep() != nil,
+            markerAge: markedAt.map { now.timeIntervalSince($0) }
+        ) else { return false }
+        try install()
+        return true
+    }
+
     var plistPath: String { "\(home)/Library/LaunchAgents/\(Self.label).plist" }
     var logPath: String { "\(home)/.local/share/superlinear/daemon.log" }
 

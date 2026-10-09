@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `brew uninstall --cask superlinear` removes the launch agent, and
+  `brew upgrade` restarts a registered daemon on the new version. Before, an
+  uninstall left an agent that launchd retried every 30 seconds, and an upgrade
+  left the old version running. The upgrade to this release already restarts
+  the daemon; `brew uninstall` cleans up once this release is installed.
 - `superlinear install` from Homebrew points the agent at
   `/opt/homebrew/bin/superlinear` instead of the versioned Caskroom directory,
   which `brew upgrade` deletes. Before, the agent stopped starting after an

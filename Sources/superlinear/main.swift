@@ -23,6 +23,28 @@ Options:
 
 // Subcommands run to completion and exit; they never reach the run loop.
 switch CommandLine.arguments.dropFirst().first {
+// `--from-homebrew` is for the cask's hooks only; see LaunchAgent. Neither hook
+// fails, so a problem with the agent never blocks a Homebrew operation.
+case "install" where CommandLine.arguments.contains("--from-homebrew"):
+    do {
+        if try LaunchAgent.current().installForHomebrew() {
+            print("[superlinear] Reloaded \(LaunchAgent.label) onto this version")
+        }
+    } catch {
+        print("[superlinear] Could not reload the agent: \(error.localizedDescription). Run `superlinear install`.")
+    }
+    exit(0)
+
+case "uninstall" where CommandLine.arguments.contains("--from-homebrew"):
+    do {
+        if try LaunchAgent.current().uninstallForHomebrew() {
+            print("[superlinear] Unloaded and removed \(LaunchAgent.label)")
+        }
+    } catch {
+        print("[superlinear] Could not remove the agent: \(error.localizedDescription). Run `superlinear uninstall`.")
+    }
+    exit(0)
+
 case "install":
     let agent = LaunchAgent.current()
     let force = CommandLine.arguments.dropFirst(2).contains("--force")
