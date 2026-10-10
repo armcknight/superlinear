@@ -4,6 +4,7 @@ let usage = """
 Usage: superlinear [--config <path>]
        superlinear install [--force]
        superlinear uninstall
+       superlinear status [--config <path>]
 
 Watches Linear for new issues and starts an autonomous Claude Code agent
 for each one. With no subcommand, runs the daemon in the foreground.
@@ -14,12 +15,34 @@ Subcommands:
               binary leaves an agent that runs a local build in place;
               --force replaces it anyway.
   uninstall   Unload the launchd agent and remove it.
+  status      List each workspace's tasks: agents running or queued, open
+              pull requests, and tasks completed, with pull request URLs.
+              A task is completed once its pull request is merged and its
+              Linear issue is done.
 
 Options:
   --config <path>   Config file. Default: ~/.config/superlinear/config.json
   --version         Print the version and exit.
   --help, -h        Print this message and exit.
 """
+
+// Parse --config flag
+var configPath: String? = nil
+var args = CommandLine.arguments.dropFirst()
+while let arg = args.first {
+    if arg == "--config", let next = args.dropFirst().first {
+        configPath = next
+        args = args.dropFirst(2)
+    } else if arg == "--version" {
+        print(Superlinear.fullVersion)
+        exit(0)
+    } else if arg == "--help" || arg == "-h" {
+        print(usage)
+        exit(0)
+    } else {
+        args = args.dropFirst()
+    }
+}
 
 // Subcommands run to completion and exit; they never reach the run loop.
 switch CommandLine.arguments.dropFirst().first {
@@ -55,6 +78,10 @@ case "uninstall":
         exit(1)
     }
 
+case "status":
+    Task { exit(await StatusCommand.run(configPath: configPath)) }
+    dispatchMain()
+
 default:
     break
 }
@@ -81,24 +108,6 @@ sigint.setEventHandler {
     exit(0)
 }
 sigint.resume()
-
-// Parse --config flag
-var configPath: String? = nil
-var args = CommandLine.arguments.dropFirst()
-while let arg = args.first {
-    if arg == "--config", let next = args.dropFirst().first {
-        configPath = next
-        args = args.dropFirst(2)
-    } else if arg == "--version" {
-        print(Superlinear.fullVersion)
-        exit(0)
-    } else if arg == "--help" || arg == "-h" {
-        print(usage)
-        exit(0)
-    } else {
-        args = args.dropFirst()
-    }
-}
 
 do {
     let config = try Config.load(from: configPath)

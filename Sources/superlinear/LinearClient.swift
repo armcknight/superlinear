@@ -14,6 +14,26 @@ struct LinearIssue: Codable, Sendable {
     }
 }
 
+/// An issue the daemon has already processed, as `superlinear status` reports
+/// it: where it stands in Linear, and the branch its pull request comes from.
+struct LinearIssueStatus: Codable, Sendable, Equatable {
+    let id: String
+    let identifier: String
+    let title: String
+    let branchName: String
+    let state: State
+
+    struct State: Codable, Sendable, Equatable {
+        let name: String
+        /// One of Linear's workflow state types: `triage`, `backlog`,
+        /// `unstarted`, `started`, `completed` or `canceled`.
+        let type: String
+    }
+
+    var isCompleted: Bool { state.type == "completed" }
+    var isClosed: Bool { isCompleted || state.type == "canceled" }
+}
+
 enum LinearClientError: Error {
     case invalidResponse
     case apiError([String])
@@ -74,27 +94,63 @@ struct LinearClient: Sendable {
     }
     """
 
+    // Archived issues are left out, as they are by default, so issues long
+    // since finished drop out of the status report on their own.
+    private static let queryByIds = """
+    query IssuesById($ids: [ID!], $cursor: String) {
+      issues(
+        filter: { id: { in: $ids } }
+        first: 50
+        after: $cursor
+      ) {
+        nodes {
+          id
+          identifier
+          title
+          branchName
+          state { name type }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+    """
+
     func fetchNewIssues(since: Date, teamIds: [String]) async throws -> [LinearIssue] {
-        var allIssues: [LinearIssue] = []
+        let formatter = ISO8601DateFormatter()
+        var variables: [String: Any] = [
+            "after": ["gt": formatter.string(from: since)]
+        ]
+        if !teamIds.isEmpty {
+            variables["teamIds"] = teamIds
+        }
+        let query = teamIds.isEmpty ? Self.queryAllTeams : Self.queryWithTeams
+        return try await fetchAll(query, variables: variables)
+    }
+
+    /// The issues with these IDs, 50 IDs to a request so no request grows
+    /// with the number of issues processed.
+    func fetchIssues(ids: [String]) async throws -> [LinearIssueStatus] {
+        var issues: [LinearIssueStatus] = []
+        for start in stride(from: 0, to: ids.count, by: 50) {
+            let batch = Array(ids[start..<min(start + 50, ids.count)])
+            issues += try await fetchAll(Self.queryByIds, variables: ["ids": batch])
+        }
+        return issues
+    }
+
+    /// Runs an `issues` query, following its pages to the end.
+    private func fetchAll<Node: Decodable>(_ query: String, variables: [String: Any]) async throws -> [Node] {
+        var allNodes: [Node] = []
         var cursor: String? = nil
 
-        let formatter = ISO8601DateFormatter()
-        let afterValue = formatter.string(from: since)
-
         repeat {
-            var variables: [String: Any] = [
-                "after": ["gt": afterValue]
-            ]
-            if !teamIds.isEmpty {
-                variables["teamIds"] = teamIds
-            }
+            var pageVariables = variables
             if let cursor {
-                variables["cursor"] = cursor
+                pageVariables["cursor"] = cursor
             }
 
-            let query = teamIds.isEmpty ? Self.queryAllTeams : Self.queryWithTeams
-            let result = try await executeQuery(query, variables: variables)
-            allIssues.append(contentsOf: result.nodes)
+            let result: IssuesResponse<Node> = try await executeQuery(query, variables: pageVariables)
+            allNodes.append(contentsOf: result.nodes)
 
             if result.pageInfo.hasNextPage {
                 cursor = result.pageInfo.endCursor
@@ -103,11 +159,11 @@ struct LinearClient: Sendable {
             }
         } while cursor != nil
 
-        return allIssues
+        return allNodes
     }
 
-    private struct IssuesResponse: Decodable {
-        let nodes: [LinearIssue]
+    private struct IssuesResponse<Node: Decodable>: Decodable {
+        let nodes: [Node]
         let pageInfo: PageInfo
 
         struct PageInfo: Decodable {
@@ -129,7 +185,9 @@ struct LinearClient: Sendable {
         let message: String
     }
 
-    private func executeQuery(_ query: String, variables: [String: Any]) async throws -> IssuesResponse {
+    private func executeQuery<Node: Decodable>(
+        _ query: String, variables: [String: Any]
+    ) async throws -> IssuesResponse<Node> {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -143,7 +201,7 @@ struct LinearClient: Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
-        let response = try decoder.decode(GraphQLResponse<IssuesResponse>.self, from: data)
+        let response = try decoder.decode(GraphQLResponse<IssuesResponse<Node>>.self, from: data)
 
         if let errors = response.errors, !errors.isEmpty {
             throw LinearClientError.apiError(errors.map(\.message))

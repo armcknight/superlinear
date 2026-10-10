@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `superlinear status` lists each workspace's tasks: agents running, queued or
+  interrupted, open pull requests with their URLs, and completed tasks. A task
+  counts as completed only once its pull request is merged and its Linear
+  issue is done; a merged pull request whose issue is still open is listed
+  apart, so it is not mistaken for finished work. Pull requests come from
+  `gh`, matched to issues by branch.
+
 ## [1.4.0] 2026-10-09
 
 ### Added
