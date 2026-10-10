@@ -22,6 +22,10 @@ This is a personal tool, published as a reference. It is opinionated about how w
 
    This creates a worktree at `worktrees/<branch>`, runs `make init`, and pipes the prompt into `claude -p` under that session ID.
 6. The run — issue, branch, session ID, and the process running it — is kept in the state file until the agent exits.
+7. When the agent exits, the issue waits in the state file for its pull request. Each poll runs `gh pr list --head <branch> --state all` in the repository for every waiting issue:
+   - **Merged:** the issue moves to its team's first completed state in Linear, unless it is already completed or canceled, and `work finish <branch>` removes the worktree and the local branch. If Linear cannot be updated, the next poll tries again.
+   - **Open:** the next poll checks again.
+   - **Closed without a merge**, or **no pull request:** the daemon logs it and stops watching. The worktree stays for you to inspect.
 
 ### Restarts
 
@@ -38,7 +42,7 @@ Branch names come from Linear's own `branchName` field, so the branch matches wh
 
 ## Requirements
 
-`make init` installs everything Homebrew can provide — tmux, Claude Code, workr, and the `linctl`, `direnv` and `gh` that the agent's slash commands need. See the [Brewfile](Brewfile).
+`make init` installs everything Homebrew can provide — tmux, Claude Code, workr, and the `linctl`, `direnv` and `gh` that the agent's slash commands need. The daemon uses `gh` itself too, to find merged pull requests, so it must be signed in to GitHub. See the [Brewfile](Brewfile).
 
 Supply the rest yourself:
 
@@ -157,11 +161,11 @@ Signing is on because launchd starts this binary, not your shell. An unsigned CL
 | Path | Contents |
 | --- | --- |
 | `~/.config/superlinear/config.json` | Configuration, including API keys. |
-| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, and runs in flight, per workspace. |
+| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, and issues awaiting their pull request's merge, per workspace. |
 | `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. |
 | `~/.local/share/superlinear/daemon.log` | Daemon output. |
 | `~/.local/share/superlinear/logs/<ISSUE-ID>.log` | Agent output for one issue. A resumed run appends to it. |
-| `~/.local/share/superlinear/logs/<ISSUE-ID>.work.log` | Output of `work` itself for one issue, such as worktree setup and errors. |
+| `~/.local/share/superlinear/logs/<ISSUE-ID>.work.log` | Output of `work` itself for one issue, such as worktree setup, teardown after the merge, and errors. |
 
 Per-issue logs are written only when the agent exits. `claude -p` buffers its output, so following the file during a run shows nothing.
 
@@ -183,6 +187,7 @@ Read this before you run the daemon.
 - **Anyone who can file an issue controls the prompt.** Issue titles and bodies reach an agent that has a shell. Treat write access to a watched Linear team as equivalent to shell access.
 - **The API key is stored in plaintext**, in `~/.config/superlinear/config.json`. Restrict it: `chmod 600 ~/.config/superlinear/config.json`. The key is never logged and never leaves the machine except as an `Authorization` header to `api.linear.app`.
 - **The daemon opens pull requests on its own.** Require review before merge on any repository it touches.
+- **A merge removes the worktree.** Once an issue's pull request merges, `work finish` deletes its worktree and force-deletes its local branch. Do not keep work you want in a worktree the daemon created.
 
 ## License
 

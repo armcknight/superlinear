@@ -93,7 +93,7 @@ struct LinearClient: Sendable {
             }
 
             let query = teamIds.isEmpty ? Self.queryAllTeams : Self.queryWithTeams
-            let result = try await executeQuery(query, variables: variables)
+            let result = try await execute(query, variables: variables, as: IssuesData.self).issues
             allIssues.append(contentsOf: result.nodes)
 
             if result.pageInfo.hasNextPage {
@@ -106,6 +106,45 @@ struct LinearClient: Sendable {
         return allIssues
     }
 
+    private static let issueStateQuery = """
+    query IssueState($id: String!) {
+      issue(id: $id) {
+        state { type }
+        team {
+          states(filter: { type: { eq: "completed" } }) {
+            nodes { id position }
+          }
+        }
+      }
+    }
+    """
+
+    private static let updateStateMutation = """
+    mutation CompleteIssue($id: String!, $stateId: String!) {
+      issueUpdate(id: $id, input: { stateId: $stateId }) { success }
+    }
+    """
+
+    /// Moves the issue to its team's first completed state. Returns false,
+    /// changing nothing, when the issue is already completed or canceled, as
+    /// Linear's GitHub integration may have done on the merge.
+    func completeIssue(id: String) async throws -> Bool {
+        let issue = try await execute(Self.issueStateQuery, variables: ["id": id], as: IssueStateData.self).issue
+        guard !["completed", "canceled"].contains(issue.state.type) else { return false }
+        guard let done = issue.team.states.nodes.min(by: { $0.position < $1.position }) else {
+            throw LinearClientError.apiError(["The issue's team has no completed state"])
+        }
+        let result = try await execute(
+            Self.updateStateMutation, variables: ["id": id, "stateId": done.id], as: IssueUpdateData.self
+        )
+        guard result.issueUpdate.success else { throw LinearClientError.invalidResponse }
+        return true
+    }
+
+    private struct IssuesData: Decodable {
+        let issues: IssuesResponse
+    }
+
     private struct IssuesResponse: Decodable {
         let nodes: [LinearIssue]
         let pageInfo: PageInfo
@@ -116,20 +155,50 @@ struct LinearClient: Sendable {
         }
     }
 
-    private struct GraphQLResponse<T: Decodable>: Decodable {
-        let data: DataWrapper?
-        let errors: [GraphQLError]?
+    private struct IssueStateData: Decodable {
+        let issue: Issue
 
-        struct DataWrapper: Decodable {
-            let issues: T
+        struct Issue: Decodable {
+            let state: WorkflowState
+            let team: Team
         }
+
+        struct WorkflowState: Decodable {
+            let type: String
+        }
+
+        struct Team: Decodable {
+            let states: States
+        }
+
+        struct States: Decodable {
+            let nodes: [Node]
+        }
+
+        struct Node: Decodable {
+            let id: String
+            let position: Double
+        }
+    }
+
+    private struct IssueUpdateData: Decodable {
+        let issueUpdate: Result
+
+        struct Result: Decodable {
+            let success: Bool
+        }
+    }
+
+    private struct GraphQLResponse<T: Decodable>: Decodable {
+        let data: T?
+        let errors: [GraphQLError]?
     }
 
     private struct GraphQLError: Decodable {
         let message: String
     }
 
-    private func executeQuery(_ query: String, variables: [String: Any]) async throws -> IssuesResponse {
+    private func execute<T: Decodable>(_ query: String, variables: [String: Any], as type: T.Type) async throws -> T {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -143,16 +212,16 @@ struct LinearClient: Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
-        let response = try decoder.decode(GraphQLResponse<IssuesResponse>.self, from: data)
+        let response = try decoder.decode(GraphQLResponse<T>.self, from: data)
 
         if let errors = response.errors, !errors.isEmpty {
             throw LinearClientError.apiError(errors.map(\.message))
         }
 
-        guard let issues = response.data?.issues else {
+        guard let result = response.data else {
             throw LinearClientError.invalidResponse
         }
 
-        return issues
+        return result
     }
 }
