@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The daemon log shows each line as it is written. Under launchd, output went
+  to the log file block-buffered, so lines appeared only when the buffer
+  filled, minutes late or not before a restart.
+- The repository ignores `worktrees/`, where `work start` puts the worktrees
+  of agents working on superlinear itself.
+
 ## [1.5.0] 2026-10-09
 
 ### Added

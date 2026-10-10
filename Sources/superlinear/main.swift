@@ -1,5 +1,9 @@
 import Foundation
 
+// launchd sends stdout to the daemon log, a file, which makes it block-buffered:
+// lines would appear only once the buffer filled. Flush each line instead.
+setvbuf(stdout, nil, _IOLBF, 0)
+
 let usage = """
 Usage: superlinear [--config <path>]
        superlinear install [--force]

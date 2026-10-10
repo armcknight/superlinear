@@ -4,3 +4,5 @@
 **/xcuserdata/
 .DS_Store
 /Sources/superlinear/BuildMetadata.generated.swift
+# worktrees that `work start` creates, as for agents working on this repo
+/worktrees/
