@@ -171,6 +171,8 @@ actor Daemon {
         case nil: log("Agent for \(run.identifier) ended without a status", workspace: workspace)
         }
         state.removeRun(issueId: run.issueId, workspace: workspace)
+        // Even an agent that failed may have opened a pull request first.
+        state.awaitMerge(PendingMerge(run), workspace: workspace)
         runner.cleanUp(run)
         save()
         fillSlots()
@@ -184,6 +186,15 @@ actor Daemon {
 
     func filterUnprocessed(_ issues: [LinearIssue], workspace: String) -> [LinearIssue] {
         issues.filter { !state.isProcessed($0.id, workspace: workspace) }
+    }
+
+    func pendingMerges(workspace: String) -> [PendingMerge] {
+        state.pendingMerges(workspace: workspace)
+    }
+
+    func stopAwaitingMerge(issueId: String, workspace: String) {
+        state.stopAwaitingMerge(issueId: issueId, workspace: workspace)
+        save()
     }
 
     func updateLastPoll(_ date: Date, workspace: String) {

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Each poll checks the pull requests opened by agents that have exited. When
+  one merges, the daemon marks the issue done in Linear and removes its
+  worktree and local branch with `work finish`. A closed pull request, or an
+  agent that opened none, ends the watch and leaves the worktree in place.
+
 ## [1.4.0] 2026-10-09
 
 ### Added

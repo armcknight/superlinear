@@ -77,12 +77,14 @@ struct StateTests {
             issueId: "SL-2", identifier: "SL-2", branchName: "b", sessionId: "s",
             pid: 42, processStartedAt: Date(timeIntervalSince1970: 1_700_000_100), resumes: 1
         ), workspace: "w")
+        state.awaitMerge(PendingMerge(issueId: "SL-3", identifier: "SL-3", branchName: "c"), workspace: "w")
         try state.save(to: url)
 
         let restored = State.load(from: url)
         #expect(restored.isProcessed("SL-1", workspace: "w"))
         #expect(restored.lastPollTimestamp(workspace: "w").timeIntervalSince1970 == 1_700_000_000)
         #expect(restored.runs(workspace: "w") == state.runs(workspace: "w"))
+        #expect(restored.pendingMerges(workspace: "w") == state.pendingMerges(workspace: "w"))
     }
 
     @Test("A state file from before runs were tracked still loads")
@@ -91,6 +93,21 @@ struct StateTests {
         let state = try State.decoded(from: Data(json.utf8))
         #expect(state.isProcessed("SL-1", workspace: "w"))
         #expect(state.runs(workspace: "w").isEmpty)
+        #expect(state.pendingMerges(workspace: "w").isEmpty)
+    }
+
+    @Test("Pending merges are recorded per issue and removed when settled")
+    func pendingMergeBookkeeping() {
+        var state = State()
+        let run = AgentRun(issueId: "SL-1", identifier: "SL-1", branchName: "b", sessionId: "s")
+        state.awaitMerge(PendingMerge(run), workspace: "w")
+        #expect(state.pendingMerges(workspace: "w") == [
+            PendingMerge(issueId: "SL-1", identifier: "SL-1", branchName: "b"),
+        ])
+        #expect(state.pendingMerges(workspace: "other").isEmpty)
+
+        state.stopAwaitingMerge(issueId: "SL-1", workspace: "w")
+        #expect(state.pendingMerges(workspace: "w").isEmpty)
     }
 
     @Test("Runs are recorded per issue and removed when done")

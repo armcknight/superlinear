@@ -31,19 +31,25 @@ struct WorkspaceState: Codable, Sendable {
     var lastPollTimestamp: Date
     /// Runs in flight, keyed by issue ID.
     var inFlight: [String: AgentRun]
+    /// Issues whose agents have ended, awaiting their pull requests' merge,
+    /// keyed by issue ID.
+    var pendingMerges: [String: PendingMerge]
 
     init() {
         processedIssueIds = []
         lastPollTimestamp = .distantPast
         inFlight = [:]
+        pendingMerges = [:]
     }
 
-    // State files written before runs were tracked have no `inFlight`.
+    // State files written before runs were tracked have no `inFlight`, and
+    // those written before pull requests were watched have no `pendingMerges`.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         processedIssueIds = try container.decode(Set<String>.self, forKey: .processedIssueIds)
         lastPollTimestamp = try container.decode(Date.self, forKey: .lastPollTimestamp)
         inFlight = try container.decodeIfPresent([String: AgentRun].self, forKey: .inFlight) ?? [:]
+        pendingMerges = try container.decodeIfPresent([String: PendingMerge].self, forKey: .pendingMerges) ?? [:]
     }
 }
 
@@ -117,6 +123,18 @@ struct State: Codable, Sendable {
 
     func runs(workspace: String) -> [AgentRun] {
         workspaces[workspace].map { Array($0.inFlight.values) } ?? []
+    }
+
+    mutating func awaitMerge(_ pending: PendingMerge, workspace: String) {
+        workspaces[workspace, default: WorkspaceState()].pendingMerges[pending.issueId] = pending
+    }
+
+    mutating func stopAwaitingMerge(issueId: String, workspace: String) {
+        workspaces[workspace]?.pendingMerges[issueId] = nil
+    }
+
+    func pendingMerges(workspace: String) -> [PendingMerge] {
+        workspaces[workspace].map { Array($0.pendingMerges.values) } ?? []
     }
 
     static func stateFileURL() -> URL {
