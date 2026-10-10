@@ -14,7 +14,7 @@ This is a personal tool, published as a reference. It is opinionated about how w
 2. Each configured workspace polls on its own loop, concurrently.
 3. Each poll queries the Linear GraphQL API for issues created since the last poll, in the `backlog` or `unstarted` state, optionally filtered by team. Results are paginated 50 at a time.
 4. Issue IDs already recorded in the state file are discarded, so an issue is processed once.
-5. For each remaining issue, the daemon records the issue as processed and starts its agent, without waiting for it — the next poll runs on schedule however long agents take. It picks a Claude session ID, writes the prompt to a file, then runs, in the repository directory:
+5. Each remaining issue is recorded as processed and queued. While fewer than `maxConcurrentAgents` agents run, the oldest queued issue starts. The poll does not wait for agents — the next one runs on schedule however long they take. It picks a Claude session ID, writes the prompt to a file, then runs, in the repository directory:
 
    ```
    work start --headless --prompt-file <prompt> --log-file <log> --session-id <uuid> <issue-branch-name>
@@ -29,7 +29,8 @@ Agents outlive the daemon, so restarting it — an upgrade, `make reload`, a cra
 
 - **Still running:** it waits for that process and records the run finished when it exits.
 - **Finished while the daemon was down:** a small wrapper around `work` leaves its exit status in a file, so the run is recorded finished.
-- **Interrupted**, as by a reboot: it runs `work start --headless --resume <uuid>`, which continues the same Claude session with a prompt to work out where it stopped and carry on. If Claude had not saved the session yet, it starts again under the same ID instead. A run interrupted three times is abandoned, with a message in the daemon log.
+- **Interrupted**, as by a reboot: it goes back in the queue at its original place. When it starts, it runs `work start --headless --resume <uuid>`, which continues the same Claude session with a prompt to work out where it stopped and carry on. If Claude had not saved the session yet, it starts again under the same ID instead. A run interrupted three times is abandoned, with a message in the daemon log.
+- **Queued and never started:** it stays in the queue.
 
 The prompt instructs the agent to run `/armcknight-claude:start`, implement the change, run `/armcknight-claude:commit`, then run `/armcknight-claude:pr --autonomous` to open a PR and monitor CI. The agent is told not to pause for confirmation.
 
@@ -95,6 +96,7 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
 
 ```json
 {
+  "maxConcurrentAgents": 3,
   "workspaces": [
     {
       "name": "my-workspace",
@@ -114,6 +116,8 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
 | `repoPath` | yes | Repository the agent works in. `~` is expanded. |
 | `teamIds` | no | Linear team IDs to watch. Empty or absent means all teams. Defaults to `[]`. |
 | `pollIntervalSeconds` | no | Seconds between polls. Defaults to `60`. |
+
+`maxConcurrentAgents`, at the top level beside `workspaces`, limits how many agents run at once across all workspaces. It defaults to `3`. Further issues wait in a queue, kept in the state file, and start oldest first as running agents finish. An interrupted agent keeps its place, so it resumes before newer issues start.
 
 Each workspace entry is one Linear-account-to-repository pairing. List several to watch more than one repository.
 

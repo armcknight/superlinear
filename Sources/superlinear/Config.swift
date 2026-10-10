@@ -22,7 +22,24 @@ struct WorkspaceConfig: Codable, Sendable {
 }
 
 struct Config: Codable, Sendable {
+    static let defaultMaxConcurrentAgents = 3
+
     let workspaces: [WorkspaceConfig]
+    /// Agents allowed to run at once, across all workspaces. Further issues
+    /// wait in a queue and start, oldest first, as running agents finish.
+    let maxConcurrentAgents: Int
+
+    enum CodingKeys: String, CodingKey {
+        case workspaces, maxConcurrentAgents
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        workspaces = try container.decode([WorkspaceConfig].self, forKey: .workspaces)
+        let max = try container.decodeIfPresent(Int.self, forKey: .maxConcurrentAgents)
+            ?? Self.defaultMaxConcurrentAgents
+        maxConcurrentAgents = Swift.max(1, max)
+    }
 
     static func load(from path: String? = nil) throws -> Config {
         let configPath = path ?? "\(Paths.home)/.config/superlinear/config.json"

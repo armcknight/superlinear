@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `maxConcurrentAgents` limits how many agents run at once across all
+  workspaces, defaulting to 3. New issues wait in a queue kept in the state
+  file and start oldest first as agents finish, so a first poll over a long
+  backlog no longer starts an agent for every issue at once. An interrupted
+  agent goes back in the queue at its original place.
+
 ## [1.3.0] 2026-10-09
 
 ### Changed

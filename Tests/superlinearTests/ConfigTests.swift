@@ -19,6 +19,14 @@ struct ConfigTests {
         #expect(workspace.pollIntervalSeconds == 60)
     }
 
+    @Test("The agent limit defaults, and cannot go below one")
+    func agentLimit() throws {
+        let workspaces = #""workspaces": [{"name": "w", "apiKey": "k", "repoPath": "~/r"}]"#
+        #expect(try decode("{\(workspaces)}").maxConcurrentAgents == Config.defaultMaxConcurrentAgents)
+        #expect(try decode("{\(workspaces), \"maxConcurrentAgents\": 5}").maxConcurrentAgents == 5)
+        #expect(try decode("{\(workspaces), \"maxConcurrentAgents\": 0}").maxConcurrentAgents == 1)
+    }
+
     @Test("Explicit values win over the defaults")
     func explicitValuesWin() throws {
         let config = try decode("""

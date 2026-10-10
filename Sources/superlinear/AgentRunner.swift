@@ -36,11 +36,11 @@ enum Recovery: Equatable {
     case finished(Int32)
     /// The agent is still running. Wait for it.
     case adopt
-    /// The agent was interrupted. Continue its Claude session.
-    case resume
-    /// The agent was interrupted before Claude saved anything. Start again
-    /// under the same session ID.
-    case restart
+    /// The run never launched. Leave it in the queue.
+    case waiting
+    /// The agent was interrupted. Put it back in the queue, to be resumed when
+    /// a slot is free.
+    case requeue
     /// The agent was interrupted too many times. Stop trying.
     case abandon
 }
@@ -157,20 +157,34 @@ struct AgentRunner: Sendable {
 
     // MARK: Recovery
 
-    static func recovery(status: Int32?, running: Bool, sessionExists: Bool, resumes: Int) -> Recovery {
+    static func recovery(status: Int32?, running: Bool, launched: Bool, resumes: Int) -> Recovery {
         if let status { return .finished(status) }
         if running { return .adopt }
-        if resumes >= maxResumes { return .abandon }
-        return sessionExists ? .resume : .restart
+        if !launched { return .waiting }
+        return resumes >= maxResumes ? .abandon : .requeue
     }
 
     func recovery(for run: AgentRun) -> Recovery {
         Self.recovery(
             status: Self.readStatus(atPath: statusFile(for: run)),
             running: Self.isRunning(run),
-            sessionExists: claudeSessionExists(run.sessionId),
+            launched: !run.isQueued,
             resumes: run.resumes
         )
+    }
+
+    /// Resumes the run's Claude session when Claude saved one, which it has
+    /// after an interruption; otherwise starts the session under the run's ID.
+    func launchMode(for run: AgentRun) -> LaunchMode {
+        claudeSessionExists(run.sessionId) ? .resume : .start
+    }
+
+    /// The waiting run to launch next: the one queued longest ago.
+    static func nextQueued<Key>(_ runs: [(Key, AgentRun)]) -> (Key, AgentRun)? {
+        runs.filter { $0.1.isQueued }.min { a, b in
+            let (dateA, dateB) = (a.1.queuedAt ?? .distantPast, b.1.queuedAt ?? .distantPast)
+            return dateA == dateB ? a.1.identifier < b.1.identifier : dateA < dateB
+        }
     }
 
     /// Calls `onExit` with the status of a running agent this daemon did not

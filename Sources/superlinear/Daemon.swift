@@ -8,6 +8,9 @@ actor Daemon {
     private var processes: [String: Process] = [:]
     /// Watches on agents an earlier daemon launched, keyed by issue ID.
     private var watchers: [String: DispatchSourceProcess] = [:]
+    /// Set while recovery sorts the runs, which it must finish before any slot
+    /// is counted as free.
+    private var recovering = false
 
     init(config: Config) {
         self.config = config
@@ -48,26 +51,30 @@ actor Daemon {
 
     // MARK: - Agents
 
-    /// Starts an agent for a new issue. The issue counts as processed from the
-    /// moment its agent starts, so no later poll starts a second one, and the
-    /// poll does not wait for it.
-    func startAgent(for issue: LinearIssue, workspace: WorkspaceConfig) {
+    /// Queues an agent for a new issue and starts it when a slot is free. The
+    /// issue counts as processed from the moment it is queued, so no later poll
+    /// queues it twice, and the poll does not wait for its agent.
+    func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig) {
         let run = AgentRun(
             issueId: issue.id,
             identifier: issue.identifier,
             branchName: issue.branchName,
-            sessionId: UUID().uuidString.lowercased()
+            sessionId: UUID().uuidString.lowercased(),
+            queuedAt: Date()
         )
         state.markProcessed(issue.id, workspace: workspace.name)
-        log("Processing issue \(issue.identifier): \(issue.title)", workspace: workspace.name)
-        launch(run, mode: .start, workspace: workspace)
+        state.recordRun(run, workspace: workspace.name)
+        log("Queued \(issue.identifier): \(issue.title)", workspace: workspace.name)
+        save()
+        fillSlots()
     }
 
     /// Picks up the runs a previous daemon left in the state file.
     private func recoverRuns() {
+        recovering = true
         for (name, workspaceState) in state.workspaces {
             for run in workspaceState.inFlight.values {
-                guard let workspace = config.workspaces.first(where: { $0.name == name }) else {
+                guard let workspace = workspace(named: name) else {
                     log("Dropping \(run.identifier): workspace is no longer configured", workspace: name)
                     state.removeRun(issueId: run.issueId, workspace: name)
                     continue
@@ -75,7 +82,9 @@ actor Daemon {
                 recover(run, workspace: workspace)
             }
         }
+        recovering = false
         save()
+        fillSlots()
     }
 
     private func recover(_ run: AgentRun, workspace: WorkspaceConfig) {
@@ -90,16 +99,15 @@ actor Daemon {
             }) {
                 watchers[run.issueId] = source
             }
-        case .resume:
-            log("Resuming \(run.identifier), interrupted", workspace: workspace.name)
-            var resumed = run
-            resumed.resumes += 1
-            launch(resumed, mode: .resume, workspace: workspace)
-        case .restart:
-            log("Restarting \(run.identifier), interrupted before Claude saved a session", workspace: workspace.name)
-            var restarted = run
-            restarted.resumes += 1
-            launch(restarted, mode: .start, workspace: workspace)
+        case .waiting:
+            break
+        case .requeue:
+            log("\(run.identifier) was interrupted; queued to resume", workspace: workspace.name)
+            var requeued = run
+            requeued.pid = nil
+            requeued.processStartedAt = nil
+            requeued.resumes += 1
+            state.recordRun(requeued, workspace: workspace.name)
         case .abandon:
             log(
                 "Giving up on \(run.identifier) after \(run.resumes) resumes; see \(runner.agentLog(for: run))",
@@ -109,14 +117,34 @@ actor Daemon {
         }
     }
 
-    private func launch(_ run: AgentRun, mode: LaunchMode, workspace: WorkspaceConfig) {
+    /// Launches queued runs, oldest first, until the agent limit is reached.
+    private func fillSlots() {
+        guard !recovering else { return }
+        while processes.count + watchers.count < config.maxConcurrentAgents {
+            let queued = state.workspaces.flatMap { name, workspaceState in
+                workspaceState.inFlight.values.map { (name, $0) }
+            }.filter { workspace(named: $0.0) != nil }
+            guard let (name, run) = AgentRunner.nextQueued(queued),
+                  let workspace = workspace(named: name)
+            else { break }
+            launch(run, workspace: workspace)
+        }
+        let waiting = state.workspaces.values.reduce(0) { $0 + $1.inFlight.values.filter(\.isQueued).count }
+        if waiting > 0 {
+            print("[superlinear] \(processes.count + watchers.count) agent(s) running, \(waiting) queued")
+        }
+    }
+
+    private func launch(_ run: AgentRun, workspace: WorkspaceConfig) {
         let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let mode = runner.launchMode(for: run)
         do {
             let (launched, process) = try runner.launch(run, mode: mode, repoPath: repoPath) { status in
                 Task { await self.finish(run, status: status, workspace: workspace.name) }
             }
             processes[run.issueId] = process
             state.recordRun(launched, workspace: workspace.name)
+            log(mode == .resume ? "Resuming \(run.identifier)" : "Starting \(run.identifier)", workspace: workspace.name)
             log("  Branch: \(run.branchName)", workspace: workspace.name)
             log("  Session: \(run.sessionId)", workspace: workspace.name)
             log("  Log: \(runner.agentLog(for: run))", workspace: workspace.name)
@@ -125,6 +153,10 @@ actor Daemon {
             state.removeRun(issueId: run.issueId, workspace: workspace.name)
         }
         save()
+    }
+
+    private func workspace(named name: String) -> WorkspaceConfig? {
+        config.workspaces.first { $0.name == name }
     }
 
     private func finish(_ run: AgentRun, status: Int32?, workspace: String) {
@@ -141,6 +173,7 @@ actor Daemon {
         state.removeRun(issueId: run.issueId, workspace: workspace)
         runner.cleanUp(run)
         save()
+        fillSlots()
     }
 
     // MARK: - State accessors (called from WorkspaceProcessor on actor context)

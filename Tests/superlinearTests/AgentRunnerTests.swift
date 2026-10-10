@@ -22,16 +22,42 @@ struct AgentRunnerTests {
     }
 
     // The order matters: a status means the agent ended, whatever else is true,
-    // and a live agent must never be resumed alongside itself.
-    @Test("Recovery prefers a status, then a live process, then resuming")
+    // and a live agent must never be relaunched alongside itself.
+    @Test("Recovery prefers a status, then a live process, then the queue")
     func recoveryDecisions() {
-        #expect(AgentRunner.recovery(status: 0, running: true, sessionExists: true, resumes: 9) == .finished(0))
-        #expect(AgentRunner.recovery(status: nil, running: true, sessionExists: true, resumes: 9) == .adopt)
-        #expect(AgentRunner.recovery(status: nil, running: false, sessionExists: true, resumes: 0) == .resume)
-        #expect(AgentRunner.recovery(status: nil, running: false, sessionExists: false, resumes: 0) == .restart)
+        #expect(AgentRunner.recovery(status: 0, running: true, launched: true, resumes: 9) == .finished(0))
+        #expect(AgentRunner.recovery(status: nil, running: true, launched: true, resumes: 9) == .adopt)
+        #expect(AgentRunner.recovery(status: nil, running: false, launched: false, resumes: 9) == .waiting)
+        #expect(AgentRunner.recovery(status: nil, running: false, launched: true, resumes: 0) == .requeue)
         #expect(AgentRunner.recovery(
-            status: nil, running: false, sessionExists: true, resumes: AgentRunner.maxResumes
+            status: nil, running: false, launched: true, resumes: AgentRunner.maxResumes
         ) == .abandon)
+    }
+
+    @Test("The oldest queued run goes next, and launched ones are skipped")
+    func queueOrder() {
+        func queued(_ id: String, at seconds: TimeInterval, pid: Int32? = nil) -> (String, AgentRun) {
+            ("w", AgentRun(
+                issueId: id, identifier: id, branchName: "b", sessionId: id, pid: pid,
+                queuedAt: Date(timeIntervalSince1970: seconds)
+            ))
+        }
+        let runs = [queued("new", at: 30), queued("running", at: 5, pid: 42), queued("old", at: 10)]
+        #expect(AgentRunner.nextQueued(runs)?.1.identifier == "old")
+        #expect(AgentRunner.nextQueued([queued("running", at: 5, pid: 42)]) == nil)
+    }
+
+    @Test("A run resumes only when Claude saved its session")
+    func launchMode() throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let runner = AgentRunner(home: home, environment: [:])
+        #expect(runner.launchMode(for: run) == .start)
+
+        let project = "\(home)/.claude/projects/-x"
+        try FileManager.default.createDirectory(atPath: project, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: "\(project)/abc.jsonl", contents: Data())
+        #expect(runner.launchMode(for: run) == .resume)
     }
 
     @Test("A live process is recognised by its pid and start time")

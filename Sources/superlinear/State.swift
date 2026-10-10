@@ -17,6 +17,13 @@ struct AgentRun: Codable, Sendable, Equatable {
     var processStartedAt: Date?
     /// How many times the run has been resumed after an interruption.
     var resumes: Int = 0
+    /// When the issue joined the queue. Waiting runs start oldest first, and an
+    /// interrupted run keeps its time, so it goes ahead of newer issues.
+    var queuedAt: Date?
+
+    /// Waiting for a free slot: recorded, but not launched, or launched and
+    /// since requeued after an interruption.
+    var isQueued: Bool { pid == nil }
 }
 
 struct WorkspaceState: Codable, Sendable {

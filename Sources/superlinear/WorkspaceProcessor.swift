@@ -22,7 +22,7 @@ struct WorkspaceProcessor: Sendable {
         }
 
         for issue in newIssues {
-            await daemon.startAgent(for: issue, workspace: workspace)
+            await daemon.enqueueAgent(for: issue, workspace: workspace)
         }
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
