@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] 2026-10-11
+
 ### Added
 
 - Config edits take effect without a reload. The daemon checks the config file
