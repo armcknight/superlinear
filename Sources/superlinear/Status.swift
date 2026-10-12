@@ -1,7 +1,7 @@
 import Foundation
 
 extension PullRequest {
-    static let jsonFields = "number,url,state,headRefName,isDraft,additions,deletions,changedFiles"
+    static let jsonFields = "number,url,state,headRefName,isDraft,additions,deletions,changedFiles,baseRefName"
 
     /// The pull request that speaks for `branch`: an open one first, then a
     /// merged one, then a closed one, the newest of each.
@@ -280,13 +280,33 @@ struct WorkspaceReport: Sendable {
             if let ciTimes { tasks[index].ciTime = ciTimes[tasks[index].branch] ?? 0 }
         }
 
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        var stats = PullRequestStats.of(tasks: tasks, reviews: reviews ?? []) { branch in
+            (transcripts.usage(forBranch: branch), ciTimes.map { $0[branch] ?? 0 })
+        }
+        // Merged branches are in their base already, so only open ones can
+        // be measured locally.
+        for index in stats.indices where !stats[index].merged {
+            guard let base = stats[index].base,
+                let diff = LocalDiff.measure(branch: stats[index].branch, base: base, in: repoPath)
+            else { continue }
+            stats[index].apply(diff)
+        }
+        let ahead = stats.filter(\.forkedAheadOfOrigin)
+        for base in Set(ahead.compactMap(\.base)).sorted() {
+            let count = ahead.filter { $0.base == base }.count
+            let commits = LocalDiff.commitsAhead(base: base, in: repoPath).map { " by \($0) commits" } ?? ""
+            warnings.append(
+                "Local \(base) is ahead of origin/\(base)\(commits), and \(count) open pull request\(count == 1 ? "" : "s") "
+                    + "include commits from it, so GitHub shows them larger than they are. Push \(base). "
+                    + "The summary measures them from the local fork point.")
+        }
+
         return WorkspaceReport(
             name: workspace.name,
             entries: tasks,
             reviews: reviews,
-            pullRequestStats: PullRequestStats.of(tasks: tasks, reviews: reviews ?? []) { branch in
-                (transcripts.usage(forBranch: branch), ciTimes.map { $0[branch] ?? 0 })
-            },
+            pullRequestStats: stats,
             warnings: warnings
         )
     }

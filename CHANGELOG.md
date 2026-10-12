@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The status summary shows a histogram for each measure, in place of the mean,
+  with the minimum beside the median and maximum.
+- Open pull requests are measured locally with `git diff --shortstat`, from
+  the later of the fork points off the local base branch and off
+  `origin/<base>`. When agents forked off unpushed local commits, which GitHub
+  counts as part of each pull request, the workspace warns to push the base
+  branch, and the summary says how many pull requests are affected.
+
 ## [1.12.0] 2026-10-12
 
 ### Added

@@ -41,6 +41,8 @@ struct PullRequest: Codable, Sendable, Equatable {
     var additions: Int? = nil
     var deletions: Int? = nil
     var changedFiles: Int? = nil
+    /// The branch it would merge into, when the listing asked.
+    var baseRefName: String? = nil
 }
 
 /// What a poll found for an issue awaiting its merge.

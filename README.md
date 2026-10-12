@@ -213,9 +213,12 @@ With no subcommand it runs the daemon in the foreground, which is how to test a 
 After the workspaces comes a summary:
 
 - **Counts:** the number of projects, and of items in each section above, across all workspaces.
-- **Per pull request:** the total, mean, median and maximum of each measure over the agents' pull requests — those of finished tasks that are open or merged, and the open ones listed for review. The measures are lines added and removed and files changed, from GitHub; tokens, cache reads and agent time, from the Claude transcripts; and CI time.
+- **Out of sync:** for each workspace whose open pull requests fork off local commits not yet pushed, how many do.
+- **Per pull request:** the total, median, minimum and maximum of each measure, and a histogram of its values in 16 equal ranges from minimum to maximum, over the agents' pull requests — those of finished tasks that are open or merged, and the open ones listed for review. The measures are lines added and removed and files changed; tokens, cache reads and agent time, from the Claude transcripts; and CI time.
 - **All tracked tasks:** the tokens, cache reads, agent time and CI time of every task, with or without a pull request.
 - **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
+
+Lines and files of an open pull request come from `git diff --shortstat` in the local repository, measured from the later of two fork points: where the branch left the local base branch, and where it left `origin/<base>`. An agent forks off the local base, so when that is ahead of GitHub's, GitHub counts the unpushed commits as part of each pull request. The workspace then shows a warning to push the base branch. Merged pull requests, and branches found neither locally nor on `origin`, use GitHub's numbers.
 
 Tokens are input, cache writes included, plus output; cache reads, much cheaper, are shown apart. The transcripts are found under `~/.claude/projects` by the name of the agent's worktree branch, so they count also after the worktree is removed. Each message counts once, and subagents' tokens count too. Agent time is the time between consecutive entries in the main session's transcripts, leaving out gaps over 30 minutes, as while the Mac slept. CI time is the start-to-end time of the branch's finished GitHub Actions runs, from `gh run list`; a dash means the repository has no runs. A dash in the tokens column means no transcripts were found.
 

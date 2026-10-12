@@ -133,6 +133,68 @@ struct StatusSummaryTests {
         #expect(stats[2].ciTime == 60)
     }
 
+    // MARK: Local size
+
+    @Test("git's short stat is read, with parts it leaves out as zero")
+    func shortstat() {
+        var diff = LocalDiff()
+        diff.read(shortstat: "3 files changed, 10 insertions(+), 2 deletions(-)")
+        #expect(diff == LocalDiff(changedFiles: 3, additions: 10, deletions: 2))
+        diff = LocalDiff()
+        diff.read(shortstat: "1 file changed, 1 insertion(+)")
+        #expect(diff == LocalDiff(changedFiles: 1, additions: 1, deletions: 0))
+        diff = LocalDiff()
+        diff.read(shortstat: "")
+        #expect(diff == LocalDiff())
+    }
+
+    /// A clone of a fresh repository with one commit pushed to main.
+    private func clone() throws -> (root: String, repo: String, commit: (String, String) -> Void) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        let repo = "\(root)/clone"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        _ = Git.run(["init", "-q", "--bare", "-b", "main", "\(root)/origin.git"], in: root)
+        _ = Git.run(["clone", "-q", "\(root)/origin.git", repo], in: root)
+        _ = Git.run(["checkout", "-q", "-b", "main"], in: repo)
+        let commit = { (file: String, text: String) in
+            FileManager.default.createFile(atPath: "\(repo)/\(file)", contents: Data(text.utf8))
+            _ = Git.run(["add", file], in: repo)
+            _ = Git.run(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", file], in: repo)
+        }
+        commit("base", "a\n")
+        _ = Git.run(["push", "-q", "origin", "main"], in: repo)
+        return (root, repo, commit)
+    }
+
+    @Test("A branch forked off unpushed commits is measured from the local fork point")
+    func localForkIsLater() throws {
+        let (root, repo, commit) = try clone()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        commit("unpushed", "1\n2\n3\n")
+        _ = Git.run(["checkout", "-q", "-b", "linear/a-1"], in: repo)
+        commit("feature", "x\n")
+
+        let diff = LocalDiff.measure(branch: "linear/a-1", base: "main", in: repo)
+        #expect(diff == LocalDiff(changedFiles: 1, additions: 1, deletions: 0, forkedAheadOfOrigin: true))
+        #expect(LocalDiff.commitsAhead(base: "main", in: repo) == 1)
+    }
+
+    @Test("A branch forked off a newer origin than local main is measured from origin's fork point")
+    func originForkIsLater() throws {
+        let (root, repo, commit) = try clone()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        commit("pushed", "1\n2\n3\n")
+        _ = Git.run(["push", "-q", "origin", "main"], in: repo)
+        _ = Git.run(["checkout", "-q", "-b", "linear/a-1"], in: repo)
+        commit("feature", "x\n")
+        // Local main falls behind origin's.
+        _ = Git.run(["branch", "-f", "main", "main~1"], in: repo)
+
+        let diff = LocalDiff.measure(branch: "linear/a-1", base: "main", in: repo)
+        #expect(diff == LocalDiff(changedFiles: 1, additions: 1, deletions: 0, forkedAheadOfOrigin: false))
+        #expect(LocalDiff.measure(branch: "linear/missing", base: "main", in: repo) == nil)
+    }
+
     // MARK: Rendering
 
     @Test("Numbers and durations are compact")
@@ -148,13 +210,27 @@ struct StatusSummaryTests {
         #expect(StatusSummary.duration(3 * 86400 + 4 * 3600) == "3d 04h")
     }
 
-    @Test("Median and mean")
+    private func metric(_ values: [Double]) -> StatusSummary.Metric {
+        StatusSummary.Metric(name: "m", values: values, format: { "\($0)" })
+    }
+
+    @Test("Median, minimum and maximum")
     func statistics() {
-        let odd = StatusSummary.Metric(name: "m", values: [5, 1, 3], format: { "\($0)" })
+        let odd = metric([5, 1, 3])
         #expect(odd.median == 3)
-        #expect(odd.mean == 3)
+        #expect(odd.min == 1)
         #expect(odd.max == 5)
-        #expect(StatusSummary.Metric(name: "m", values: [4, 1, 3, 2], format: { "\($0)" }).median == 2.5)
+        #expect(metric([4, 1, 3, 2]).median == 2.5)
+    }
+
+    @Test("The histogram bins values from min to max, scaled to the fullest bin, empty bins blank")
+    func histogram() {
+        // Bins one wide: 0 in the first, 8 in the ninth, 16 in the last.
+        let bars = metric([0, 0, 0, 0, 0, 0, 0, 0, 8, 16]).histogram
+        #expect(bars.count == StatusSummary.Metric.bins)
+        #expect(bars == "█       ▁      ▁")
+        #expect(metric([3, 3]).histogram == "█")
+        #expect(metric([]).histogram == "")
     }
 
     @Test("The summary counts sections across workspaces, then gives per pull request and per project figures")
@@ -164,11 +240,10 @@ struct StatusSummaryTests {
         merged.ciTime = 120
         let tasks = [merged, task("A-2", .openPullRequest, pr: pullRequest(2, .open, additions: 30)), task("A-3", .queued)]
         let reviews = [review(2), review(6, draft: true)]
-        let one = WorkspaceReport(
-            name: "one", entries: tasks, reviews: reviews,
-            pullRequestStats: PullRequestStats.of(tasks: tasks, reviews: reviews, measure: { _ in (nil, nil) }),
-            warnings: []
-        )
+        var stats = PullRequestStats.of(tasks: tasks, reviews: reviews, measure: { _ in (nil, nil) })
+        stats[1].base = "main"
+        stats[1].forkedAheadOfOrigin = true
+        let one = WorkspaceReport(name: "one", entries: tasks, reviews: reviews, pullRequestStats: stats, warnings: [])
         // Reviews unknown: the open pull request is counted among the tasks.
         let two = WorkspaceReport(name: "two", entries: [task("B-1", .openPullRequest, pr: pullRequest(9, .open))], warnings: [])
         let empty = WorkspaceReport(name: "three", entries: [], warnings: [])
@@ -181,16 +256,17 @@ struct StatusSummaryTests {
           Queued               1
           Open pull requests   1
           Completed            1
+          Out of sync: 1 of one's pull requests carry unpushed commits from local main
 
           Per pull request (3 from agents: 2 open, 1 merged)
-                           total  mean  median   max
-            Lines added       47    16      10    30
-            Lines removed      2     1       1     1
-            Files changed      2     1       1     1
-            Tokens          1.5k  1.5k    1.5k  1.5k
-            Cache reads     9.0k  9.0k    9.0k  9.0k
-            Agent time       10m   10m     10m   10m
-            CI time           2m    2m      2m    2m
+                           total  median   min  distribution      max
+            Lines added       47      10     7  █ █            █  30
+            Lines removed      2       1     1  █                 1
+            Files changed      2       1     1  █                 1
+            Tokens          1.5k    1.5k  1.5k  █                 1.5k
+            Cache reads     9.0k    9.0k  9.0k  █                 9.0k
+            Agent time       10m     10m   10m  █                 10m
+            CI time           2m      2m    2m  █                 2m
 
           All 4 tracked tasks: 1.5k tokens, 9.0k cache reads, 10m agent time, 2m CI time
 
