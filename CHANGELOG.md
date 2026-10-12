@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Agents' build output is freed. When an agent ends, the daemon runs
+  `work clean` on its worktree, removing its SwiftPM `.build` directories and
+  Xcode DerivedData while keeping the worktree. At startup it cleans every
+  worktree whose agent is not running and whose build output has been idle
+  for an hour, and the DerivedData of worktrees since removed. Needs workr
+  1.2.0. Before, nothing removed either until a merge, and DerivedData not
+  even then, so the disk filled with tens of gigabytes.
+
 ## [1.10.0] 2026-10-11
 
 ### Added

@@ -123,7 +123,7 @@ struct PullRequestChecker: Sendable {
 
     /// Runs `arguments` in `directory` and returns its standard output, or
     /// throws with its combined output when it fails.
-    private func run(_ arguments: [String], in directory: String) async throws -> Data {
+    func run(_ arguments: [String], in directory: String) async throws -> Data {
         let environment = environment
         return try await Task.detached {
             let process = Process()

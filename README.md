@@ -27,6 +27,14 @@ This is a personal tool, published as a reference. It is opinionated about how w
    - **Open:** the next poll checks again.
    - **Closed without a merge**, or **no pull request:** the daemon logs it and stops watching. The worktree stays for you to inspect.
 
+### Disk space
+
+Agents' builds fill the disk fast: a SwiftPM `.build` directory or an Xcode DerivedData directory per worktree, often gigabytes each. The daemon frees them with `work clean`, which keeps the worktree:
+
+- **As it goes:** when an agent ends — its work pushed and its pull request opened — its worktree's `.build` and DerivedData are removed.
+- **At startup:** every worktree of a configured repository whose agent is not running is cleaned if its build output has been idle for an hour, so one you are using by hand is spared, and the DerivedData of worktrees since removed goes too. The daemon restarts on every upgrade, config edit and login, so anything missed is caught then.
+- **On merge:** `work finish` removes the worktree whole, with its DerivedData.
+
 ### Restarts
 
 Agents outlive the daemon, so restarting it — an upgrade, a config edit, `make reload`, a crash — does not stop work in flight. On start, the daemon checks each run left in the state file:
