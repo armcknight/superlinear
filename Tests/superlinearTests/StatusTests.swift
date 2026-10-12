@@ -36,6 +36,36 @@ struct StatusTests {
         #expect(TaskCategory.of(run: queued, running: false, issue: nil, pullRequest: merged) == .queued)
     }
 
+    @Test("A run addressing a review has its own category while running or queued, and resumes as usual when interrupted")
+    func addressingReview() {
+        let request = ReviewRequest(number: 4, url: "https://github.com/o/r/pull/4")
+        var running = launched
+        running.review = request
+        var waiting = queued
+        waiting.review = request
+        #expect(TaskCategory.of(run: running, running: true, issue: nil, pullRequest: nil) == .addressingReview)
+        #expect(TaskCategory.of(run: waiting, running: false, issue: nil, pullRequest: nil) == .addressingReview)
+        #expect(TaskCategory.of(run: running, running: false, issue: nil, pullRequest: nil) == .interrupted)
+    }
+
+    @Test("A review run's detail gives its pull request, and its log once launched")
+    func addressingReviewDetail() {
+        let request = ReviewRequest(number: 4, url: "https://github.com/o/r/pull/4")
+        var running = launched
+        running.review = request
+        var waiting = queued
+        waiting.review = request
+        waiting.resumes = 1
+        let detail = { (run: AgentRun, alive: Bool) in
+            WorkspaceReport.entries(
+                state: state(processed: ["SL-1"], inFlight: [run]),
+                issues: [issue("SL-1")], pullRequests: [], runner: runner, isRunning: { _ in alive }
+            ).first?.detail
+        }
+        #expect(detail(running, true) == "pid 42, log /home/.local/share/superlinear/logs/SL-1.log, https://github.com/o/r/pull/4")
+        #expect(detail(waiting, false) == "queued, to resume, attempt 2, https://github.com/o/r/pull/4")
+    }
+
     @Test("A finished task with an open pull request is listed with it")
     func openPullRequest() {
         #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: pullRequest(1, state: "OPEN")) == .openPullRequest)
@@ -180,6 +210,29 @@ struct StatusTests {
                    https://x/2
           Completed
             SL-10  Ten
+        """)
+    }
+
+    @Test("A pull request whose review an agent addresses says so under Awaiting review")
+    func awaitingAgent() {
+        let pullRequest = ReviewablePullRequest(
+            number: 4, url: "https://github.com/o/r/pull/4", title: "Four", headRefName: "linear/sl-1",
+            isDraft: false, reviewDecision: "CHANGES_REQUESTED", latestReviews: nil, statusCheckRollup: nil
+        )
+        let report = WorkspaceReport(
+            name: "w",
+            entries: [TaskEntry(identifier: "SL-1", title: "One", category: .addressingReview, detail: "queued, https://github.com/o/r/pull/4")],
+            reviews: [ReviewEntry(issue: issue("SL-1"), pullRequest: pullRequest)],
+            warnings: []
+        )
+        #expect(report.rendered() == """
+        w
+          Awaiting review
+            SL-1  #4 Four
+                  agent addressing review · no CI · https://github.com/o/r/pull/4
+          Addressing review
+            SL-1  One
+                  queued, https://github.com/o/r/pull/4
         """)
     }
 
