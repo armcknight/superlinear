@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `superlinear status` lists stale branches and worktrees per workspace:
+  local branches whose pull request merged or closed, and worktrees under
+  `worktrees/` whose agent ended without opening one. Each shows whether it
+  has a worktree, its last commit's age, and the commits removing it would
+  lose. The summary counts them.
+
 - Your reviews on an agent's pull request bring an agent back to address
   them. Each poll reads the reviews on the open pull request of every issue
   awaiting its merge, and a review from the GitHub user `gh` is signed in as,

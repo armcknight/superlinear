@@ -1,7 +1,7 @@
 import Foundation
 
 extension PullRequest {
-    static let jsonFields = "number,url,state,headRefName,isDraft,additions,deletions,changedFiles,baseRefName"
+    static let jsonFields = "number,url,state,headRefName,isDraft,additions,deletions,changedFiles,baseRefName,headRefOid"
 
     /// The pull request that speaks for `branch`: an open one first, then a
     /// merged one, then a closed one, the newest of each.
@@ -116,6 +116,8 @@ struct WorkspaceReport: Sendable {
     var reviews: [ReviewEntry]? = nil
     /// The agents' open and merged pull requests, for the summary.
     var pullRequestStats: [PullRequestStats] = []
+    /// Local branches and worktrees no longer needed.
+    var stale: [StaleBranch] = []
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
     var warnings: [String]
@@ -193,8 +195,10 @@ struct WorkspaceReport: Sendable {
         }
     }
 
+    static let staleHeading = "Stale branches and worktrees"
+
     /// The report as text, one section per category with entries in it.
-    func rendered() -> String {
+    func rendered(now: Date = Date()) -> String {
         var lines = [name]
         for warning in warnings {
             lines.append("  warning: \(warning)")
@@ -202,7 +206,7 @@ struct WorkspaceReport: Sendable {
         // Open pull requests are listed for review instead, when they could be.
         let tasks = reviews == nil ? entries : entries.filter { $0.category != .openPullRequest }
         let reviews = reviews ?? []
-        if tasks.isEmpty && reviews.isEmpty && warnings.isEmpty {
+        if tasks.isEmpty && reviews.isEmpty && stale.isEmpty && warnings.isEmpty {
             lines.append("  No tasks")
         }
         let width = (tasks.map(\.identifier.count) + reviews.map(\.issue.identifier.count)).max() ?? 0
@@ -237,6 +241,14 @@ struct WorkspaceReport: Sendable {
                 }
             }
         }
+
+        if !stale.isEmpty {
+            lines.append("  \(Self.staleHeading)")
+            for branch in stale {
+                lines.append("    \(branch.branch)")
+                lines.append("      \(branch.detail(now: now))")
+            }
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -258,9 +270,12 @@ struct WorkspaceReport: Sendable {
             }
         }
 
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let protected = StaleBranches.protectedBranches(repoPath: repoPath)
+        let branches = StaleBranches.localBranches(repoPath: repoPath).filter { !protected.contains($0.name) }
+
         var pullRequests: [PullRequest]?
-        if !ids.isEmpty && !issues.isEmpty {
-            let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        if (!ids.isEmpty && !issues.isEmpty) || !branches.isEmpty {
             do {
                 pullRequests = try PullRequest.list(in: repoPath)
             } catch {
@@ -270,7 +285,6 @@ struct WorkspaceReport: Sendable {
 
         var reviews: [ReviewEntry]?
         do {
-            let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
             let open = try ReviewablePullRequest.listOpen(in: repoPath)
             let identifiers = Array(Set(open.flatMap(\.issueIdentifiers)))
             let linked = try await LinearClient(apiKey: workspace.apiKey).fetchIssues(identifiers: identifiers)
@@ -283,8 +297,7 @@ struct WorkspaceReport: Sendable {
         var ciTimes: [String: TimeInterval]?
         if !tasks.isEmpty || reviews?.isEmpty == false {
             do {
-                let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
-                let runs = try WorkflowRun.list(in: repoPath)
+                    let runs = try WorkflowRun.list(in: repoPath)
                 // A repository without CI has no CI time, rather than none per task.
                 if !runs.isEmpty { ciTimes = WorkflowRun.time(byBranch: runs) }
             } catch {
@@ -296,7 +309,6 @@ struct WorkspaceReport: Sendable {
             if let ciTimes { tasks[index].ciTime = ciTimes[tasks[index].branch] ?? 0 }
         }
 
-        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
         var stats = PullRequestStats.of(tasks: tasks, reviews: reviews ?? []) { branch in
             (transcripts.usage(forBranch: branch), ciTimes.map { $0[branch] ?? 0 })
         }
@@ -318,11 +330,22 @@ struct WorkspaceReport: Sendable {
                     + "The summary measures them from the local fork point.")
         }
 
+        var stale: [StaleBranch] = []
+        if let pullRequests {
+            stale = StaleBranches.find(
+                branches: branches, pullRequests: pullRequests, protected: protected,
+                inFlight: Set(workspaceState.inFlight.values.map(\.branchName)),
+                worktreesRoot: "\(repoPath)/worktrees"
+            )
+            stale = StaleBranches.countUnpushed(stale, repoPath: repoPath)
+        }
+
         return WorkspaceReport(
             name: workspace.name,
             entries: tasks,
             reviews: reviews,
             pullRequestStats: stats,
+            stale: stale,
             warnings: warnings
         )
     }

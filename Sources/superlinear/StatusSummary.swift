@@ -21,7 +21,8 @@ struct StatusSummary: Sendable {
         ] + TaskCategory.allCases.map { category in
             (category.heading, tasks.filter { $0.category == category }.count)
         }
-        return counts.filter { $0.1 > 0 }
+        let stale: [(String, Int)] = [(WorkspaceReport.staleHeading, reports.map(\.stale.count).reduce(0, +))]
+        return (counts + stale).filter { $0.1 > 0 }
     }
 
     /// A measure taken of each pull request that has it.
