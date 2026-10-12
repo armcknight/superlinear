@@ -211,9 +211,10 @@ With no subcommand it runs the daemon in the foreground, which is how to test a 
 
 | Section | Meaning |
 | --- | --- |
-| Awaiting review | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, or approved — the CI state, and the URL. |
+| Awaiting review | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, or agent addressing review — the CI state, and the URL. |
 | Draft pull requests | The same, for drafts, with the CI state. |
 | Running | An agent works on the issue now. Shows its pid and log. |
+| Addressing review | An agent addresses your review of the issue's pull request, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
 | Interrupted | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
 | Queued | Waiting for a free agent slot. |
 | Open pull requests | The agent finished and its pull request is open. Shown only when open pull requests could not be listed for review; otherwise they appear above. |

@@ -36,6 +36,8 @@ enum StatusError: Error, CustomStringConvertible {
 enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
     /// An agent is working on it now.
     case running
+    /// An agent is addressing a review of its pull request, or is queued to.
+    case addressingReview
     /// Its agent stopped without finishing, as at a reboot. The daemon resumes
     /// it when it next starts.
     case interrupted
@@ -58,6 +60,7 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
     var heading: String {
         switch self {
         case .running: "Running"
+        case .addressingReview: "Addressing review"
         case .interrupted: "Interrupted"
         case .queued: "Queued"
         case .openPullRequest: "Open pull requests"
@@ -74,6 +77,8 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
         run: AgentRun?, running: Bool, issue: LinearIssueStatus?, pullRequest: PullRequest?
     ) -> TaskCategory {
         if let run {
+            // Interrupted, it resumes like any other run.
+            if run.review != nil && (running || run.isQueued) { return .addressingReview }
             if run.isQueued { return .queued }
             return running ? .running : .interrupted
         }
@@ -163,14 +168,19 @@ struct WorkspaceReport: Sendable {
         switch category {
         case .running:
             guard let run else { return nil }
-            let review = run.review.map { ", addressing the review on \($0.url)" } ?? ""
-            return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run))\(review)"
+            return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run))"
+        case .addressingReview:
+            guard let run, let review = run.review else { return nil }
+            if run.isQueued {
+                let attempt = run.resumes > 0 ? ", to resume, attempt \(run.resumes + 1)" : ""
+                return "queued\(attempt), \(review.url)"
+            }
+            return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run)), \(review.url)"
         case .interrupted:
             return "resumes when the daemon next starts"
         case .queued:
-            guard let run else { return nil }
-            if run.resumes > 0 { return "to resume, attempt \(run.resumes + 1)" }
-            return run.review.map { "to address the review on \($0.url)" }
+            guard let run, run.resumes > 0 else { return nil }
+            return "to resume, attempt \(run.resumes + 1)"
         case .openPullRequest:
             guard let pullRequest else { return nil }
             return pullRequest.isDraft == true ? "\(pullRequest.url) (draft)" : pullRequest.url
@@ -197,6 +207,8 @@ struct WorkspaceReport: Sendable {
         }
         let width = (tasks.map(\.identifier.count) + reviews.map(\.issue.identifier.count)).max() ?? 0
         let indent = String(repeating: " ", count: 4 + width + 2)
+        // Their pull requests wait on an agent, not on a reviewer.
+        let addressed = Set(entries.filter { $0.category == .addressingReview }.map(\.identifier))
 
         for (heading, drafts) in [("Awaiting review", false), ("Draft pull requests", true)] {
             let section = reviews.filter { $0.pullRequest.isDraft == drafts }
@@ -206,7 +218,9 @@ struct WorkspaceReport: Sendable {
                 let pullRequest = review.pullRequest
                 let padded = review.issue.identifier.padding(toLength: width, withPad: " ", startingAt: 0)
                 lines.append("    \(padded)  #\(pullRequest.number) \(pullRequest.title)".trimmingTrailingWhitespace())
-                let state = drafts ? [] : [pullRequest.reviewState.rawValue]
+                let reviewState = addressed.contains(review.issue.identifier)
+                    ? "agent addressing review" : pullRequest.reviewState.rawValue
+                let state = drafts ? [] : [reviewState]
                 lines.append(indent + (state + [pullRequest.checkState.rawValue, pullRequest.url]).joined(separator: " · "))
             }
         }
