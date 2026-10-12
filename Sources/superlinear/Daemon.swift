@@ -309,8 +309,8 @@ actor Daemon {
     }
 
     /// The time through which the issue's reviews count as addressed. A watch
-    /// from before reviews were followed has none; it takes the pull
-    /// request's newest commit, as no agent can have addressed a review
+    /// from before reviews were followed has none; it takes the date of the
+    /// pull request's head commit, as no agent can have addressed a review
     /// submitted after its last push, or else the present.
     func reviewsHandledThrough(_ pending: PendingMerge, lastCommit: Date?, workspace: String) -> Date {
         if let date = pending.reviewsHandledThrough { return date }

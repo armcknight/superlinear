@@ -153,10 +153,21 @@ struct WorkspaceProcessor: Sendable {
     /// reviewed it since the issue's last agent started.
     private func checkReviews(of pending: PendingMerge, pullRequests: [PullRequest], repoPath: String) async {
         guard let pullRequest = pullRequests.first(where: { $0.state == .open }) else { return }
-        // Before looking at reviews, so a watch from before reviews were
-        // followed gets its baseline from the commits it has now.
+        // A watch from before reviews were followed counts from the pull
+        // request's head commit. Looked up once, before looking at reviews, so
+        // its baseline is the head the pull request has now.
+        var lastCommit: Date?
+        if pending.reviewsHandledThrough == nil, let sha = pullRequest.headRefOid {
+            do {
+                lastCommit = try await PullRequestChecker().commitDate(sha: sha, repoPath: repoPath)
+            } catch {
+                // Rather than the present, which would pass over its reviews.
+                log("Could not find when \(pending.identifier)'s head commit was made, retrying next poll: \(error)")
+                return
+            }
+        }
         let handledThrough = await daemon.reviewsHandledThrough(
-            pending, lastCommit: pullRequest.lastCommitDate, workspace: workspace.name)
+            pending, lastCommit: lastCommit, workspace: workspace.name)
         guard let reviews = pullRequest.reviews, !reviews.isEmpty else { return }
         let login: String
         do {

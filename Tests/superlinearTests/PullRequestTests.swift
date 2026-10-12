@@ -28,19 +28,21 @@ struct PullRequestTests {
         }
     }
 
-    @Test("Open pull requests are listed with their branches, reviews and commits")
+    @Test("Open pull requests are listed with their branches, reviews and head commits")
     func listOpenArguments() {
         let args = PullRequestChecker.listOpenArguments
         #expect(args.starts(with: ["gh", "pr", "list"]))
         #expect(args[args.firstIndex(of: "--state")! + 1] == "open")
         #expect(!args.contains("--head"))
         let fields = args.last?.split(separator: ",") ?? []
-        #expect(["headRefName", "reviews", "commits"].allSatisfy { fields.contains($0[...]) })
+        #expect(["headRefName", "headRefOid", "reviews"].allSatisfy { fields.contains($0[...]) })
+        // A page of 100 pull requests with their commit lists is refused.
+        #expect(!fields.contains("commits"))
     }
 
     // The merge check takes the repository-wide listing for state, and the
     // open listing for what only it has.
-    @Test("Open pull requests take their reviews and commits from the open listing")
+    @Test("Open pull requests take their reviews and head commits from the open listing")
     func mergeListings() {
         let review = PullRequestReview(author: .init(login: "me"), state: "COMMENTED", body: "", submittedAt: nil)
         let all = [
@@ -57,14 +59,15 @@ struct PullRequestTests {
         #expect(merged[2].reviews == nil)
     }
 
-    // A watch from before reviews were followed starts from the newest commit,
+    // A watch from before reviews were followed starts from the head commit,
     // so a review left after the last push is still answered.
-    @Test("A pull request's last commit date comes from its newest commit")
-    func lastCommitDate() throws {
-        let json = #"[{"number":1,"url":"u","state":"OPEN","commits":[{"committedDate":"2026-10-12T06:09:40Z"},{"committedDate":"2026-10-10T02:09:15Z"}]}]"#
-        let prs = try PullRequestChecker.decodePullRequests(Data(json.utf8))
-        #expect(prs.first?.lastCommitDate == ISO8601DateFormatter().date(from: "2026-10-12T06:09:40Z"))
-        #expect(PullRequest(number: 1, url: "u", state: .open).lastCommitDate == nil)
+    @Test("The head commit's date is asked of the REST API, and the head comes with open pull requests")
+    func headCommit() throws {
+        #expect(PullRequestChecker.commitDateArguments(sha: "abc") == [
+            "gh", "api", "repos/{owner}/{repo}/commits/abc", "--jq", ".commit.committer.date",
+        ])
+        let json = #"[{"number":1,"url":"u","state":"OPEN","headRefOid":"abc"}]"#
+        #expect(try PullRequestChecker.decodePullRequests(Data(json.utf8)).first?.headRefOid == "abc")
     }
 
     @Test("Reviews decode from gh's JSON, whatever their state")

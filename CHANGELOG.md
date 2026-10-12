@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they ask for, commits, pushes and sees CI through, without replying on
   GitHub. Approvals with nothing written, drafts and dismissed reviews are
   ignored, as are reviews from anyone else. For issues already awaiting their
-  merge before the upgrade, reviews count from the pull request's newest
-  commit. `superlinear status` lists these runs,
+  merge before the upgrade, reviews count from the date of the pull
+  request's head commit, looked up once through GitHub's REST API. `superlinear status` lists these runs,
   running or queued, under their own "Addressing review" section, and their
   pull requests under "Awaiting review" as "agent addressing review" in place
   of GitHub's review state.
@@ -26,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Each poll lists a repository's pull requests once, and its open ones with
-  their reviews and commits once more when a watched pull request is open.
+  their reviews and head commits once more when a watched pull request is
+  open.
   Before, it ran one `gh pr list` per watched branch and per running agent
   every poll, which with dozens of open pull requests used up GitHub's 5,000
   GraphQL points an hour and left agents and `superlinear status` rate

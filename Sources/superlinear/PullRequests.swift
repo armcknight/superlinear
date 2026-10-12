@@ -65,8 +65,8 @@ struct PullRequestReview: Codable, Sendable, Equatable {
 }
 
 /// A pull request as `gh pr list --json` reports it. Each poll lists a
-/// repository's pull requests once, and its open ones with their reviews and
-/// commits once more; `superlinear status` lists a
+/// repository's pull requests once, and its open ones with their reviews
+/// and head commits once more; `superlinear status` lists a
 /// whole repository and asks for the branch, draft flag and size as well.
 struct PullRequest: Codable, Sendable, Equatable {
     enum State: String, Codable, Sendable {
@@ -86,23 +86,14 @@ struct PullRequest: Codable, Sendable, Equatable {
     var mergedAt: Date? = nil
     /// Its reviews, when the listing asked for them.
     var reviews: [PullRequestReview]? = nil
-    /// Its commits, when the listing asked for them.
-    var commits: [Commit]? = nil
+    /// The commit its branch points at, when the listing asked for it.
+    var headRefOid: String? = nil
     /// Lines added and removed, and files changed, when the listing asked.
     var additions: Int? = nil
     var deletions: Int? = nil
     var changedFiles: Int? = nil
     /// The branch it would merge into, when the listing asked.
     var baseRefName: String? = nil
-}
-
-extension PullRequest {
-    struct Commit: Codable, Sendable, Equatable {
-        let committedDate: Date
-    }
-
-    /// When its newest commit was made, if the listing asked for commits.
-    var lastCommitDate: Date? { commits?.map(\.committedDate).max() }
 }
 
 /// What a poll found for an issue awaiting its merge.
@@ -149,7 +140,7 @@ struct PullRequestChecker: Sendable {
     }
 
     static let listOpenArguments = [
-        "gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", "number,url,state,headRefName,reviews,commits",
+        "gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", "number,url,state,headRefName,headRefOid,reviews",
     ]
 
     static let viewerArguments = ["gh", "api", "user", "--jq", ".login"]
@@ -162,6 +153,22 @@ struct PullRequestChecker: Sendable {
             throw CommandError(command: Self.viewerArguments, status: 0, output: "no login")
         }
         return login
+    }
+
+    static func commitDateArguments(sha: String) -> [String] {
+        ["gh", "api", "repos/{owner}/{repo}/commits/\(sha)", "--jq", ".commit.committer.date"]
+    }
+
+    /// When the commit `sha` was made, from GitHub's REST API, whose rate
+    /// limit is apart from the GraphQL one the listings use.
+    func commitDate(sha: String, repoPath: String) async throws -> Date {
+        let arguments = Self.commitDateArguments(sha: sha)
+        let text = String(decoding: try await run(arguments, in: repoPath), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let date = ISO8601DateFormatter().date(from: text) else {
+            throw CommandError(command: arguments, status: 0, output: "no commit date in \(text)")
+        }
+        return date
     }
 
     static let listAllArguments = [
@@ -180,7 +187,9 @@ struct PullRequestChecker: Sendable {
     }
 
     /// The repository's open pull requests, newest 1,000, with their
-    /// reviews and commits, which cost GitHub more to list than the rest.
+    /// reviews, which cost GitHub more to list than the rest, and head
+    /// commits. Not their commit lists: those cost so much that GitHub
+    /// refuses a page of 100 pull requests as over the rate limit.
     func openPullRequestsWithReviews(repoPath: String) async throws -> [PullRequest] {
         try Self.decodePullRequests(try await run(Self.listOpenArguments, in: repoPath))
     }
@@ -248,7 +257,7 @@ actor PullRequestListing {
     }
 
     /// The pull requests opened from `branch`. Open ones come with their
-    /// reviews and commits.
+    /// reviews and head commits.
     func pullRequests(branch: String) async throws -> [PullRequest] {
         let mine = try await allPullRequests().filter { $0.headRefName == branch }
         guard mine.contains(where: { $0.state == .open }) else { return mine }
@@ -270,7 +279,7 @@ actor PullRequestListing {
     }
 
     /// Replaces each open pull request with its listing that has reviews and
-    /// commits, where there is one.
+    /// a head commit, where there is one.
     static func merge(_ pullRequests: [PullRequest], withOpen open: [PullRequest]) -> [PullRequest] {
         pullRequests.map { pullRequest in
             guard pullRequest.state == .open else { return pullRequest }
