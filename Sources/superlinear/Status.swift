@@ -118,7 +118,7 @@ struct WorkspaceReport: Sendable {
     var pullRequestStats: [PullRequestStats] = []
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
-    let warnings: [String]
+    var warnings: [String]
 
     /// Puts each processed issue in a category. Issues Linear no longer
     /// returns, as when archived, are left out unless still in flight. When
@@ -329,6 +329,15 @@ struct WorkspaceReport: Sendable {
 }
 
 enum StatusCommand {
+    /// A repository whose report hit a GitHub rate limit, to ask GitHub when
+    /// it resets; nil when none did.
+    static func rateLimitedRepoPath(_ reports: [WorkspaceReport], config: Config) -> String? {
+        let workspace = zip(reports, config.workspaces).first { report, _ in
+            report.warnings.contains { $0.localizedCaseInsensitiveContains("rate limit") }
+        }?.1
+        return workspace.map { NSString(string: $0.repoPath).expandingTildeInPath }
+    }
+
     /// Prints a report for every configured workspace, in config order, and
     /// returns the exit status.
     static func run(configPath: String?) async -> Int32 {
@@ -343,7 +352,7 @@ enum StatusCommand {
         let runner = AgentRunner()
         let transcripts = Transcripts()
 
-        let reports = await withTaskGroup(of: (Int, WorkspaceReport).self) { group in
+        var reports = await withTaskGroup(of: (Int, WorkspaceReport).self) { group in
             for (index, workspace) in config.workspaces.enumerated() {
                 group.addTask { (index, await WorkspaceReport.gather(
                     workspace: workspace, state: state, runner: runner, transcripts: transcripts)) }
@@ -355,8 +364,18 @@ enum StatusCommand {
             return reports.sorted { $0.0 < $1.0 }.map(\.1)
         }
 
+        var header: [String] = []
+        if let repoPath = rateLimitedRepoPath(reports, config: config) {
+            // One line, rather than one per GitHub call in every workspace.
+            for index in reports.indices {
+                reports[index].warnings.removeAll { $0.localizedCaseInsensitiveContains("rate limit") }
+            }
+            let reset = GitHubRateLimit.resetDate(repoPath: repoPath)
+            let time = reset.formatted(date: .omitted, time: .shortened)
+            header.append("warning: GitHub's rate limit is used up until \(time), so pull requests could not all be listed")
+        }
         let summary = StatusSummary(reports: reports).rendered()
-        print((reports.map { $0.rendered() } + [summary]).joined(separator: "\n\n"))
+        print((header + reports.map { $0.rendered() } + [summary]).joined(separator: "\n\n"))
         return 0
     }
 }

@@ -25,6 +25,9 @@ actor Daemon {
     private var reported: Set<String> = []
     /// The GitHub login whose reviews agents address, once looked up.
     private var viewerLogin: String?
+    /// Until when a GitHub rate limit is used up. Polls skip their GitHub
+    /// work until then.
+    private var gitHubPausedUntil: Date?
 
     init(config: Config) {
         self.config = config
@@ -331,6 +334,25 @@ actor Daemon {
     func forgetLinkedPullRequests(issueId: String, workspace: String) {
         state.forgetLinkedPullRequests(issueId: issueId, workspace: workspace)
         save()
+    }
+
+    /// Whether polls may call GitHub now. Logs when a pause ends.
+    func gitHubAvailable(now: Date = Date()) -> Bool {
+        guard let until = gitHubPausedUntil else { return true }
+        guard now >= until else { return false }
+        gitHubPausedUntil = nil
+        print("[\(ISO8601DateFormatter().string(from: now))] GitHub's rate limit has reset; checking pull requests again")
+        return true
+    }
+
+    /// Skips GitHub work until `until`, logging once per pause.
+    func pauseGitHub(until: Date) {
+        if gitHubPausedUntil == nil {
+            let formatter = ISO8601DateFormatter()
+            print("[\(formatter.string(from: Date()))] GitHub's rate limit is used up until \(formatter.string(from: until)); "
+                + "skipping pull request checks until then")
+        }
+        gitHubPausedUntil = max(gitHubPausedUntil ?? until, until)
     }
 
     /// Whether `message` has not been reported before, so a problem that

@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- While a GitHub rate limit is used up, polls skip their GitHub work until it
+  resets, logging once when the pause starts and once when it ends, instead
+  of failing and logging at every step of every poll. Linear work goes on.
+  `superlinear status` shows one line saying until when, instead of a warning
+  per workspace.
 - Each poll lists a repository's pull requests once, and its open ones with
   their reviews and head commits once more when a watched pull request is
   open.

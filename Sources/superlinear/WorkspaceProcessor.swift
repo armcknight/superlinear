@@ -27,10 +27,18 @@ struct WorkspaceProcessor: Sendable {
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
 
+        // Each step checks first, as one hitting the rate limit pauses the rest.
         let listing = PullRequestListing(repoPath: NSString(string: workspace.repoPath).expandingTildeInPath)
-        await linkRunningAgentsPullRequests(client: client, listing: listing)
-        await checkPullRequests(client: client, listing: listing)
-        await sweepStartedIssues(client: client, listing: listing)
+        if await daemon.gitHubAvailable() { await linkRunningAgentsPullRequests(client: client, listing: listing) }
+        if await daemon.gitHubAvailable() { await checkPullRequests(client: client, listing: listing) }
+        if await daemon.gitHubAvailable() { await sweepStartedIssues(client: client, listing: listing) }
+    }
+
+    /// Pauses GitHub work when `error` is a rate limit, and says whether it was.
+    private func pausedForRateLimit(_ error: Error, repoPath: String) async -> Bool {
+        guard GitHubRateLimit.isRateLimit(error) else { return false }
+        await daemon.pauseGitHub(until: GitHubRateLimit.resetDate(repoPath: repoPath))
+        return true
     }
 
     /// Links and completes started issues that no run or merge watch follows,
@@ -44,6 +52,7 @@ struct WorkspaceProcessor: Sendable {
             guard !issues.isEmpty else { return }
             pullRequests = try await listing.allPullRequests()
         } catch {
+            if await pausedForRateLimit(error, repoPath: listing.repoPath) { return }
             await logOnce("Could not check started issues' pull requests: \(error)")
             return
         }
@@ -73,11 +82,19 @@ struct WorkspaceProcessor: Sendable {
     /// Links the pull requests of agents still running, which open them well
     /// before they end, as they go on to watch CI.
     private func linkRunningAgentsPullRequests(client: LinearClient, listing: PullRequestListing) async {
-        for run in await daemon.launchedRuns(workspace: workspace.name) {
-            // Most running agents have no pull request yet; a failed lookup is
-            // retried next poll, and logged when the agent ends.
-            guard let pullRequests = try? await listing.allPullRequests().filter({ $0.headRefName == run.branchName })
-            else { continue }
+        let runs = await daemon.launchedRuns(workspace: workspace.name)
+        guard !runs.isEmpty else { return }
+        let all: [PullRequest]
+        do {
+            all = try await listing.allPullRequests()
+        } catch {
+            // Retried next poll; the merge watch logs other failures.
+            _ = await pausedForRateLimit(error, repoPath: listing.repoPath)
+            return
+        }
+        for run in runs {
+            // Most running agents have no pull request yet.
+            let pullRequests = all.filter { $0.headRefName == run.branchName }
             await link(pullRequests, issueId: run.issueId, identifier: run.identifier, client: client)
         }
     }
@@ -111,8 +128,10 @@ struct WorkspaceProcessor: Sendable {
             do {
                 pullRequests = try await listing.pullRequests(branch: pending.branchName)
             } catch {
-                log("Could not check the pull request for \(pending.identifier): \(error)")
-                continue
+                if await pausedForRateLimit(error, repoPath: repoPath) { return }
+                // The listing is shared, so every other watch would fail the same way.
+                log("Could not list pull requests to check \(pending.identifier) and the other watches: \(error)")
+                return
             }
             // Before the merge check, which may end the watch.
             await link(pullRequests, issueId: pending.issueId, identifier: pending.identifier, client: client)
@@ -161,6 +180,7 @@ struct WorkspaceProcessor: Sendable {
             do {
                 lastCommit = try await PullRequestChecker().commitDate(sha: sha, repoPath: repoPath)
             } catch {
+                if await pausedForRateLimit(error, repoPath: repoPath) { return }
                 // Rather than the present, which would pass over its reviews.
                 log("Could not find when \(pending.identifier)'s head commit was made, retrying next poll: \(error)")
                 return
@@ -173,6 +193,7 @@ struct WorkspaceProcessor: Sendable {
         do {
             login = try await daemon.viewerLogin(repoPath: repoPath)
         } catch {
+            if await pausedForRateLimit(error, repoPath: repoPath) { return }
             await logOnce("Could not find the GitHub user whose reviews to address: \(error)")
             return
         }
