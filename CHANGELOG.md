@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A pull request already attached to its Linear issue, as by hand or before
+  the daemon kept records of its links, is recorded as linked. Linear refuses
+  to attach it again, so the daemon tried and failed every poll.
 - While a GitHub rate limit is used up, polls skip their GitHub work until it
   resets, logging once when the pause starts and once when it ends, instead
   of failing and logging at every step of every poll. Linear work goes on.

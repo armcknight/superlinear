@@ -287,6 +287,34 @@ struct LinearClient: Sendable {
         guard result.attachmentLinkURL.success else { throw LinearClientError.invalidResponse }
     }
 
+    /// The URLs attached to the issue.
+    func attachmentURLs(issueId: String) async throws -> Set<String> {
+        let data = try await execute(Self.attachmentsQuery, variables: ["id": issueId], as: AttachmentsData.self)
+        return Set(data.issue.attachments.nodes.map(\.url))
+    }
+
+    private static let attachmentsQuery = """
+    query IssueAttachments($id: String!) {
+      issue(id: $id) { attachments(first: 250) { nodes { url } } }
+    }
+    """
+
+    private struct AttachmentsData: Decodable {
+        let issue: Issue
+
+        struct Issue: Decodable {
+            let attachments: Attachments
+        }
+
+        struct Attachments: Decodable {
+            let nodes: [Node]
+        }
+
+        struct Node: Decodable {
+            let url: String
+        }
+    }
+
     private struct AttachmentLinkData: Decodable {
         let attachmentLinkURL: Result
 

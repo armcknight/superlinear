@@ -110,6 +110,12 @@ struct WorkspaceProcessor: Sendable {
                 await daemon.recordLinkedPullRequest(pullRequest.url, issueId: issueId, workspace: workspace.name)
                 log("Linked \(pullRequest.url) to \(identifier) in Linear")
             } catch {
+                // Linear refuses to attach a URL the issue already has, as one
+                // linked before the daemon kept records, or by hand.
+                if let attached = try? await client.attachmentURLs(issueId: issueId), attached.contains(pullRequest.url) {
+                    await daemon.recordLinkedPullRequest(pullRequest.url, issueId: issueId, workspace: workspace.name)
+                    continue
+                }
                 // Not recorded, so the next poll tries again.
                 await logOnce("Could not link \(pullRequest.url) to \(identifier) in Linear: \(error)")
             }
