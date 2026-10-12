@@ -6,3 +6,6 @@
 /Sources/superlinear/BuildMetadata.generated.swift
 # worktrees that `work start` creates, as for agents working on this repo
 /worktrees/
+# Emacs autosave and lock files
+\#*#
+.#*
