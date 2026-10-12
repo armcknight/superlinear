@@ -27,22 +27,22 @@ struct WorkspaceProcessor: Sendable {
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
 
-        await linkRunningAgentsPullRequests(client: client)
-        await checkPullRequests(client: client)
-        await sweepStartedIssues(client: client)
+        let listing = PullRequestListing(repoPath: NSString(string: workspace.repoPath).expandingTildeInPath)
+        await linkRunningAgentsPullRequests(client: client, listing: listing)
+        await checkPullRequests(client: client, listing: listing)
+        await sweepStartedIssues(client: client, listing: listing)
     }
 
     /// Links and completes started issues that no run or merge watch follows,
     /// such as work done by hand or by agents from before a state reset. Their
     /// worktrees are left alone, since they may hold work of your own.
-    private func sweepStartedIssues(client: LinearClient) async {
-        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+    private func sweepStartedIssues(client: LinearClient, listing: PullRequestListing) async {
         let issues: [LinearIssueStatus]
         let pullRequests: [PullRequest]
         do {
             issues = try await client.fetchStartedIssues(teamIds: workspace.teamIds)
             guard !issues.isEmpty else { return }
-            pullRequests = try await PullRequestChecker().allPullRequests(repoPath: repoPath)
+            pullRequests = try await listing.allPullRequests()
         } catch {
             await logOnce("Could not check started issues' pull requests: \(error)")
             return
@@ -72,13 +72,11 @@ struct WorkspaceProcessor: Sendable {
 
     /// Links the pull requests of agents still running, which open them well
     /// before they end, as they go on to watch CI.
-    private func linkRunningAgentsPullRequests(client: LinearClient) async {
-        let checker = PullRequestChecker()
-        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+    private func linkRunningAgentsPullRequests(client: LinearClient, listing: PullRequestListing) async {
         for run in await daemon.launchedRuns(workspace: workspace.name) {
             // Most running agents have no pull request yet; a failed lookup is
             // retried next poll, and logged when the agent ends.
-            guard let pullRequests = try? await checker.pullRequests(branch: run.branchName, repoPath: repoPath)
+            guard let pullRequests = try? await listing.allPullRequests().filter({ $0.headRefName == run.branchName })
             else { continue }
             await link(pullRequests, issueId: run.issueId, identifier: run.identifier, client: client)
         }
@@ -105,13 +103,13 @@ struct WorkspaceProcessor: Sendable {
     /// one completes the issue in Linear and removes its worktree; a closed
     /// one, or none at all, ends the watch. An open one with new reviews from
     /// the signed-in GitHub user gets an agent to address them.
-    private func checkPullRequests(client: LinearClient) async {
+    private func checkPullRequests(client: LinearClient, listing: PullRequestListing) async {
         let checker = PullRequestChecker()
-        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let repoPath = listing.repoPath
         for pending in await daemon.pendingMerges(workspace: workspace.name) {
             let pullRequests: [PullRequest]
             do {
-                pullRequests = try await checker.pullRequests(branch: pending.branchName, repoPath: repoPath)
+                pullRequests = try await listing.pullRequests(branch: pending.branchName)
             } catch {
                 log("Could not check the pull request for \(pending.identifier): \(error)")
                 continue

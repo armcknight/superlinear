@@ -64,8 +64,9 @@ struct PullRequestReview: Codable, Sendable, Equatable {
     }
 }
 
-/// A pull request as `gh pr list --json` reports it. The merge check asks
-/// for `number,url,state,reviews,commits` on one branch; `superlinear status` lists a
+/// A pull request as `gh pr list --json` reports it. Each poll lists a
+/// repository's pull requests once, and its open ones with their reviews and
+/// commits once more; `superlinear status` lists a
 /// whole repository and asks for the branch, draft flag and size as well.
 struct PullRequest: Codable, Sendable, Equatable {
     enum State: String, Codable, Sendable {
@@ -147,9 +148,9 @@ struct PullRequestChecker: Sendable {
         self.environment = environment
     }
 
-    static func listArguments(branch: String) -> [String] {
-        ["gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,url,state,reviews,commits"]
-    }
+    static let listOpenArguments = [
+        "gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", "number,url,state,headRefName,reviews,commits",
+    ]
 
     static let viewerArguments = ["gh", "api", "user", "--jq", ".login"]
 
@@ -178,10 +179,10 @@ struct PullRequestChecker: Sendable {
         return try decoder.decode([PullRequest].self, from: data)
     }
 
-    /// The pull requests opened from `branch` in the repository at `repoPath`.
-    func pullRequests(branch: String, repoPath: String) async throws -> [PullRequest] {
-        let output = try await run(Self.listArguments(branch: branch), in: repoPath)
-        return try Self.decodePullRequests(output)
+    /// The repository's open pull requests, newest 1,000, with their
+    /// reviews and commits, which cost GitHub more to list than the rest.
+    func openPullRequestsWithReviews(repoPath: String) async throws -> [PullRequest] {
+        try Self.decodePullRequests(try await run(Self.listOpenArguments, in: repoPath))
     }
 
     /// Removes the worktree and local branch with `work finish`, appending its
@@ -226,5 +227,54 @@ struct PullRequestChecker: Sendable {
             }
             return output
         }.value
+    }
+}
+
+/// A repository's pull requests for one poll, listed at most once each way
+/// and shared by every step that needs them. GitHub allows 5,000 GraphQL
+/// points an hour, shared with agents and with `superlinear status`; a
+/// listing per branch per poll used them all up.
+actor PullRequestListing {
+    let repoPath: String
+    let checker: PullRequestChecker
+    // Failures are kept too, so a poll that hits the rate limit does not try
+    // again for every branch.
+    private var all: Result<[PullRequest], Error>?
+    private var open: Result<[PullRequest], Error>?
+
+    init(repoPath: String, checker: PullRequestChecker = PullRequestChecker()) {
+        self.repoPath = repoPath
+        self.checker = checker
+    }
+
+    /// The pull requests opened from `branch`. Open ones come with their
+    /// reviews and commits.
+    func pullRequests(branch: String) async throws -> [PullRequest] {
+        let mine = try await allPullRequests().filter { $0.headRefName == branch }
+        guard mine.contains(where: { $0.state == .open }) else { return mine }
+        if open == nil { open = await Self.result { try await checker.openPullRequestsWithReviews(repoPath: repoPath) } }
+        return Self.merge(mine, withOpen: try open!.get())
+    }
+
+    func allPullRequests() async throws -> [PullRequest] {
+        if all == nil { all = await Self.result { try await checker.allPullRequests(repoPath: repoPath) } }
+        return try all!.get()
+    }
+
+    private static func result(_ body: @Sendable () async throws -> [PullRequest]) async -> Result<[PullRequest], Error> {
+        do {
+            return .success(try await body())
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// Replaces each open pull request with its listing that has reviews and
+    /// commits, where there is one.
+    static func merge(_ pullRequests: [PullRequest], withOpen open: [PullRequest]) -> [PullRequest] {
+        pullRequests.map { pullRequest in
+            guard pullRequest.state == .open else { return pullRequest }
+            return open.first { $0.number == pullRequest.number } ?? pullRequest
+        }
     }
 }

@@ -28,15 +28,33 @@ struct PullRequestTests {
         }
     }
 
-    @Test("The list covers closed and merged pull requests from the issue's branch")
-    func listArguments() {
-        let args = PullRequestChecker.listArguments(branch: "linear/sl-1-x")
+    @Test("Open pull requests are listed with their branches, reviews and commits")
+    func listOpenArguments() {
+        let args = PullRequestChecker.listOpenArguments
         #expect(args.starts(with: ["gh", "pr", "list"]))
-        #expect(args.contains("--head"))
-        #expect(args[args.firstIndex(of: "--head")! + 1] == "linear/sl-1-x")
-        #expect(args[args.firstIndex(of: "--state")! + 1] == "all")
-        #expect(args.last?.split(separator: ",").contains("reviews") == true)
-        #expect(args.last?.split(separator: ",").contains("commits") == true)
+        #expect(args[args.firstIndex(of: "--state")! + 1] == "open")
+        #expect(!args.contains("--head"))
+        let fields = args.last?.split(separator: ",") ?? []
+        #expect(["headRefName", "reviews", "commits"].allSatisfy { fields.contains($0[...]) })
+    }
+
+    // The merge check takes the repository-wide listing for state, and the
+    // open listing for what only it has.
+    @Test("Open pull requests take their reviews and commits from the open listing")
+    func mergeListings() {
+        let review = PullRequestReview(author: .init(login: "me"), state: "COMMENTED", body: "", submittedAt: nil)
+        let all = [
+            PullRequest(number: 1, url: "u1", state: .merged, headRefName: "b"),
+            PullRequest(number: 2, url: "u2", state: .open, headRefName: "b"),
+            PullRequest(number: 3, url: "u3", state: .open, headRefName: "b"),
+        ]
+        let open = [PullRequest(number: 2, url: "u2", state: .open, headRefName: "b", reviews: [review])]
+        let merged = PullRequestListing.merge(all, withOpen: open)
+        #expect(merged.map(\.number) == [1, 2, 3])
+        #expect(merged[0].reviews == nil)
+        #expect(merged[1].reviews == [review])
+        // Opened between the two listings: kept, without reviews.
+        #expect(merged[2].reviews == nil)
     }
 
     // A watch from before reviews were followed starts from the newest commit,
