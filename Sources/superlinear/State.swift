@@ -23,6 +23,9 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// Launches that failed, as when the disk is full. Absent in state files
     /// written before failures were counted.
     var launchFailures: Int?
+    /// The number of the GitHub issue the agent works on, when the run comes
+    /// from GitHub rather than Linear.
+    var gitHubIssue: Int? = nil
 
     /// Waiting for a free slot: recorded, but not launched, or launched and
     /// since requeued after an interruption.
@@ -40,6 +43,9 @@ struct WorkspaceState: Codable, Sendable {
     /// Pull request URLs already linked to each issue in Linear, keyed by
     /// issue ID, so each is linked once.
     var linkedPullRequests: [String: [String]]
+    /// When the daemon first polled the repository's GitHub issues. Issues you
+    /// opened before then are left alone unless you comment `/superlinear-do`.
+    var gitHubIssuesSince: Date?
 
     init() {
         processedIssueIds = []
@@ -59,6 +65,7 @@ struct WorkspaceState: Codable, Sendable {
         inFlight = try container.decodeIfPresent([String: AgentRun].self, forKey: .inFlight) ?? [:]
         pendingMerges = try container.decodeIfPresent([String: PendingMerge].self, forKey: .pendingMerges) ?? [:]
         linkedPullRequests = try container.decodeIfPresent([String: [String]].self, forKey: .linkedPullRequests) ?? [:]
+        gitHubIssuesSince = try container.decodeIfPresent(Date.self, forKey: .gitHubIssuesSince)
     }
 }
 
@@ -115,6 +122,13 @@ struct State: Codable, Sendable {
 
     func isProcessed(_ issueId: String, workspace: String) -> Bool {
         workspaces[workspace]?.processedIssueIds.contains(issueId) ?? false
+    }
+
+    /// When GitHub issues were first polled, set to `now` on the first call.
+    mutating func gitHubIssuesSince(workspace: String, now: Date = Date()) -> Date {
+        if let since = workspaces[workspace]?.gitHubIssuesSince { return since }
+        workspaces[workspace, default: WorkspaceState()].gitHubIssuesSince = now
+        return now
     }
 
     func lastPollTimestamp(workspace: String) -> Date {

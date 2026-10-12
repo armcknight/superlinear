@@ -27,6 +27,15 @@ This is a personal tool, published as a reference. It is opinionated about how w
    - **Open:** the next poll checks again.
    - **Closed without a merge**, or **no pull request:** the daemon logs it and stops watching. The worktree stays for you to inspect.
 
+### GitHub issues
+
+A workspace with `"githubIssues": true` also takes work from its repository's GitHub issues, with `gh` signed in as you. Each poll lists the repository's open issues, newest 1,000, and queues the ones you asked for:
+
+- **Issues you open**, from the first poll with the option on. Issues you opened before then are left alone, so turning it on does not start an agent on every old issue.
+- **Issues anyone opened, yours included, on which you comment a line starting with `/superlinear-do`.** Comments from anyone else do nothing.
+
+Each issue is processed once, as Linear's are, and shares the same queue and agent limit. Its run is named `GH-<number>`, on the branch `github/gh-<number>`. Its agent reads the issue with `gh issue view`, implements, commits, and opens a pull request with `/armcknight-claude:pr --autonomous`, putting `Closes #<number>` in the description. Nothing is linked or updated in Linear. When the pull request merges, the daemon closes the issue as completed if GitHub has not already, then removes the worktree. If GitHub cannot be reached, the daemon logs it once and goes on with Linear.
+
 ### Disk space
 
 Agents' builds fill the disk fast: a SwiftPM `.build` directory or an Xcode DerivedData directory per worktree, often gigabytes each. The daemon frees them with `work clean`, which keeps the worktree:
@@ -117,7 +126,8 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
       "apiKey": "lin_api_YOUR_KEY_HERE",
       "repoPath": "~/Code/my-repo",
       "teamIds": [],
-      "pollIntervalSeconds": 60
+      "pollIntervalSeconds": 60,
+      "githubIssues": false
     }
   ]
 }
@@ -130,6 +140,7 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
 | `repoPath` | yes | Repository the agent works in. `~` is expanded. |
 | `teamIds` | no | Linear team IDs to watch. Empty or absent means all teams. Defaults to `[]`. |
 | `pollIntervalSeconds` | no | Seconds between polls. Defaults to `60`. |
+| `githubIssues` | no | Also work on the repository's GitHub issues that you open or comment `/superlinear-do` on. See [GitHub issues](#github-issues). Defaults to `false`. |
 
 `maxConcurrentAgents`, at the top level beside `workspaces`, limits how many agents run at once across all workspaces. It defaults to `3`. Further issues wait in a queue, kept in the state file, and start oldest first as running agents finish. An interrupted agent keeps its place, so it resumes before newer issues start.
 

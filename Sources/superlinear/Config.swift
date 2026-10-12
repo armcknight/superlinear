@@ -6,9 +6,12 @@ struct WorkspaceConfig: Codable, Sendable {
     let repoPath: String
     let teamIds: [String]
     let pollIntervalSeconds: Int
+    /// Whether to work on the repository's GitHub issues too: those you open,
+    /// and those you comment `/superlinear-do` on.
+    let githubIssues: Bool
 
     enum CodingKeys: String, CodingKey {
-        case name, apiKey, repoPath, teamIds, pollIntervalSeconds
+        case name, apiKey, repoPath, teamIds, pollIntervalSeconds, githubIssues
     }
 
     init(from decoder: Decoder) throws {
@@ -18,6 +21,7 @@ struct WorkspaceConfig: Codable, Sendable {
         repoPath = try container.decode(String.self, forKey: .repoPath)
         teamIds = try container.decodeIfPresent([String].self, forKey: .teamIds) ?? []
         pollIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .pollIntervalSeconds) ?? 60
+        githubIssues = try container.decodeIfPresent(Bool.self, forKey: .githubIssues) ?? false
     }
 }
 

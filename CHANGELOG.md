@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Agents can work from the repository's GitHub issues too. With
+  `"githubIssues": true` on a workspace, each poll queues the open issues you
+  opened since the option went on, and any issue on which you comment
+  `/superlinear-do`. Their agents read the issue with `gh`, open a pull
+  request that closes it, and the daemon closes the issue on the merge if
+  GitHub has not. `superlinear status` lists them as `GH-<number>`.
+
 ## [1.13.0] 2026-10-12
 
 ### Added

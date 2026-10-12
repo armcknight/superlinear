@@ -15,9 +15,28 @@ Work autonomously. Do not pause to ask questions. If you encounter ambiguity, ma
 decision and document it in the PR description.
 """
 
+/// The prompt for an agent on GitHub issue `number`, which has no Linear
+/// issue to read or move.
+func gitHubIssuePrompt(number: Int) -> String {
+    """
+    You are working autonomously on GitHub issue #\(number) of this repository. There is no Linear \
+    issue for it. Do not ask for confirmation at any step — proceed through the entire workflow \
+    without pausing.
+
+    Your task:
+    1. Run `gh issue view \(number) --comments` to read the issue and its discussion, and create a work plan.
+    2. Implement all the changes needed to resolve the issue, following your plan.
+    3. When implementation is complete, run /armcknight-claude:commit to stage and commit your changes.
+    4. Run /armcknight-claude:pr --autonomous to open a pull request without opening a browser, monitor CI until it passes, and address any review comments. There is no Linear issue to read or update: describe the pull request from the GitHub issue, and put `Closes #\(number)` in its description.
+
+    Never comment on the issue. Work autonomously. Do not pause to ask questions. If you encounter \
+    ambiguity, make a reasonable decision and document it in the PR description.
+    """
+}
+
 private let resumePrompt = """
 You were interrupted partway through the task above. Work out where you stopped — check the \
-worktree's git status and log, the Linear issue's state, and whether a pull request exists and \
+worktree's git status and log, the issue's state in Linear or GitHub, and whether a pull request exists and \
 how its CI is doing — then carry on with the remaining steps. Do not redo finished steps. If \
 everything is already done, stop.
 """
@@ -97,6 +116,11 @@ struct AgentRunner: Sendable {
         ]
     }
 
+    static func prompt(for run: AgentRun, mode: LaunchMode) -> String {
+        if mode == .resume { return resumePrompt }
+        return run.gitHubIssue.map { gitHubIssuePrompt(number: $0) } ?? autonomousPrompt
+    }
+
     /// Runs `work` and leaves its exit status in `$SUPERLINEAR_STATUS_FILE`,
     /// written through a temporary file so a reader never sees half of it.
     static let wrapperScript = #"""
@@ -117,7 +141,7 @@ struct AgentRunner: Sendable {
         try fm.createDirectory(atPath: logsDirectory, withIntermediateDirectories: true)
         try? fm.removeItem(atPath: statusFile(for: run))
 
-        let prompt = mode == .resume ? resumePrompt : autonomousPrompt
+        let prompt = Self.prompt(for: run, mode: mode)
         try prompt.write(toFile: promptFile(for: run), atomically: true, encoding: .utf8)
 
         if !fm.fileExists(atPath: workLog(for: run)) {

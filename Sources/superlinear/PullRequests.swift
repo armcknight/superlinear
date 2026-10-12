@@ -6,15 +6,19 @@ struct PendingMerge: Codable, Sendable, Equatable {
     var issueId: String
     var identifier: String
     var branchName: String
+    /// The GitHub issue's number, when the issue comes from GitHub.
+    var gitHubIssue: Int? = nil
 
-    init(issueId: String, identifier: String, branchName: String) {
+    init(issueId: String, identifier: String, branchName: String, gitHubIssue: Int? = nil) {
         self.issueId = issueId
         self.identifier = identifier
         self.branchName = branchName
+        self.gitHubIssue = gitHubIssue
     }
 
     init(_ run: AgentRun) {
-        self.init(issueId: run.issueId, identifier: run.identifier, branchName: run.branchName)
+        self.init(
+            issueId: run.issueId, identifier: run.identifier, branchName: run.branchName, gitHubIssue: run.gitHubIssue)
     }
 }
 

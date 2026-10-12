@@ -27,9 +27,40 @@ struct WorkspaceProcessor: Sendable {
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
 
+        if workspace.githubIssues {
+            await pollGitHubIssues()
+        }
+
         await linkRunningAgentsPullRequests(client: client)
         await checkPullRequests(client: client)
         await sweepStartedIssues(client: client)
+    }
+
+    /// Queues the repository's open GitHub issues that you opened since GitHub
+    /// polling began, or that you commented `/superlinear-do` on. A failure is
+    /// logged and leaves Linear's work to go on.
+    private func pollGitHubIssues() async {
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let client = GitHubIssueClient()
+        let since = await daemon.gitHubIssuesSince(workspace: workspace.name)
+        let requested: [GitHubIssue]
+        do {
+            let login = try await client.viewerLogin(repoPath: repoPath)
+            requested = try await client.openIssues(repoPath: repoPath).filter {
+                $0.isRequested(by: login, openedSince: since)
+            }
+        } catch {
+            await logOnce("Could not list GitHub issues: \(error)")
+            return
+        }
+        let newIssues = await daemon.filterUnprocessed(requested, workspace: workspace.name)
+        if !newIssues.isEmpty {
+            log("Found \(newIssues.count) new GitHub issue(s)")
+        }
+        // Oldest first, as Linear's are.
+        for issue in newIssues.sorted(by: { $0.number < $1.number }) {
+            await daemon.enqueueAgent(for: issue, workspace: workspace)
+        }
     }
 
     /// Links and completes started issues that no run or merge watch follows,
@@ -75,7 +106,8 @@ struct WorkspaceProcessor: Sendable {
     private func linkRunningAgentsPullRequests(client: LinearClient) async {
         let checker = PullRequestChecker()
         let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
-        for run in await daemon.launchedRuns(workspace: workspace.name) {
+        // GitHub links a pull request to the issue it closes by itself.
+        for run in await daemon.launchedRuns(workspace: workspace.name) where run.gitHubIssue == nil {
             // Most running agents have no pull request yet; a failed lookup is
             // retried next poll, and logged when the agent ends.
             guard let pullRequests = try? await checker.pullRequests(branch: run.branchName, repoPath: repoPath)
@@ -116,7 +148,9 @@ struct WorkspaceProcessor: Sendable {
                 continue
             }
             // Before the merge check, which may end the watch.
-            await link(pullRequests, issueId: pending.issueId, identifier: pending.identifier, client: client)
+            if pending.gitHubIssue == nil {
+                await link(pullRequests, issueId: pending.issueId, identifier: pending.identifier, client: client)
+            }
             let status = MergeStatus.of(pullRequests)
 
             switch status {
@@ -125,12 +159,16 @@ struct WorkspaceProcessor: Sendable {
             case .merged(let pr):
                 log("\(pending.identifier) merged in \(pr.url)")
                 do {
-                    if try await client.completeIssue(id: pending.issueId) {
+                    if let number = pending.gitHubIssue {
+                        if try await GitHubIssueClient().completeIssue(number: number, repoPath: repoPath) {
+                            log("  Closed GitHub issue #\(number)")
+                        }
+                    } else if try await client.completeIssue(id: pending.issueId) {
                         log("  Marked \(pending.identifier) done in Linear")
                     }
                 } catch {
                     // Leave it pending so the next poll tries again.
-                    log("  Could not mark \(pending.identifier) done in Linear: \(error)")
+                    log("  Could not mark \(pending.identifier) done: \(error)")
                     continue
                 }
                 let workLog = AgentRunner().workLog(identifier: pending.identifier)

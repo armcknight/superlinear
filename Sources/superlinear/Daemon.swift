@@ -70,16 +70,31 @@ actor Daemon {
     /// issue counts as processed from the moment it is queued, so no later poll
     /// queues it twice, and the poll does not wait for its agent.
     func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig) {
-        let run = AgentRun(
+        enqueue(AgentRun(
             issueId: issue.id,
             identifier: issue.identifier,
             branchName: issue.branchName,
             sessionId: UUID().uuidString.lowercased(),
             queuedAt: Date()
-        )
-        state.markProcessed(issue.id, workspace: workspace.name)
+        ), title: issue.title, workspace: workspace)
+    }
+
+    /// Queues an agent for a GitHub issue, as for a Linear one.
+    func enqueueAgent(for issue: GitHubIssue, workspace: WorkspaceConfig) {
+        enqueue(AgentRun(
+            issueId: issue.issueId,
+            identifier: issue.identifier,
+            branchName: issue.branchName,
+            sessionId: UUID().uuidString.lowercased(),
+            queuedAt: Date(),
+            gitHubIssue: issue.number
+        ), title: issue.title, workspace: workspace)
+    }
+
+    private func enqueue(_ run: AgentRun, title: String, workspace: WorkspaceConfig) {
+        state.markProcessed(run.issueId, workspace: workspace.name)
         state.recordRun(run, workspace: workspace.name)
-        log("Queued \(issue.identifier): \(issue.title)", workspace: workspace.name)
+        log("Queued \(run.identifier): \(title)", workspace: workspace.name)
         save()
         fillSlots()
     }
@@ -263,6 +278,18 @@ actor Daemon {
 
     func filterUnprocessed(_ issues: [LinearIssue], workspace: String) -> [LinearIssue] {
         issues.filter { !state.isProcessed($0.id, workspace: workspace) }
+    }
+
+    func filterUnprocessed(_ issues: [GitHubIssue], workspace: String) -> [GitHubIssue] {
+        issues.filter { !state.isProcessed($0.issueId, workspace: workspace) }
+    }
+
+    /// When the workspace's GitHub issues were first polled; now, the first
+    /// time.
+    func gitHubIssuesSince(workspace: String) -> Date {
+        let since = state.gitHubIssuesSince(workspace: workspace)
+        save()
+        return since
     }
 
     func pendingMerges(workspace: String) -> [PendingMerge] {

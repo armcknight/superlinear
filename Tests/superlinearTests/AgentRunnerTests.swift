@@ -21,6 +21,17 @@ struct AgentRunnerTests {
         #expect(!resume.contains("--session-id"))
     }
 
+    @Test("A GitHub issue's agent reads it from GitHub and closes it from its pull request")
+    func gitHubPrompt() {
+        var gitHub = run
+        gitHub.gitHubIssue = 12
+        let prompt = AgentRunner.prompt(for: gitHub, mode: .start)
+        #expect(prompt.contains("gh issue view 12"))
+        #expect(prompt.contains("Closes #12"))
+        #expect(!AgentRunner.prompt(for: run, mode: .start).contains("gh issue view"))
+        #expect(AgentRunner.prompt(for: gitHub, mode: .resume) == AgentRunner.prompt(for: run, mode: .resume))
+    }
+
     // The order matters: a status means the agent ended, whatever else is true,
     // and a live agent must never be relaunched alongside itself.
     @Test("Recovery prefers a status, then a live process, then the queue")
