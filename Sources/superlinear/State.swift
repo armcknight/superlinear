@@ -20,6 +20,9 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// When the issue joined the queue. Waiting runs start oldest first, and an
     /// interrupted run keeps its time, so it goes ahead of newer issues.
     var queuedAt: Date?
+    /// Launches that failed, as when the disk is full. Absent in state files
+    /// written before failures were counted.
+    var launchFailures: Int?
 
     /// Waiting for a free slot: recorded, but not launched, or launched and
     /// since requeued after an interruption.

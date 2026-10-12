@@ -162,6 +162,7 @@ Signing is on because launchd starts this binary, not your shell. An unsigned CL
 | --- | --- |
 | `~/.config/superlinear/config.json` | Configuration, including API keys. |
 | `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, and issues awaiting their pull request's merge, per workspace. |
+| `~/.local/share/superlinear/daemon.lock` | Held by the running daemon, so a second one exits. |
 | `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. |
 | `~/.local/share/superlinear/daemon.log` | Daemon output. |
 | `~/.local/share/superlinear/logs/<ISSUE-ID>.log` | Agent output for one issue. A resumed run appends to it. |

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- An unknown command or option is an error, with exit status 64 and the usage.
+  It used to be ignored and the daemon run in the foreground, so a command this
+  version lacks, such as `superlinear status`, started a second daemon.
+- Only one daemon runs at a time. A second exits at once, naming the first, via
+  a lock on `~/.local/share/superlinear/daemon.lock`.
+- A launch that fails, as when the disk is full, leaves the issue queued. It
+  goes to the back of the queue and launches pause for a minute; after ten
+  failed launches the issue is dropped with a message in the log. A failed
+  launch used to drop the issue at once while it stayed marked processed, so a
+  full disk emptied the whole queue.
+
 ## [1.5.1] 2026-10-09
 
 ### Fixed

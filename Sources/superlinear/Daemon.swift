@@ -11,6 +11,16 @@ actor Daemon {
     /// Set while recovery sorts the runs, which it must finish before any slot
     /// is counted as free.
     private var recovering = false
+    /// Set when a launch fails, as when the disk is full. Launches wait until
+    /// then, and the run stays queued, rather than every queued run failing in
+    /// turn and leaving the queue.
+    private var launchesPausedUntil: Date?
+    private static let launchRetryDelay: TimeInterval = 60
+    /// Failed launches after which a run is dropped, so one that can never
+    /// launch, such as one whose repository is gone, does not cycle forever.
+    static let maxLaunchFailures = 10
+    /// The queue length last logged, so a retry each poll does not repeat it.
+    private var reportedQueueLength: Int?
 
     init(config: Config) {
         self.config = config
@@ -40,6 +50,8 @@ actor Daemon {
             } catch {
                 log("Poll error: \(error)", workspace: workspace.name)
             }
+            // Retries queued runs whose launch failed, once the pause is over.
+            fillSlots()
             do {
                 try await Task.sleep(for: .seconds(workspace.pollIntervalSeconds))
             } catch {
@@ -120,6 +132,10 @@ actor Daemon {
     /// Launches queued runs, oldest first, until the agent limit is reached.
     private func fillSlots() {
         guard !recovering else { return }
+        if let until = launchesPausedUntil {
+            guard Date() >= until else { return }
+            launchesPausedUntil = nil
+        }
         while processes.count + watchers.count < config.maxConcurrentAgents {
             let queued = state.workspaces.flatMap { name, workspaceState in
                 workspaceState.inFlight.values.map { (name, $0) }
@@ -127,15 +143,19 @@ actor Daemon {
             guard let (name, run) = AgentRunner.nextQueued(queued),
                   let workspace = workspace(named: name)
             else { break }
-            launch(run, workspace: workspace)
+            guard launch(run, workspace: workspace) else { break }
         }
         let waiting = state.workspaces.values.reduce(0) { $0 + $1.inFlight.values.filter(\.isQueued).count }
-        if waiting > 0 {
+        if waiting != reportedQueueLength, waiting > 0 || reportedQueueLength != nil {
             print("[superlinear] \(processes.count + watchers.count) agent(s) running, \(waiting) queued")
         }
+        reportedQueueLength = waiting
     }
 
-    private func launch(_ run: AgentRun, workspace: WorkspaceConfig) {
+    /// Launches a queued run. Returns false when the launch failed; the run
+    /// then stays queued and launches pause for a while.
+    @discardableResult
+    private func launch(_ run: AgentRun, workspace: WorkspaceConfig) -> Bool {
         let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
         let mode = runner.launchMode(for: run)
         do {
@@ -148,11 +168,32 @@ actor Daemon {
             log("  Branch: \(run.branchName)", workspace: workspace.name)
             log("  Session: \(run.sessionId)", workspace: workspace.name)
             log("  Log: \(runner.agentLog(for: run))", workspace: workspace.name)
+            save()
+            return true
         } catch {
-            log("Could not start the agent for \(run.identifier): \(error)", workspace: workspace.name)
-            state.removeRun(issueId: run.issueId, workspace: workspace.name)
+            launchesPausedUntil = Date().addingTimeInterval(Self.launchRetryDelay)
+            var failed = run
+            failed.launchFailures = (run.launchFailures ?? 0) + 1
+            if failed.launchFailures! >= Self.maxLaunchFailures {
+                log(
+                    "Giving up on \(run.identifier) after \(Self.maxLaunchFailures) failed launches: "
+                        + "\(error.localizedDescription). It will not be retried.",
+                    workspace: workspace.name
+                )
+                state.removeRun(issueId: run.issueId, workspace: workspace.name)
+            } else {
+                log(
+                    "Could not start the agent for \(run.identifier); requeued at the back, "
+                        + "launches paused \(Int(Self.launchRetryDelay)) seconds: \(error.localizedDescription)",
+                    workspace: workspace.name
+                )
+                // To the back, so one bad run does not hold up the rest.
+                failed.queuedAt = Date()
+                state.recordRun(failed, workspace: workspace.name)
+            }
+            save()
+            return false
         }
-        save()
     }
 
     private func workspace(named name: String) -> WorkspaceConfig? {
