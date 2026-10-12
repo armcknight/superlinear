@@ -24,8 +24,20 @@ This is a personal tool, published as a reference. It is opinionated about how w
 6. The run — issue, branch, session ID, and the process running it — is kept in the state file until the agent exits.
 7. When the agent exits, the issue waits in the state file for its pull request. Each poll runs `gh pr list --head <branch> --state all` in the repository for every waiting issue:
    - **Merged:** the issue moves to its team's first completed state in Linear, unless it is already completed or canceled, and `work finish <branch>` removes the worktree and the local branch. If Linear cannot be updated, the next poll tries again.
-   - **Open:** the next poll checks again.
+   - **Open:** the next poll checks again — unless you have reviewed it. See [Reviews](#reviews).
    - **Closed without a merge**, or **no pull request:** the daemon logs it and stops watching. The worktree stays for you to inspect.
+
+### Reviews
+
+Review a pull request the daemon is watching, and an agent comes back to address it. Each poll reads the reviews on the open pull request of every issue awaiting its merge. A review counts when:
+
+- it is from the GitHub user `gh` is signed in as,
+- it was submitted after the issue's last agent started, and
+- it asks for something: changes requested, a comment review — including one made only of comments on lines of code — or an approval with a note. An approval with nothing written, a draft review and a dismissed review do not count.
+
+The issue then goes back in the queue. Its agent runs in the same worktree, on the same branch, under a new Claude session, with a prompt to read every review and its inline comments, satisfy the points not yet addressed, commit, push and see CI through. It does not reply on GitHub. When it ends, the issue waits for its merge again, and only reviews submitted after that agent started bring it back. Reviews from other people and from bots, such as Seer, are left alone: the first agent already handles bots' reviews.
+
+Issues already awaiting their merge when you upgrade to a version that follows reviews take the upgrade as their starting point, so reviews left before it do not start agents.
 
 ### Restarts
 

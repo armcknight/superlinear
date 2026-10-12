@@ -23,6 +23,8 @@ actor Daemon {
     private var reportedQueueLength: Int?
     /// Messages logged through firstReport.
     private var reported: Set<String> = []
+    /// The GitHub login whose reviews agents address, once looked up.
+    private var viewerLogin: String?
 
     init(config: Config) {
         self.config = config
@@ -79,6 +81,26 @@ actor Daemon {
         state.markProcessed(issue.id, workspace: workspace.name)
         state.recordRun(run, workspace: workspace.name)
         log("Queued \(issue.identifier): \(issue.title)", workspace: workspace.name)
+        save()
+        fillSlots()
+    }
+
+    /// Queues an agent to address new reviews on the pull request of an issue
+    /// awaiting its merge. It works in the issue's existing worktree, under a
+    /// new Claude session, and the issue awaits its merge again once it ends.
+    func enqueueReview(of pending: PendingMerge, pullRequest: PullRequest, workspace: WorkspaceConfig) {
+        // The watch may have ended while the reviews were being read.
+        guard state.workspaces[workspace.name]?.pendingMerges[pending.issueId] != nil else { return }
+        let run = AgentRun(
+            issueId: pending.issueId,
+            identifier: pending.identifier,
+            branchName: pending.branchName,
+            sessionId: UUID().uuidString.lowercased(),
+            queuedAt: Date(),
+            review: ReviewRequest(number: pullRequest.number, url: pullRequest.url)
+        )
+        state.startReview(run, workspace: workspace.name)
+        log("Queued \(pending.identifier) to address the review on \(pullRequest.url)", workspace: workspace.name)
         save()
         fillSlots()
     }
@@ -161,12 +183,17 @@ actor Daemon {
         let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
         let mode = runner.launchMode(for: run)
         do {
-            let (launched, process) = try runner.launch(run, mode: mode, repoPath: repoPath) { status in
+            var run = run
+            run.launchedAt = run.launchedAt ?? Date()
+            let (launched, process) = try runner.launch(run, mode: mode, repoPath: repoPath) { [run] status in
                 Task { await self.finish(run, status: status, workspace: workspace.name) }
             }
             processes[run.issueId] = process
             state.recordRun(launched, workspace: workspace.name)
             log(mode == .resume ? "Resuming \(run.identifier)" : "Starting \(run.identifier)", workspace: workspace.name)
+            if let review = run.review {
+                log("  Addressing the review on \(review.url)", workspace: workspace.name)
+            }
             log("  Branch: \(run.branchName)", workspace: workspace.name)
             log("  Session: \(run.sessionId)", workspace: workspace.name)
             log("  Log: \(runner.agentLog(for: run))", workspace: workspace.name)
@@ -245,6 +272,25 @@ actor Daemon {
     func trackedIssueIds(workspace: String) -> Set<String> {
         guard let workspaceState = state.workspaces[workspace] else { return [] }
         return Set(workspaceState.inFlight.keys).union(workspaceState.pendingMerges.keys)
+    }
+
+    /// The time through which the issue's reviews count as addressed. A watch
+    /// from before reviews were followed has none; it takes the present, so
+    /// reviews left before the upgrade do not start agents.
+    func reviewsHandledThrough(_ pending: PendingMerge, workspace: String) -> Date {
+        if let date = pending.reviewsHandledThrough { return date }
+        let now = Date()
+        state.workspaces[workspace]?.pendingMerges[pending.issueId]?.reviewsHandledThrough = now
+        save()
+        return now
+    }
+
+    /// The GitHub login `gh` is signed in as, looked up once.
+    func viewerLogin(repoPath: String) async throws -> String {
+        if let viewerLogin { return viewerLogin }
+        let login = try await PullRequestChecker().viewerLogin(repoPath: repoPath)
+        viewerLogin = login
+        return login
     }
 
     func forgetLinkedPullRequests(issueId: String, workspace: String) {

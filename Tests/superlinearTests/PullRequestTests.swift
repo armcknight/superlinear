@@ -35,6 +35,50 @@ struct PullRequestTests {
         #expect(args.contains("--head"))
         #expect(args[args.firstIndex(of: "--head")! + 1] == "linear/sl-1-x")
         #expect(args[args.firstIndex(of: "--state")! + 1] == "all")
+        #expect(args.last?.split(separator: ",").contains("reviews") == true)
+    }
+
+    @Test("Reviews decode from gh's JSON, whatever their state")
+    func decodesReviews() throws {
+        let json = #"""
+        [{"number":7,"state":"OPEN","url":"u","reviews":[
+          {"id":"PRR_1","author":{"login":"me"},"authorAssociation":"OWNER","body":"Rename this",
+           "submittedAt":"2026-10-11T12:00:00Z","state":"CHANGES_REQUESTED","commit":{"oid":"abc"}},
+          {"id":"PRR_2","author":{"login":"me"},"body":"","submittedAt":null,"state":"SOME_NEW_STATE"}
+        ]}]
+        """#
+        let reviews = try #require(try PullRequestChecker.decodePullRequests(Data(json.utf8)).first?.reviews)
+        #expect(reviews.count == 2)
+        #expect(reviews[0] == review("me", "CHANGES_REQUESTED", body: "Rename this", at: 1_791_720_000))
+        #expect(reviews[1].submittedAt == nil)
+        #expect(!reviews[1].asksForChanges)
+    }
+
+    private func review(_ login: String, _ state: String, body: String = "", at seconds: TimeInterval?) -> PullRequestReview {
+        PullRequestReview(
+            author: .init(login: login), state: state, body: body,
+            submittedAt: seconds.map(Date.init(timeIntervalSince1970:))
+        )
+    }
+
+    // A review that slips through starts an agent that pushes to the branch, so
+    // only the signed-in user's new reviews that ask for something count.
+    @Test("Only new reviews from the signed-in user that ask for changes count")
+    func unaddressedReviews() {
+        let reviews = [
+            review("me", "COMMENTED", at: 200),
+            review("me", "CHANGES_REQUESTED", body: "Fix it", at: 300),
+            review("me", "APPROVED", body: "Nit: rename x", at: 400),
+            review("me", "APPROVED", body: " \n", at: 500),
+            review("me", "PENDING", body: "Draft", at: nil),
+            review("me", "DISMISSED", body: "Old", at: 600),
+            review("me", "COMMENTED", body: "Before the agent", at: 100),
+            review("me", "COMMENTED", body: "Exactly at the start", at: 150),
+            review("seer-by-sentry[bot]", "COMMENTED", body: "Bug", at: 700),
+        ]
+        let found = PullRequestReview.unaddressed(reviews, by: "me", after: Date(timeIntervalSince1970: 150))
+        #expect(found == Array(reviews[0..<3]))
+        #expect(PullRequestReview.unaddressed(reviews, by: "someone", after: .distantPast).isEmpty)
     }
 
     @Test("A branch with no pull request is missing")

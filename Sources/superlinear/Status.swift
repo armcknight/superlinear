@@ -166,12 +166,14 @@ struct WorkspaceReport: Sendable {
         switch category {
         case .running:
             guard let run else { return nil }
-            return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run))"
+            let review = run.review.map { ", addressing the review on \($0.url)" } ?? ""
+            return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run))\(review)"
         case .interrupted:
             return "resumes when the daemon next starts"
         case .queued:
-            guard let run, run.resumes > 0 else { return nil }
-            return "to resume, attempt \(run.resumes + 1)"
+            guard let run else { return nil }
+            if run.resumes > 0 { return "to resume, attempt \(run.resumes + 1)" }
+            return run.review.map { "to address the review on \($0.url)" }
         case .openPullRequest:
             guard let pullRequest else { return nil }
             return pullRequest.isDraft == true ? "\(pullRequest.url) (draft)" : pullRequest.url

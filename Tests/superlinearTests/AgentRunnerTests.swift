@@ -21,6 +21,18 @@ struct AgentRunnerTests {
         #expect(!resume.contains("--session-id"))
     }
 
+    @Test("A review run gets a prompt for its pull request; any other run the issue prompt")
+    func prompts() {
+        var review = run
+        review.review = ReviewRequest(number: 12, url: "https://github.com/o/r/pull/12")
+        let prompt = AgentRunner.prompt(for: review)
+        #expect(prompt.contains("https://github.com/o/r/pull/12"))
+        #expect(prompt.contains("pulls/12/comments"))
+        #expect(prompt.contains("Do not reply to the review"))
+        #expect(!AgentRunner.prompt(for: run).contains("pull request #"))
+        #expect(AgentRunner.prompt(for: run).contains("/armcknight-claude:start"))
+    }
+
     // The order matters: a status means the agent ended, whatever else is true,
     // and a live agent must never be relaunched alongside itself.
     @Test("Recovery prefers a status, then a live process, then the queue")

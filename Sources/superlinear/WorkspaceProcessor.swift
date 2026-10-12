@@ -103,7 +103,8 @@ struct WorkspaceProcessor: Sendable {
 
     /// Looks up the pull request of each issue whose agent has ended. A merged
     /// one completes the issue in Linear and removes its worktree; a closed
-    /// one, or none at all, ends the watch.
+    /// one, or none at all, ends the watch. An open one with new reviews from
+    /// the signed-in GitHub user gets an agent to address them.
     private func checkPullRequests(client: LinearClient) async {
         let checker = PullRequestChecker()
         let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
@@ -121,6 +122,7 @@ struct WorkspaceProcessor: Sendable {
 
             switch status {
             case .open:
+                await checkReviews(of: pending, pullRequests: pullRequests, repoPath: repoPath)
                 continue
             case .merged(let pr):
                 log("\(pending.identifier) merged in \(pr.url)")
@@ -147,6 +149,28 @@ struct WorkspaceProcessor: Sendable {
             }
             await daemon.stopAwaitingMerge(issueId: pending.issueId, workspace: workspace.name)
         }
+    }
+
+    /// Queues an agent for the open pull request when `gh`'s own user has
+    /// reviewed it since the issue's last agent started.
+    private func checkReviews(of pending: PendingMerge, pullRequests: [PullRequest], repoPath: String) async {
+        // First, so a watch from before reviews were followed starts counting
+        // from now rather than from the first poll that finds a review.
+        let handledThrough = await daemon.reviewsHandledThrough(pending, workspace: workspace.name)
+        guard let pullRequest = pullRequests.first(where: { $0.state == .open }),
+              let reviews = pullRequest.reviews, !reviews.isEmpty
+        else { return }
+        let login: String
+        do {
+            login = try await daemon.viewerLogin(repoPath: repoPath)
+        } catch {
+            await logOnce("Could not find the GitHub user whose reviews to address: \(error)")
+            return
+        }
+        let unaddressed = PullRequestReview.unaddressed(reviews, by: login, after: handledThrough)
+        guard !unaddressed.isEmpty else { return }
+        log("\(pending.identifier) has \(unaddressed.count) new review(s) from \(login) on \(pullRequest.url)")
+        await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
     }
 
     private func log(_ message: String) {

@@ -15,6 +15,35 @@ Work autonomously. Do not pause to ask questions. If you encounter ambiguity, ma
 decision and document it in the PR description.
 """
 
+/// The prompt for a run that answers a review on the pull request an earlier
+/// agent opened. It starts a new Claude session, so it says everything itself.
+func reviewPrompt(for review: ReviewRequest) -> String {
+    """
+    You are working autonomously on a Linear issue whose pull request has been reviewed. Do not \
+    ask for confirmation at any step — proceed through the entire workflow without pausing.
+
+    An earlier agent already implemented the issue on this branch and opened pull request \
+    #\(review.number): \(review.url)
+
+    The maintainer has since reviewed it. Your task:
+    1. Read the Linear issue for this branch with `direnv exec . linctl issue get`, and the branch's \
+    commits against the base branch, to learn what was done.
+    2. Read every review on the pull request and every comment in them, including the inline \
+    comments on lines of code: `gh pr view \(review.number) --json reviews` and \
+    `gh api repos/{owner}/{repo}/pulls/\(review.number)/comments`. Work out which review points \
+    are not yet addressed by the commits on the branch.
+    3. Implement whatever is needed to satisfy each of those points. If a point asks a question \
+    rather than for a change, answer it in the pull request description.
+    4. Run /armcknight-claude:commit to stage and commit your changes, then push the branch.
+    5. Update the pull request description with `gh pr edit` if the changes make it out of date.
+    6. Monitor CI until all checks pass, fixing breakages as they come.
+
+    Do not reply to the review or post comments on GitHub. If every point is already addressed, \
+    stop. If you encounter ambiguity, make a reasonable decision and document it in the pull \
+    request description.
+    """
+}
+
 private let resumePrompt = """
 You were interrupted partway through the task above. Work out where you stopped — check the \
 worktree's git status and log, the Linear issue's state, and whether a pull request exists and \
@@ -117,7 +146,7 @@ struct AgentRunner: Sendable {
         try fm.createDirectory(atPath: logsDirectory, withIntermediateDirectories: true)
         try? fm.removeItem(atPath: statusFile(for: run))
 
-        let prompt = mode == .resume ? resumePrompt : autonomousPrompt
+        let prompt = mode == .resume ? resumePrompt : Self.prompt(for: run)
         try prompt.write(toFile: promptFile(for: run), atomically: true, encoding: .utf8)
 
         if !fm.fileExists(atPath: workLog(for: run)) {
@@ -154,6 +183,11 @@ struct AgentRunner: Sendable {
         launched.pid = process.processIdentifier
         launched.processStartedAt = Self.startTime(of: process.processIdentifier)
         return (launched, process)
+    }
+
+    /// The prompt that starts the run's session.
+    static func prompt(for run: AgentRun) -> String {
+        run.review.map(reviewPrompt) ?? autonomousPrompt
     }
 
     // MARK: Recovery

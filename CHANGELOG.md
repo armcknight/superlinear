@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Your reviews on an agent's pull request bring an agent back to address
+  them. Each poll reads the reviews on the open pull request of every issue
+  awaiting its merge, and a review from the GitHub user `gh` is signed in as,
+  submitted after the issue's last agent started, queues a new agent in the
+  same worktree. It reads every review and inline comment, implements what
+  they ask for, commits, pushes and sees CI through, without replying on
+  GitHub. Approvals with nothing written, drafts and dismissed reviews are
+  ignored, as are reviews from anyone else. `superlinear status` shows which
+  runs address a review.
+
 ## [1.9.0] 2026-10-11
 
 ### Added

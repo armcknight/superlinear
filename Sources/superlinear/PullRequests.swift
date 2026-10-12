@@ -6,20 +6,66 @@ struct PendingMerge: Codable, Sendable, Equatable {
     var issueId: String
     var identifier: String
     var branchName: String
+    /// Reviews submitted at or before this time are taken as addressed: the
+    /// last agent on the issue was already running when they came in. Absent
+    /// in state files written before reviews were followed.
+    var reviewsHandledThrough: Date?
 
-    init(issueId: String, identifier: String, branchName: String) {
+    init(issueId: String, identifier: String, branchName: String, reviewsHandledThrough: Date? = nil) {
         self.issueId = issueId
         self.identifier = identifier
         self.branchName = branchName
+        self.reviewsHandledThrough = reviewsHandledThrough
     }
 
+    /// The watch that follows a run once its agent ends. Reviews from after
+    /// the agent started are left to the next one; it may have read some of
+    /// them, but a review it missed would otherwise go unanswered.
     init(_ run: AgentRun) {
-        self.init(issueId: run.issueId, identifier: run.identifier, branchName: run.branchName)
+        self.init(
+            issueId: run.issueId, identifier: run.identifier, branchName: run.branchName,
+            reviewsHandledThrough: run.launchedAt ?? run.processStartedAt
+        )
+    }
+}
+
+/// A review on a pull request, as `gh pr list --json reviews` reports it.
+struct PullRequestReview: Codable, Sendable, Equatable {
+    struct Author: Codable, Sendable, Equatable {
+        let login: String
+    }
+
+    let author: Author?
+    /// `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED` or `PENDING`.
+    /// A string, so a state GitHub adds later does not fail the merge check
+    /// that decodes it.
+    let state: String
+    let body: String
+    let submittedAt: Date?
+
+    /// Whether the review asks for anything: an approval with nothing written
+    /// does not, and neither does a draft or a dismissed review.
+    var asksForChanges: Bool {
+        switch state {
+        case "CHANGES_REQUESTED", "COMMENTED": true
+        case "APPROVED": !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        default: false
+        }
+    }
+
+    /// The reviews by `login`, submitted after `date`, that ask for changes.
+    static func unaddressed(_ reviews: [PullRequestReview], by login: String, after date: Date) -> [PullRequestReview] {
+        reviews.filter { review in
+            guard review.author?.login == login, review.asksForChanges,
+                  let submittedAt = review.submittedAt
+            else { return false }
+            return submittedAt > date
+        }
     }
 }
 
 /// A pull request as `gh pr list --json` reports it. The merge check asks
-/// for `number,url,state` on one branch; `superlinear status` lists a whole
+/// for `number,url,state,reviews` on one branch; `superlinear status` lists a whole
 /// repository and asks for the branch and draft flag as well.
 struct PullRequest: Codable, Sendable, Equatable {
     enum State: String, Codable, Sendable {
@@ -37,6 +83,8 @@ struct PullRequest: Codable, Sendable, Equatable {
     var isDraft: Bool? = nil
     /// When it merged, when the listing asked for it.
     var mergedAt: Date? = nil
+    /// Its reviews, when the listing asked for them.
+    var reviews: [PullRequestReview]? = nil
 }
 
 /// What a poll found for an issue awaiting its merge.
@@ -71,8 +119,8 @@ struct CommandError: Error, CustomStringConvertible {
     }
 }
 
-/// Asks GitHub about the pull requests agents opened, and tears down the
-/// worktrees of the ones that merged.
+/// Asks GitHub about the pull requests agents opened and the reviews left on
+/// them, and tears down the worktrees of the ones that merged.
 struct PullRequestChecker: Sendable {
     /// The environment commands run in. `gh` and `work` are found through its
     /// PATH, as they are for agents.
@@ -83,7 +131,19 @@ struct PullRequestChecker: Sendable {
     }
 
     static func listArguments(branch: String) -> [String] {
-        ["gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,url,state"]
+        ["gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,url,state,reviews"]
+    }
+
+    static let viewerArguments = ["gh", "api", "user", "--jq", ".login"]
+
+    /// The GitHub login `gh` is signed in as, whose reviews agents answer.
+    func viewerLogin(repoPath: String) async throws -> String {
+        let login = String(decoding: try await run(Self.viewerArguments, in: repoPath), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !login.isEmpty else {
+            throw CommandError(command: Self.viewerArguments, status: 0, output: "no login")
+        }
+        return login
     }
 
     static let listAllArguments = [
