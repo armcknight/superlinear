@@ -233,6 +233,21 @@ actor Daemon {
         state.pendingMerges(workspace: workspace)
     }
 
+    /// Runs whose agents are running now, to check for pull requests opened
+    /// before the agent ends.
+    func launchedRuns(workspace: String) -> [AgentRun] {
+        state.runs(workspace: workspace).filter { !$0.isQueued }
+    }
+
+    func linkedPullRequests(issueId: String, workspace: String) -> Set<String> {
+        state.linkedPullRequests(issueId: issueId, workspace: workspace)
+    }
+
+    func recordLinkedPullRequest(_ url: String, issueId: String, workspace: String) {
+        state.recordLinkedPullRequest(url, issueId: issueId, workspace: workspace)
+        save()
+    }
+
     func stopAwaitingMerge(issueId: String, workspace: String) {
         state.stopAwaitingMerge(issueId: issueId, workspace: workspace)
         save()

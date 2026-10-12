@@ -38,7 +38,7 @@ Agents outlive the daemon, so restarting it — an upgrade, a config edit, `make
 
 The prompt instructs the agent to run `/armcknight-claude:start`, implement the change, run `/armcknight-claude:commit`, then run `/armcknight-claude:pr --autonomous` to open a PR and monitor CI. The agent is told not to pause for confirmation.
 
-Branch names come from Linear's own `branchName` field, so the branch matches what the Linear UI shows and Linear links the PR to the issue automatically.
+Branch names come from Linear's own `branchName` field, so the branch matches what the Linear UI shows. Each poll also attaches the pull requests opened from an issue's branch to the issue in Linear, from the first poll after the PR is opened, so the link is there whether or not Linear's GitHub integration is set up for the repository.
 
 ## Requirements
 

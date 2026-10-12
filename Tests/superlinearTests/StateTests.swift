@@ -121,4 +121,29 @@ struct StateTests {
         state.removeRun(issueId: "SL-1", workspace: "w")
         #expect(state.runs(workspace: "w").isEmpty)
     }
+
+    // Each pull request is linked to its issue once, and the record goes when
+    // nothing checks the issue's pull requests any more.
+    @Test("Linked pull requests are recorded once and cleared with the merge watch")
+    func linkedPullRequests() {
+        var state = State()
+        state.recordLinkedPullRequest("https://github.com/o/r/pull/1", issueId: "SL-1", workspace: "w")
+        state.recordLinkedPullRequest("https://github.com/o/r/pull/1", issueId: "SL-1", workspace: "w")
+        state.recordLinkedPullRequest("https://github.com/o/r/pull/2", issueId: "SL-1", workspace: "w")
+        #expect(state.linkedPullRequests(issueId: "SL-1", workspace: "w") == [
+            "https://github.com/o/r/pull/1", "https://github.com/o/r/pull/2",
+        ])
+        #expect(state.workspaces["w"]?.linkedPullRequests["SL-1"]?.count == 2)
+        #expect(state.linkedPullRequests(issueId: "SL-1", workspace: "other").isEmpty)
+
+        state.stopAwaitingMerge(issueId: "SL-1", workspace: "w")
+        #expect(state.linkedPullRequests(issueId: "SL-1", workspace: "w").isEmpty)
+    }
+
+    @Test("A state file from before pull requests were linked still loads")
+    func legacyStateWithoutLinks() throws {
+        let json = #"{"workspaces":{"w":{"processedIssueIds":["SL-1"],"lastPollTimestamp":"2023-11-14T22:13:20Z","inFlight":{},"pendingMerges":{}}}}"#
+        let state = try State.decoded(from: Data(json.utf8))
+        #expect(state.linkedPullRequests(issueId: "SL-1", workspace: "w").isEmpty)
+    }
 }

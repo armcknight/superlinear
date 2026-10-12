@@ -27,7 +27,39 @@ struct WorkspaceProcessor: Sendable {
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
 
+        await linkRunningAgentsPullRequests(client: client)
         await checkPullRequests(client: client)
+    }
+
+    /// Links the pull requests of agents still running, which open them well
+    /// before they end, as they go on to watch CI.
+    private func linkRunningAgentsPullRequests(client: LinearClient) async {
+        let checker = PullRequestChecker()
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        for run in await daemon.launchedRuns(workspace: workspace.name) {
+            // Most running agents have no pull request yet; a failed lookup is
+            // retried next poll, and logged when the agent ends.
+            guard let pullRequests = try? await checker.pullRequests(branch: run.branchName, repoPath: repoPath)
+            else { continue }
+            await link(pullRequests, issueId: run.issueId, identifier: run.identifier, client: client)
+        }
+    }
+
+    /// Attaches each pull request not yet linked to the issue in Linear.
+    private func link(_ pullRequests: [PullRequest], issueId: String, identifier: String, client: LinearClient) async {
+        let linked = await daemon.linkedPullRequests(issueId: issueId, workspace: workspace.name)
+        for pullRequest in pullRequests where !linked.contains(pullRequest.url) {
+            do {
+                try await client.linkURL(
+                    issueId: issueId, url: pullRequest.url, title: "Pull request #\(pullRequest.number)"
+                )
+                await daemon.recordLinkedPullRequest(pullRequest.url, issueId: issueId, workspace: workspace.name)
+                log("Linked \(pullRequest.url) to \(identifier) in Linear")
+            } catch {
+                // Not recorded, so the next poll tries again.
+                log("Could not link \(pullRequest.url) to \(identifier) in Linear: \(error)")
+            }
+        }
     }
 
     /// Looks up the pull request of each issue whose agent has ended. A merged
@@ -37,13 +69,16 @@ struct WorkspaceProcessor: Sendable {
         let checker = PullRequestChecker()
         let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
         for pending in await daemon.pendingMerges(workspace: workspace.name) {
-            let status: MergeStatus
+            let pullRequests: [PullRequest]
             do {
-                status = MergeStatus.of(try await checker.pullRequests(branch: pending.branchName, repoPath: repoPath))
+                pullRequests = try await checker.pullRequests(branch: pending.branchName, repoPath: repoPath)
             } catch {
                 log("Could not check the pull request for \(pending.identifier): \(error)")
                 continue
             }
+            // Before the merge check, which may end the watch.
+            await link(pullRequests, issueId: pending.issueId, identifier: pending.identifier, client: client)
+            let status = MergeStatus.of(pullRequests)
 
             switch status {
             case .open:

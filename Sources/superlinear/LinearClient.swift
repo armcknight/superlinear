@@ -197,6 +197,30 @@ struct LinearClient: Sendable {
         return true
     }
 
+    private static let linkURLMutation = """
+    mutation LinkPullRequest($issueId: String!, $url: String!, $title: String) {
+      attachmentLinkURL(issueId: $issueId, url: $url, title: $title) { success }
+    }
+    """
+
+    /// Attaches `url` to the issue. Linear keeps one attachment per URL on an
+    /// issue, so linking a URL twice changes nothing.
+    func linkURL(issueId: String, url: String, title: String) async throws {
+        let result = try await execute(
+            Self.linkURLMutation, variables: ["issueId": issueId, "url": url, "title": title],
+            as: AttachmentLinkData.self
+        )
+        guard result.attachmentLinkURL.success else { throw LinearClientError.invalidResponse }
+    }
+
+    private struct AttachmentLinkData: Decodable {
+        let attachmentLinkURL: Result
+
+        struct Result: Decodable {
+            let success: Bool
+        }
+    }
+
     private struct IssuesData<Node: Decodable>: Decodable {
         let issues: IssuesResponse<Node>
     }

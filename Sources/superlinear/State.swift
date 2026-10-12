@@ -37,22 +37,28 @@ struct WorkspaceState: Codable, Sendable {
     /// Issues whose agents have ended, awaiting their pull requests' merge,
     /// keyed by issue ID.
     var pendingMerges: [String: PendingMerge]
+    /// Pull request URLs already linked to each issue in Linear, keyed by
+    /// issue ID, so each is linked once.
+    var linkedPullRequests: [String: [String]]
 
     init() {
         processedIssueIds = []
         lastPollTimestamp = .distantPast
         inFlight = [:]
         pendingMerges = [:]
+        linkedPullRequests = [:]
     }
 
     // State files written before runs were tracked have no `inFlight`, and
-    // those written before pull requests were watched have no `pendingMerges`.
+    // those written before pull requests were watched have no `pendingMerges`
+    // or `linkedPullRequests`.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         processedIssueIds = try container.decode(Set<String>.self, forKey: .processedIssueIds)
         lastPollTimestamp = try container.decode(Date.self, forKey: .lastPollTimestamp)
         inFlight = try container.decodeIfPresent([String: AgentRun].self, forKey: .inFlight) ?? [:]
         pendingMerges = try container.decodeIfPresent([String: PendingMerge].self, forKey: .pendingMerges) ?? [:]
+        linkedPullRequests = try container.decodeIfPresent([String: [String]].self, forKey: .linkedPullRequests) ?? [:]
     }
 }
 
@@ -134,6 +140,19 @@ struct State: Codable, Sendable {
 
     mutating func stopAwaitingMerge(issueId: String, workspace: String) {
         workspaces[workspace]?.pendingMerges[issueId] = nil
+        // Nothing checks this issue's pull requests any more.
+        workspaces[workspace]?.linkedPullRequests[issueId] = nil
+    }
+
+    func linkedPullRequests(issueId: String, workspace: String) -> Set<String> {
+        Set(workspaces[workspace]?.linkedPullRequests[issueId] ?? [])
+    }
+
+    mutating func recordLinkedPullRequest(_ url: String, issueId: String, workspace: String) {
+        var urls = workspaces[workspace, default: WorkspaceState()].linkedPullRequests[issueId] ?? []
+        guard !urls.contains(url) else { return }
+        urls.append(url)
+        workspaces[workspace, default: WorkspaceState()].linkedPullRequests[issueId] = urls
     }
 
     func pendingMerges(workspace: String) -> [PendingMerge] {

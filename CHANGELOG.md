@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Each pull request an agent opens is linked to its Linear issue, as an
+  attachment, within a poll of being opened — while the agent is still
+  running, not only once it ends. Each URL is linked once. Issues used to get
+  a link only from Linear's GitHub integration, which left none where the
+  integration is not set up for the repository.
+
 ## [1.7.0] 2026-10-11
 
 ### Added
