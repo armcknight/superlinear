@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pull requests under "Awaiting review" as "agent addressing review" in place
   of GitHub's review state.
 
+### Fixed
+
+- Each poll lists a repository's pull requests once, and its open ones with
+  their reviews and commits once more when a watched pull request is open.
+  Before, it ran one `gh pr list` per watched branch and per running agent
+  every poll, which with dozens of open pull requests used up GitHub's 5,000
+  GraphQL points an hour and left agents and `superlinear status` rate
+  limited.
+- `make install` replaces the binary with a new file instead of overwriting
+  it, which made macOS kill it on launch while the daemon ran it.
+
 ## [1.13.0] 2026-10-12
 
 ### Added
