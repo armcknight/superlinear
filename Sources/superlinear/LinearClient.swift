@@ -149,6 +149,37 @@ struct LinearClient: Sendable {
     }
     """
 
+    private static let queryByNumbers = """
+    query IssuesByNumber($numbers: [Float!], $keys: [String!], $cursor: String) {
+      issues(
+        filter: { number: { in: $numbers }, team: { key: { in: $keys } } }
+        first: 50
+        after: $cursor
+      ) {
+    \(startedIssueFields)
+      }
+    }
+    """
+
+    /// The issues with these identifiers, such as SPL-5, in one request.
+    /// Linear filters by number and team key separately, so the result can
+    /// hold other pairings of the two; only exact identifiers are kept.
+    /// Identifiers Linear does not have are simply absent.
+    func fetchIssues(identifiers: [String]) async throws -> [LinearIssueStatus] {
+        let pairs = identifiers.compactMap { identifier -> (String, Int)? in
+            guard let dash = identifier.lastIndex(of: "-"), let number = Int(identifier[identifier.index(after: dash)...])
+            else { return nil }
+            return (String(identifier[..<dash]), number)
+        }
+        guard !pairs.isEmpty else { return [] }
+        let issues: [LinearIssueStatus] = try await fetchAll(
+            Self.queryByNumbers,
+            variables: ["numbers": Array(Set(pairs.map(\.1))), "keys": Array(Set(pairs.map(\.0)))]
+        )
+        let wanted = Set(identifiers)
+        return issues.filter { wanted.contains($0.identifier) }
+    }
+
     /// Issues in a started state, such as In Progress or In Review, optionally
     /// filtered by team.
     func fetchStartedIssues(teamIds: [String]) async throws -> [LinearIssueStatus] {

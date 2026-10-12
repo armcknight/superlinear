@@ -19,6 +19,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ignored, as are reviews from anyone else. `superlinear status` shows which
   runs address a review.
 
+## [1.13.0] 2026-10-12
+
+### Added
+
+- The status summary shows a histogram for each measure, in place of the mean,
+  with the minimum beside the median and maximum.
+- Open pull requests are measured locally with `git diff --shortstat`, from
+  the later of the fork points off the local base branch and off
+  `origin/<base>`. When agents forked off unpushed local commits, which GitHub
+  counts as part of each pull request, the workspace warns to push the base
+  branch, and the summary says how many pull requests are affected.
+
+## [1.12.0] 2026-10-12
+
+### Added
+
+- `superlinear status` ends with a summary: the number of projects and of
+  items in each section across workspaces; the total, mean, median and maximum
+  per agent pull request of lines added and removed, files changed, tokens,
+  cache reads, agent time and CI time; totals over all tracked tasks; and the
+  same figures per project. Tokens and agent time come from the Claude
+  transcripts of each issue's branch, CI time from `gh run list`.
+
+## [1.11.0] 2026-10-11
+
+### Added
+
+- Agents' build output is freed. When an agent ends, the daemon runs
+  `work clean` on its worktree, removing its SwiftPM `.build` directories and
+  Xcode DerivedData while keeping the worktree. At startup it cleans every
+  worktree whose agent is not running and whose build output has been idle
+  for an hour, and the DerivedData of worktrees since removed. Needs workr
+  1.2.0. Before, nothing removed either until a merge, and DerivedData not
+  even then, so the disk filled with tens of gigabytes.
+
+## [1.10.0] 2026-10-11
+
+### Added
+
+- `superlinear status` lists every open pull request that belongs to a Linear
+  issue of a configured workspace, whether or not the daemon tracks the issue:
+  non-drafts under "Awaiting review" with their review state (not reviewed,
+  changes requested, or approved) and CI state, drafts under "Draft pull
+  requests". A pull request belongs to an issue when its branch or title names
+  the issue's identifier and the workspace's Linear has that issue. These
+  sections replace the tasks' "Open pull requests" when they can be listed.
+
 ## [1.9.0] 2026-10-11
 
 ### Added

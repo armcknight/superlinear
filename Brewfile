@@ -14,8 +14,8 @@ brew "tmux"
 cask "claude-code@latest"
 
 # workr: `work start --headless` creates the worktree and pipes the prompt into
-# `claude -p`. Ships as the `work` binary. Needs 1.1.0 or later, for
-# `--session-id` and `--resume`; a cask cannot pin a minimum, so `brew upgrade`.
+# `claude -p`. Ships as the `work` binary. Needs 1.2.0 or later, for
+# `--session-id`, `--resume` and `work clean`; a cask cannot pin a minimum, so `brew upgrade`.
 tap "armcknight/tools"
 cask "armcknight/tools/work"
 

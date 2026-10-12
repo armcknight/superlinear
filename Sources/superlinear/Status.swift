@@ -1,7 +1,7 @@
 import Foundation
 
 extension PullRequest {
-    static let jsonFields = "number,url,state,headRefName,isDraft"
+    static let jsonFields = "number,url,state,headRefName,isDraft,additions,deletions,changedFiles,baseRefName"
 
     /// The pull request that speaks for `branch`: an open one first, then a
     /// merged one, then a closed one, the newest of each.
@@ -13,27 +13,9 @@ extension PullRequest {
         }
     }
 
-    /// Every pull request in the repository at `repoPath`, from `gh`, which
-    /// works out the GitHub repository from the checkout's remotes.
+    /// Every pull request in the repository at `repoPath`, from `gh`.
     static func list(in repoPath: String) throws -> [PullRequest] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["gh", "pr", "list", "--state", "all", "--limit", "1000", "--json", jsonFields]
-        process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
-        let output = Pipe()
-        let errors = Pipe()
-        process.standardOutput = output
-        process.standardError = errors
-        process.standardInput = FileHandle.nullDevice
-        try process.run()
-        // Read before waiting, or a full pipe would stall gh forever.
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        let message = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let text = String(decoding: message, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            throw StatusError.gitHub(text.isEmpty ? "gh exited \(process.terminationStatus)" : text)
-        }
+        let data = try GitHubCLI.run(["pr", "list", "--state", "all", "--limit", "1000", "--json", jsonFields], in: repoPath)
         return try JSONDecoder().decode([PullRequest].self, from: data)
     }
 }
@@ -110,12 +92,25 @@ struct TaskEntry: Sendable, Equatable {
     let category: TaskCategory
     /// A pull request URL, log path, or Linear state, as suits the category.
     let detail: String?
+    var branch = ""
+    /// The pull request that speaks for the branch, if any.
+    var pullRequest: PullRequest? = nil
+    /// What the agent's Claude sessions used, if their transcripts were found.
+    var usage: AgentUsage? = nil
+    /// Time the branch's finished CI runs took, if CI runs were listed.
+    var ciTime: TimeInterval? = nil
 }
 
 /// What `superlinear status` prints for one workspace.
 struct WorkspaceReport: Sendable {
     let name: String
     let entries: [TaskEntry]
+    /// Open pull requests belonging to Linear issues, whether or not the
+    /// daemon is tracking the issue. Nil when GitHub or Linear could not be
+    /// asked, in which case open pull requests show only among the tasks.
+    var reviews: [ReviewEntry]? = nil
+    /// The agents' open and merged pull requests, for the summary.
+    var pullRequestStats: [PullRequestStats] = []
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
     let warnings: [String]
@@ -148,7 +143,9 @@ struct WorkspaceReport: Sendable {
                 identifier: issue?.identifier ?? run?.identifier ?? id,
                 title: issue?.title ?? "",
                 category: category,
-                detail: detail(for: category, run: run, issue: issue, pullRequest: pullRequest, runner: runner)
+                detail: detail(for: category, run: run, issue: issue, pullRequest: pullRequest, runner: runner),
+                branch: branch,
+                pullRequest: pullRequest
             )
         }
         return entries.sorted { a, b in
@@ -192,13 +189,30 @@ struct WorkspaceReport: Sendable {
         for warning in warnings {
             lines.append("  warning: \(warning)")
         }
-        if entries.isEmpty && warnings.isEmpty {
+        // Open pull requests are listed for review instead, when they could be.
+        let tasks = reviews == nil ? entries : entries.filter { $0.category != .openPullRequest }
+        let reviews = reviews ?? []
+        if tasks.isEmpty && reviews.isEmpty && warnings.isEmpty {
             lines.append("  No tasks")
         }
-        let width = entries.map(\.identifier.count).max() ?? 0
+        let width = (tasks.map(\.identifier.count) + reviews.map(\.issue.identifier.count)).max() ?? 0
         let indent = String(repeating: " ", count: 4 + width + 2)
+
+        for (heading, drafts) in [("Awaiting review", false), ("Draft pull requests", true)] {
+            let section = reviews.filter { $0.pullRequest.isDraft == drafts }
+            guard !section.isEmpty else { continue }
+            lines.append("  \(heading)")
+            for review in section {
+                let pullRequest = review.pullRequest
+                let padded = review.issue.identifier.padding(toLength: width, withPad: " ", startingAt: 0)
+                lines.append("    \(padded)  #\(pullRequest.number) \(pullRequest.title)".trimmingTrailingWhitespace())
+                let state = drafts ? [] : [pullRequest.reviewState.rawValue]
+                lines.append(indent + (state + [pullRequest.checkState.rawValue, pullRequest.url]).joined(separator: " · "))
+            }
+        }
+
         for category in TaskCategory.allCases {
-            let section = entries.filter { $0.category == category }
+            let section = tasks.filter { $0.category == category }
             guard !section.isEmpty else { continue }
             lines.append("  \(category.heading)")
             for entry in section {
@@ -214,7 +228,9 @@ struct WorkspaceReport: Sendable {
 
     /// Gathers the report for one workspace from the state file, Linear and
     /// GitHub. Never throws: what cannot be fetched becomes a warning.
-    static func gather(workspace: WorkspaceConfig, state: State, runner: AgentRunner) async -> WorkspaceReport {
+    static func gather(
+        workspace: WorkspaceConfig, state: State, runner: AgentRunner, transcripts: Transcripts
+    ) async -> WorkspaceReport {
         let workspaceState = state.workspaces[workspace.name] ?? WorkspaceState()
         var warnings: [String] = []
 
@@ -238,9 +254,61 @@ struct WorkspaceReport: Sendable {
             }
         }
 
+        var reviews: [ReviewEntry]?
+        do {
+            let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+            let open = try ReviewablePullRequest.listOpen(in: repoPath)
+            let identifiers = Array(Set(open.flatMap(\.issueIdentifiers)))
+            let linked = try await LinearClient(apiKey: workspace.apiKey).fetchIssues(identifiers: identifiers)
+            reviews = ReviewEntry.entries(pullRequests: open, issues: linked)
+        } catch {
+            warnings.append("Could not list open pull requests for review: \(error)")
+        }
+
+        var tasks = entries(state: workspaceState, issues: issues, pullRequests: pullRequests, runner: runner)
+        var ciTimes: [String: TimeInterval]?
+        if !tasks.isEmpty || reviews?.isEmpty == false {
+            do {
+                let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+                let runs = try WorkflowRun.list(in: repoPath)
+                // A repository without CI has no CI time, rather than none per task.
+                if !runs.isEmpty { ciTimes = WorkflowRun.time(byBranch: runs) }
+            } catch {
+                warnings.append("Could not list CI runs: \(error)")
+            }
+        }
+        for index in tasks.indices {
+            tasks[index].usage = transcripts.usage(forBranch: tasks[index].branch)
+            if let ciTimes { tasks[index].ciTime = ciTimes[tasks[index].branch] ?? 0 }
+        }
+
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        var stats = PullRequestStats.of(tasks: tasks, reviews: reviews ?? []) { branch in
+            (transcripts.usage(forBranch: branch), ciTimes.map { $0[branch] ?? 0 })
+        }
+        // Merged branches are in their base already, so only open ones can
+        // be measured locally.
+        for index in stats.indices where !stats[index].merged {
+            guard let base = stats[index].base,
+                let diff = LocalDiff.measure(branch: stats[index].branch, base: base, in: repoPath)
+            else { continue }
+            stats[index].apply(diff)
+        }
+        let ahead = stats.filter(\.forkedAheadOfOrigin)
+        for base in Set(ahead.compactMap(\.base)).sorted() {
+            let count = ahead.filter { $0.base == base }.count
+            let commits = LocalDiff.commitsAhead(base: base, in: repoPath).map { " by \($0) commits" } ?? ""
+            warnings.append(
+                "Local \(base) is ahead of origin/\(base)\(commits), and \(count) open pull request\(count == 1 ? "" : "s") "
+                    + "include commits from it, so GitHub shows them larger than they are. Push \(base). "
+                    + "The summary measures them from the local fork point.")
+        }
+
         return WorkspaceReport(
             name: workspace.name,
-            entries: entries(state: workspaceState, issues: issues, pullRequests: pullRequests, runner: runner),
+            entries: tasks,
+            reviews: reviews,
+            pullRequestStats: stats,
             warnings: warnings
         )
     }
@@ -259,10 +327,12 @@ enum StatusCommand {
         }
         let state = State.load()
         let runner = AgentRunner()
+        let transcripts = Transcripts()
 
         let reports = await withTaskGroup(of: (Int, WorkspaceReport).self) { group in
             for (index, workspace) in config.workspaces.enumerated() {
-                group.addTask { (index, await WorkspaceReport.gather(workspace: workspace, state: state, runner: runner)) }
+                group.addTask { (index, await WorkspaceReport.gather(
+                    workspace: workspace, state: state, runner: runner, transcripts: transcripts)) }
             }
             var reports: [(Int, WorkspaceReport)] = []
             for await report in group {
@@ -271,12 +341,13 @@ enum StatusCommand {
             return reports.sorted { $0.0 < $1.0 }.map(\.1)
         }
 
-        print(reports.map { $0.rendered() }.joined(separator: "\n\n"))
+        let summary = StatusSummary(reports: reports).rendered()
+        print((reports.map { $0.rendered() } + [summary]).joined(separator: "\n\n"))
         return 0
     }
 }
 
-private extension String {
+extension String {
     func trimmingTrailingWhitespace() -> String {
         var text = self
         while text.last?.isWhitespace == true {

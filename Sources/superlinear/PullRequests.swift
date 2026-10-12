@@ -65,8 +65,8 @@ struct PullRequestReview: Codable, Sendable, Equatable {
 }
 
 /// A pull request as `gh pr list --json` reports it. The merge check asks
-/// for `number,url,state,reviews` on one branch; `superlinear status` lists a whole
-/// repository and asks for the branch and draft flag as well.
+/// for `number,url,state,reviews` on one branch; `superlinear status` lists a
+/// whole repository and asks for the branch, draft flag and size as well.
 struct PullRequest: Codable, Sendable, Equatable {
     enum State: String, Codable, Sendable {
         case open = "OPEN"
@@ -85,6 +85,12 @@ struct PullRequest: Codable, Sendable, Equatable {
     var mergedAt: Date? = nil
     /// Its reviews, when the listing asked for them.
     var reviews: [PullRequestReview]? = nil
+    /// Lines added and removed, and files changed, when the listing asked.
+    var additions: Int? = nil
+    var deletions: Int? = nil
+    var changedFiles: Int? = nil
+    /// The branch it would merge into, when the listing asked.
+    var baseRefName: String? = nil
 }
 
 /// What a poll found for an issue awaiting its merge.
@@ -183,7 +189,7 @@ struct PullRequestChecker: Sendable {
 
     /// Runs `arguments` in `directory` and returns its standard output, or
     /// throws with its combined output when it fails.
-    private func run(_ arguments: [String], in directory: String) async throws -> Data {
+    func run(_ arguments: [String], in directory: String) async throws -> Data {
         let environment = environment
         return try await Task.detached {
             let process = Process()

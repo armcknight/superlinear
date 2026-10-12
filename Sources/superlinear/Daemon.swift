@@ -35,6 +35,7 @@ actor Daemon {
         print("[superlinear] Starting with \(config.workspaces.count) workspace(s)")
 
         recoverRuns()
+        sweepWorktrees()
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             for workspace in config.workspaces {
@@ -246,6 +247,39 @@ actor Daemon {
         runner.cleanUp(run)
         save()
         fillSlots()
+        cleanWorktree(of: run, workspace: workspace)
+    }
+
+    /// Frees the build output of an agent that has ended, as it goes.
+    private func cleanWorktree(of run: AgentRun, workspace name: String) {
+        guard let workspace = workspace(named: name) else { return }
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        Task.detached {
+            do {
+                if let line = try await WorktreeCleaner().cleanAfterAgent(branch: run.branchName, repoPath: repoPath),
+                   line.hasPrefix("Freed") {
+                    await self.log(line, workspace: name)
+                }
+            } catch {
+                await self.log("Could not clean the worktree for \(run.identifier): \(error)", workspace: name)
+            }
+        }
+    }
+
+    /// The startup sweep: cleans every worktree whose agent is not running and
+    /// whose build output has sat idle, and DerivedData of removed worktrees.
+    /// Runs in the background, so polling starts at once.
+    private func sweepWorktrees() {
+        for workspace in config.workspaces {
+            let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+            let running = Set(state.runs(workspace: workspace.name).filter { !$0.isQueued }.map(\.branchName))
+            Task.detached {
+                let (freed, errors) = await WorktreeCleaner().sweep(repoPath: repoPath, running: running)
+                for line in freed + errors {
+                    await self.log(line, workspace: workspace.name)
+                }
+            }
+        }
     }
 
     // MARK: - State accessors (called from WorkspaceProcessor on actor context)

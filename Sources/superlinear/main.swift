@@ -19,10 +19,11 @@ Subcommands:
               binary leaves an agent that runs a local build in place;
               --force replaces it anyway.
   uninstall   Unload the launchd agent and remove it.
-  status      List each workspace's tasks: agents running or queued, open
-              pull requests, and tasks completed, with pull request URLs.
-              A task is completed once its pull request is merged and its
-              Linear issue is done.
+  status      List each workspace's open pull requests for Linear issues,
+              awaiting review with review and CI state, and drafts; then
+              its tasks: agents running or queued, and tasks completed,
+              with pull request URLs. A task is completed once its pull
+              request is merged and its Linear issue is done.
 
 Options:
   --config <path>   Config file. Default: ~/.config/superlinear/config.json
