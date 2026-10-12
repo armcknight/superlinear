@@ -22,6 +22,8 @@ struct LinearIssueStatus: Codable, Sendable, Equatable {
     let title: String
     let branchName: String
     let state: State
+    /// When the issue last moved into a started state, when the query asked.
+    var startedAt: Date? = nil
 
     struct State: Codable, Sendable, Equatable {
         let name: String
@@ -114,6 +116,47 @@ struct LinearClient: Sendable {
       }
     }
     """
+
+    private static let startedIssueFields = """
+        nodes {
+          id
+          identifier
+          title
+          branchName
+          state { name type }
+          startedAt
+        }
+        pageInfo { hasNextPage endCursor }
+    """
+
+    private static let startedAllTeams = """
+    query StartedIssues($cursor: String) {
+      issues(filter: { state: { type: { eq: "started" } } }, first: 50, after: $cursor) {
+    \(startedIssueFields)
+      }
+    }
+    """
+
+    private static let startedWithTeams = """
+    query StartedIssues($teamIds: [ID!], $cursor: String) {
+      issues(
+        filter: { state: { type: { eq: "started" } }, team: { id: { in: $teamIds } } }
+        first: 50
+        after: $cursor
+      ) {
+    \(startedIssueFields)
+      }
+    }
+    """
+
+    /// Issues in a started state, such as In Progress or In Review, optionally
+    /// filtered by team.
+    func fetchStartedIssues(teamIds: [String]) async throws -> [LinearIssueStatus] {
+        if teamIds.isEmpty {
+            return try await fetchAll(Self.startedAllTeams, variables: [:])
+        }
+        return try await fetchAll(Self.startedWithTeams, variables: ["teamIds": teamIds])
+    }
 
     func fetchNewIssues(since: Date, teamIds: [String]) async throws -> [LinearIssue] {
         let formatter = ISO8601DateFormatter()

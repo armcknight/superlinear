@@ -144,6 +144,10 @@ struct State: Codable, Sendable {
         workspaces[workspace]?.linkedPullRequests[issueId] = nil
     }
 
+    mutating func forgetLinkedPullRequests(issueId: String, workspace: String) {
+        workspaces[workspace]?.linkedPullRequests[issueId] = nil
+    }
+
     func linkedPullRequests(issueId: String, workspace: String) -> Set<String> {
         Set(workspaces[workspace]?.linkedPullRequests[issueId] ?? [])
     }

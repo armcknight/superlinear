@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Each poll also follows started issues the daemon is not tracking, such as
+  work done by hand or by agents from before a state reset. It matches issues
+  In Progress or In Review to the repository's pull requests by branch, links
+  them, and marks an issue done once its pull request has merged — but not
+  while a pull request on its branch is open, nor if the issue moved back into
+  progress after the merge. Worktrees for these issues are left in place.
+  Failures that would repeat every poll, such as a read-only API key, are
+  logged once.
+
 ## [1.8.0] 2026-10-11
 
 ### Added

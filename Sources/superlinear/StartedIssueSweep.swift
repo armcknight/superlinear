@@ -1,0 +1,38 @@
+import Foundation
+
+
+/// Matches issues in a started state to the pull requests opened from their
+/// branches, for issues the daemon does not follow through a run or a merge
+/// watch: work done by hand, or by agents from before a state reset. Their
+/// pull requests are linked, and a merged one completes the issue.
+enum StartedIssueSweep {
+    struct Item: Equatable {
+        let issue: LinearIssueStatus
+        let pullRequests: [PullRequest]
+        /// The merged pull request that completes the issue, when there is one.
+        let merged: PullRequest?
+    }
+
+    static func plan(
+        issues: [LinearIssueStatus], pullRequests: [PullRequest], excluding tracked: Set<String>
+    ) -> [Item] {
+        let byBranch = Dictionary(grouping: pullRequests.filter { $0.headRefName != nil }) { $0.headRefName! }
+        return issues.compactMap { issue in
+            guard !tracked.contains(issue.id), let pullRequests = byBranch[issue.branchName] else { return nil }
+            return Item(issue: issue, pullRequests: pullRequests, merged: completingMerge(issue, pullRequests))
+        }
+    }
+
+    /// The merge that completes the issue: none while a pull request is still
+    /// open, as for follow-up work, nor one from before the issue last moved
+    /// into a started state, so an issue reopened after its merge is left
+    /// started rather than completed again each poll.
+    static func completingMerge(_ issue: LinearIssueStatus, _ pullRequests: [PullRequest]) -> PullRequest? {
+        guard !pullRequests.contains(where: { $0.state == .open }) else { return nil }
+        let merges = pullRequests.filter { $0.state == .merged }
+        guard let latest = merges.max(by: { ($0.mergedAt ?? .distantPast) < ($1.mergedAt ?? .distantPast) })
+        else { return nil }
+        if let startedAt = issue.startedAt, let mergedAt = latest.mergedAt, mergedAt < startedAt { return nil }
+        return latest
+    }
+}

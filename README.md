@@ -40,6 +40,8 @@ The prompt instructs the agent to run `/armcknight-claude:start`, implement the 
 
 Branch names come from Linear's own `branchName` field, so the branch matches what the Linear UI shows. Each poll also attaches the pull requests opened from an issue's branch to the issue in Linear, from the first poll after the PR is opened, so the link is there whether or not Linear's GitHub integration is set up for the repository.
 
+The same goes for started issues the daemon is not following — work done by hand, or by agents from before a state reset. Each poll matches issues In Progress or In Review to pull requests by branch, links them, and marks an issue done once its pull request has merged, unless a pull request on its branch is still open or the issue was moved back into progress after the merge. Their worktrees are left alone. This needs an API key with write access; with a read-only key it logs the refusal once.
+
 ## Requirements
 
 `make init` installs everything Homebrew can provide — tmux, Claude Code, workr, and the `linctl`, `direnv` and `gh` that the agent's slash commands need. The daemon uses `gh` itself too, to find merged pull requests, so it must be signed in to GitHub. See the [Brewfile](Brewfile).

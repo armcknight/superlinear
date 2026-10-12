@@ -35,6 +35,8 @@ struct PullRequest: Codable, Sendable, Equatable {
     var headRefName: String? = nil
     /// Whether it is a draft, when the listing asked for it.
     var isDraft: Bool? = nil
+    /// When it merged, when the listing asked for it.
+    var mergedAt: Date? = nil
 }
 
 /// What a poll found for an issue awaiting its merge.
@@ -84,8 +86,19 @@ struct PullRequestChecker: Sendable {
         ["gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,url,state"]
     }
 
+    static let listAllArguments = [
+        "gh", "pr", "list", "--state", "all", "--limit", "1000", "--json", "number,url,state,headRefName,mergedAt",
+    ]
+
+    /// The repository's pull requests, newest 1,000, with their branches.
+    func allPullRequests(repoPath: String) async throws -> [PullRequest] {
+        try Self.decodePullRequests(try await run(Self.listAllArguments, in: repoPath))
+    }
+
     static func decodePullRequests(_ data: Data) throws -> [PullRequest] {
-        try JSONDecoder().decode([PullRequest].self, from: data)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([PullRequest].self, from: data)
     }
 
     /// The pull requests opened from `branch` in the repository at `repoPath`.

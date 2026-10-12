@@ -29,6 +29,45 @@ struct WorkspaceProcessor: Sendable {
 
         await linkRunningAgentsPullRequests(client: client)
         await checkPullRequests(client: client)
+        await sweepStartedIssues(client: client)
+    }
+
+    /// Links and completes started issues that no run or merge watch follows,
+    /// such as work done by hand or by agents from before a state reset. Their
+    /// worktrees are left alone, since they may hold work of your own.
+    private func sweepStartedIssues(client: LinearClient) async {
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let issues: [LinearIssueStatus]
+        let pullRequests: [PullRequest]
+        do {
+            issues = try await client.fetchStartedIssues(teamIds: workspace.teamIds)
+            guard !issues.isEmpty else { return }
+            pullRequests = try await PullRequestChecker().allPullRequests(repoPath: repoPath)
+        } catch {
+            await logOnce("Could not check started issues' pull requests: \(error)")
+            return
+        }
+
+        let tracked = await daemon.trackedIssueIds(workspace: workspace.name)
+        for item in StartedIssueSweep.plan(issues: issues, pullRequests: pullRequests, excluding: tracked) {
+            await link(item.pullRequests, issueId: item.issue.id, identifier: item.issue.identifier, client: client)
+            guard let merged = item.merged else { continue }
+            do {
+                if try await client.completeIssue(id: item.issue.id) {
+                    log("Marked \(item.issue.identifier) done in Linear; its pull request merged: \(merged.url)")
+                }
+                await daemon.forgetLinkedPullRequests(issueId: item.issue.id, workspace: workspace.name)
+            } catch {
+                await logOnce("Could not mark \(item.issue.identifier) done in Linear: \(error)")
+            }
+        }
+    }
+
+    /// Logs a problem the first time it happens, rather than every poll.
+    private func logOnce(_ message: String) async {
+        if await daemon.firstReport("[\(workspace.name)] \(message)") {
+            log(message + " (logged once)")
+        }
     }
 
     /// Links the pull requests of agents still running, which open them well
@@ -57,7 +96,7 @@ struct WorkspaceProcessor: Sendable {
                 log("Linked \(pullRequest.url) to \(identifier) in Linear")
             } catch {
                 // Not recorded, so the next poll tries again.
-                log("Could not link \(pullRequest.url) to \(identifier) in Linear: \(error)")
+                await logOnce("Could not link \(pullRequest.url) to \(identifier) in Linear: \(error)")
             }
         }
     }

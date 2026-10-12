@@ -21,6 +21,8 @@ actor Daemon {
     static let maxLaunchFailures = 10
     /// The queue length last logged, so a retry each poll does not repeat it.
     private var reportedQueueLength: Int?
+    /// Messages logged through firstReport.
+    private var reported: Set<String> = []
 
     init(config: Config) {
         self.config = config
@@ -237,6 +239,23 @@ actor Daemon {
     /// before the agent ends.
     func launchedRuns(workspace: String) -> [AgentRun] {
         state.runs(workspace: workspace).filter { !$0.isQueued }
+    }
+
+    /// Issues the daemon follows itself, through a run or a merge watch.
+    func trackedIssueIds(workspace: String) -> Set<String> {
+        guard let workspaceState = state.workspaces[workspace] else { return [] }
+        return Set(workspaceState.inFlight.keys).union(workspaceState.pendingMerges.keys)
+    }
+
+    func forgetLinkedPullRequests(issueId: String, workspace: String) {
+        state.forgetLinkedPullRequests(issueId: issueId, workspace: workspace)
+        save()
+    }
+
+    /// Whether `message` has not been reported before, so a problem that
+    /// repeats every poll, such as a read-only API key, is logged once.
+    func firstReport(_ message: String) -> Bool {
+        reported.insert(message).inserted
     }
 
     func linkedPullRequests(issueId: String, workspace: String) -> Set<String> {
