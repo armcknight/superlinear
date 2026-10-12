@@ -13,6 +13,9 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
     let reviewDecision: String?
     let latestReviews: [Review]?
     let statusCheckRollup: [Check]?
+    var additions: Int? = nil
+    var deletions: Int? = nil
+    var changedFiles: Int? = nil
 
     struct Review: Codable, Sendable, Equatable {
         /// `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED` and so on.
@@ -26,7 +29,8 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
         var state: String? = nil
     }
 
-    static let jsonFields = "number,url,title,headRefName,isDraft,reviewDecision,latestReviews,statusCheckRollup"
+    static let jsonFields =
+        "number,url,title,headRefName,isDraft,reviewDecision,latestReviews,statusCheckRollup,additions,deletions,changedFiles"
 
     enum ReviewState: String, Equatable {
         case notReviewed = "not reviewed"
@@ -90,24 +94,8 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
 
     /// The repository's open pull requests, from `gh`.
     static func listOpen(in repoPath: String) throws -> [ReviewablePullRequest] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", jsonFields]
-        process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
-        let output = Pipe()
-        let errors = Pipe()
-        process.standardOutput = output
-        process.standardError = errors
-        process.standardInput = FileHandle.nullDevice
-        try process.run()
-        // Read before waiting, or a full pipe would stall gh forever.
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        let message = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let text = String(decoding: message, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            throw StatusError.gitHub(text.isEmpty ? "gh exited \(process.terminationStatus)" : text)
-        }
+        let data = try GitHubCLI.run(
+            ["pr", "list", "--state", "open", "--limit", "1000", "--json", jsonFields], in: repoPath)
         return try JSONDecoder().decode([ReviewablePullRequest].self, from: data)
     }
 }

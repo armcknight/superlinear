@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `superlinear status` ends with a summary: the number of projects and of
+  items in each section across workspaces; the total, mean, median and maximum
+  per agent pull request of lines added and removed, files changed, tokens,
+  cache reads, agent time and CI time; totals over all tracked tasks; and the
+  same figures per project. Tokens and agent time come from the Claude
+  transcripts of each issue's branch, CI time from `gh run list`.
+
 ## [1.11.0] 2026-10-11
 
 ### Added

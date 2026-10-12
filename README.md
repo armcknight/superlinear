@@ -210,9 +210,18 @@ With no subcommand it runs the daemon in the foreground, which is how to test a 
 | Completed | The pull request is merged and the Linear issue is done. |
 | Closed without a merge | The issue was closed in Linear without a merged pull request. |
 
+After the workspaces comes a summary:
+
+- **Counts:** the number of projects, and of items in each section above, across all workspaces.
+- **Per pull request:** the total, mean, median and maximum of each measure over the agents' pull requests — those of finished tasks that are open or merged, and the open ones listed for review. The measures are lines added and removed and files changed, from GitHub; tokens, cache reads and agent time, from the Claude transcripts; and CI time.
+- **All tracked tasks:** the tokens, cache reads, agent time and CI time of every task, with or without a pull request.
+- **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
+
+Tokens are input, cache writes included, plus output; cache reads, much cheaper, are shown apart. The transcripts are found under `~/.claude/projects` by the name of the agent's worktree branch, so they count also after the worktree is removed. Each message counts once, and subagents' tokens count too. Agent time is the time between consecutive entries in the main session's transcripts, leaving out gaps over 30 minutes, as while the Mac slept. CI time is the start-to-end time of the branch's finished GitHub Actions runs, from `gh run list`; a dash means the repository has no runs. A dash in the tokens column means no transcripts were found.
+
 A task is completed only when both its pull request is merged and its Linear issue is done. With Linear's GitHub integration installed for the repository, Linear moves the issue to done when the pull request merges, by default. Without it, the daemon marks the issue done itself on a later poll.
 
-The command reads the state file, asks Linear for the state of each issue the daemon processed and of each issue an open pull request names, and runs `gh pr list` in each repository for the pull requests, their reviews and their checks. Where a repository requires no review, the review state comes from the latest reviews: an approval or a change request, or else not reviewed. It needs `gh` signed in. Issues archived in Linear drop out of the list. If Linear or GitHub is out of reach, it prints a warning and shows only the agents in flight.
+The command reads the state file, asks Linear for the state of each issue the daemon processed and of each issue an open pull request names, and runs `gh pr list` in each repository for the pull requests, their reviews, checks and sizes, and `gh run list` for the CI runs. Where a repository requires no review, the review state comes from the latest reviews: an approval or a change request, or else not reviewed. It needs `gh` signed in. Issues archived in Linear drop out of the list. If Linear or GitHub is out of reach, it prints a warning and shows only the agents in flight.
 
 ## Security
 
