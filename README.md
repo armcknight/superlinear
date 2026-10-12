@@ -187,22 +187,24 @@ With no subcommand it runs the daemon in the foreground, which is how to test a 
 
 ### Status
 
-`superlinear status` lists the tasks of each workspace, grouped by where they stand:
+`superlinear status` lists, for each workspace, the open pull requests that belong to a Linear issue, then the tasks the daemon tracks, grouped by where they stand:
 
 | Section | Meaning |
 | --- | --- |
+| Awaiting review | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, or approved — the CI state, and the URL. |
+| Draft pull requests | The same, for drafts, with the CI state. |
 | Running | An agent works on the issue now. Shows its pid and log. |
 | Interrupted | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
 | Queued | Waiting for a free agent slot. |
-| Open pull requests | The agent finished and its pull request is open. Shows the URL. |
+| Open pull requests | The agent finished and its pull request is open. Shown only when open pull requests could not be listed for review; otherwise they appear above. |
 | Merged, issue not done | The pull request is merged, but the Linear issue is not in a completed state. |
 | Finished without a pull request | The agent ended, but no pull request is open or merged, and the issue is still open. |
 | Completed | The pull request is merged and the Linear issue is done. |
 | Closed without a merge | The issue was closed in Linear without a merged pull request. |
 
-A task is completed only when both its pull request is merged and its Linear issue is done. With Linear's GitHub integration installed for the repository, Linear moves the issue to done when the pull request merges, by default. Without it, or with that automation turned off, merged tasks wait under "Merged, issue not done" until you close the issue yourself.
+A task is completed only when both its pull request is merged and its Linear issue is done. With Linear's GitHub integration installed for the repository, Linear moves the issue to done when the pull request merges, by default. Without it, the daemon marks the issue done itself on a later poll.
 
-The command reads the state file, asks Linear for the state of each issue the daemon processed, and runs `gh pr list` in each repository to find the pull request whose head is the issue's branch. It needs `gh` signed in. Issues archived in Linear drop out of the list. If Linear or GitHub is out of reach, it prints a warning and shows only the agents in flight.
+The command reads the state file, asks Linear for the state of each issue the daemon processed and of each issue an open pull request names, and runs `gh pr list` in each repository for the pull requests, their reviews and their checks. Where a repository requires no review, the review state comes from the latest reviews: an approval or a change request, or else not reviewed. It needs `gh` signed in. Issues archived in Linear drop out of the list. If Linear or GitHub is out of reach, it prints a warning and shows only the agents in flight.
 
 ## Security
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `superlinear status` lists every open pull request that belongs to a Linear
+  issue of a configured workspace, whether or not the daemon tracks the issue:
+  non-drafts under "Awaiting review" with their review state (not reviewed,
+  changes requested, or approved) and CI state, drafts under "Draft pull
+  requests". A pull request belongs to an issue when its branch or title names
+  the issue's identifier and the workspace's Linear has that issue. These
+  sections replace the tasks' "Open pull requests" when they can be listed.
+
 ## [1.9.0] 2026-10-11
 
 ### Added

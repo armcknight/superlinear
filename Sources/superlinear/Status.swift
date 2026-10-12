@@ -116,6 +116,10 @@ struct TaskEntry: Sendable, Equatable {
 struct WorkspaceReport: Sendable {
     let name: String
     let entries: [TaskEntry]
+    /// Open pull requests belonging to Linear issues, whether or not the
+    /// daemon is tracking the issue. Nil when GitHub or Linear could not be
+    /// asked, in which case open pull requests show only among the tasks.
+    var reviews: [ReviewEntry]? = nil
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
     let warnings: [String]
@@ -190,13 +194,30 @@ struct WorkspaceReport: Sendable {
         for warning in warnings {
             lines.append("  warning: \(warning)")
         }
-        if entries.isEmpty && warnings.isEmpty {
+        // Open pull requests are listed for review instead, when they could be.
+        let tasks = reviews == nil ? entries : entries.filter { $0.category != .openPullRequest }
+        let reviews = reviews ?? []
+        if tasks.isEmpty && reviews.isEmpty && warnings.isEmpty {
             lines.append("  No tasks")
         }
-        let width = entries.map(\.identifier.count).max() ?? 0
+        let width = (tasks.map(\.identifier.count) + reviews.map(\.issue.identifier.count)).max() ?? 0
         let indent = String(repeating: " ", count: 4 + width + 2)
+
+        for (heading, drafts) in [("Awaiting review", false), ("Draft pull requests", true)] {
+            let section = reviews.filter { $0.pullRequest.isDraft == drafts }
+            guard !section.isEmpty else { continue }
+            lines.append("  \(heading)")
+            for review in section {
+                let pullRequest = review.pullRequest
+                let padded = review.issue.identifier.padding(toLength: width, withPad: " ", startingAt: 0)
+                lines.append("    \(padded)  #\(pullRequest.number) \(pullRequest.title)".trimmingTrailingWhitespace())
+                let state = drafts ? [] : [pullRequest.reviewState.rawValue]
+                lines.append(indent + (state + [pullRequest.checkState.rawValue, pullRequest.url]).joined(separator: " · "))
+            }
+        }
+
         for category in TaskCategory.allCases {
-            let section = entries.filter { $0.category == category }
+            let section = tasks.filter { $0.category == category }
             guard !section.isEmpty else { continue }
             lines.append("  \(category.heading)")
             for entry in section {
@@ -236,9 +257,21 @@ struct WorkspaceReport: Sendable {
             }
         }
 
+        var reviews: [ReviewEntry]?
+        do {
+            let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+            let open = try ReviewablePullRequest.listOpen(in: repoPath)
+            let identifiers = Array(Set(open.flatMap(\.issueIdentifiers)))
+            let linked = try await LinearClient(apiKey: workspace.apiKey).fetchIssues(identifiers: identifiers)
+            reviews = ReviewEntry.entries(pullRequests: open, issues: linked)
+        } catch {
+            warnings.append("Could not list open pull requests for review: \(error)")
+        }
+
         return WorkspaceReport(
             name: workspace.name,
             entries: entries(state: workspaceState, issues: issues, pullRequests: pullRequests, runner: runner),
+            reviews: reviews,
             warnings: warnings
         )
     }
