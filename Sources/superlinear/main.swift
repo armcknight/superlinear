@@ -1,5 +1,9 @@
 import Foundation
 
+// launchd sends stdout to the daemon log, a file, which makes it block-buffered:
+// lines would appear only once the buffer filled. Flush each line instead.
+setvbuf(stdout, nil, _IOLBF, 0)
+
 let usage = """
 Usage: superlinear [--config <path>]
        superlinear install [--force]
@@ -26,29 +30,11 @@ Options:
   --help, -h        Print this message and exit.
 """
 
-// Parse --config flag
-var configPath: String? = nil
-var args = CommandLine.arguments.dropFirst()
-while let arg = args.first {
-    if arg == "--config", let next = args.dropFirst().first {
-        configPath = next
-        args = args.dropFirst(2)
-    } else if arg == "--version" {
-        print(Superlinear.fullVersion)
-        exit(0)
-    } else if arg == "--help" || arg == "-h" {
-        print(usage)
-        exit(0)
-    } else {
-        args = args.dropFirst()
-    }
-}
-
 // Subcommands run to completion and exit; they never reach the run loop.
-switch CommandLine.arguments.dropFirst().first {
-case "install":
+var configPath: String?
+switch Command.parse(Array(CommandLine.arguments.dropFirst())) {
+case .install(let force):
     let agent = LaunchAgent.current()
-    let force = CommandLine.arguments.dropFirst(2).contains("--force")
     if !force, let devBinary = agent.devBinaryToKeep() {
         print("[superlinear] Kept the agent for the local build at \(devBinary)")
         print("  A local build takes precedence over Homebrew. Use --force to replace it,")
@@ -68,7 +54,7 @@ case "install":
         exit(1)
     }
 
-case "uninstall":
+case .uninstall:
     do {
         try LaunchAgent.current().uninstall()
         print("[superlinear] Unloaded and removed \(LaunchAgent.label)")
@@ -78,12 +64,34 @@ case "uninstall":
         exit(1)
     }
 
-case "status":
-    Task { exit(await StatusCommand.run(configPath: configPath)) }
+case .status(let path):
+    // Reads the state file and Linear; it takes no daemon lock, so it runs
+    // beside a daemon.
+    Task { exit(await StatusCommand.run(configPath: path)) }
     dispatchMain()
 
-default:
-    break
+case .version:
+    print(Superlinear.fullVersion)
+    exit(0)
+
+case .help:
+    print(usage)
+    exit(0)
+
+case .invalid(let message):
+    FileHandle.standardError.write(Data("superlinear: \(message)\n\n\(usage)\n".utf8))
+    exit(64) // EX_USAGE
+
+case .run(let path):
+    configPath = path
+}
+
+let stateDirectory = "\(Paths.home)/.local/share/superlinear"
+try? FileManager.default.createDirectory(atPath: stateDirectory, withIntermediateDirectories: true)
+if case .held(let holder) = DaemonLock.acquire(path: "\(stateDirectory)/daemon.lock") {
+    let who = holder.map { "pid \($0)" } ?? "another process"
+    print("[superlinear] Another daemon is already running (\(who)); exiting")
+    exit(1)
 }
 
 // Ignore default signal handlers so DispatchSource can intercept them

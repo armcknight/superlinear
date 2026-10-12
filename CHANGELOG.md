@@ -15,6 +15,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   issue is done; a merged pull request whose issue is still open is listed
   apart, so it is not mistaken for finished work. Pull requests come from
   `gh`, matched to issues by branch.
+  `status` reads the state file and Linear only, so it runs beside the
+  daemon and takes no daemon lock.
+
+## [1.5.2] 2026-10-11
+
+### Fixed
+
+- An unknown command or option is an error, with exit status 64 and the usage.
+  It used to be ignored and the daemon run in the foreground, so a command this
+  version lacks, such as `superlinear status`, started a second daemon.
+- Only one daemon runs at a time. A second exits at once, naming the first, via
+  a lock on `~/.local/share/superlinear/daemon.lock`.
+- A launch that fails, as when the disk is full, leaves the issue queued. It
+  goes to the back of the queue and launches pause for a minute; after ten
+  failed launches the issue is dropped with a message in the log. A failed
+  launch used to drop the issue at once while it stayed marked processed, so a
+  full disk emptied the whole queue.
+
+## [1.5.1] 2026-10-09
+
+### Fixed
+
+- The daemon log shows each line as it is written. Under launchd, output went
+  to the log file block-buffered, so lines appeared only when the buffer
+  filled, minutes late or not before a restart.
+- The repository ignores `worktrees/`, where `work start` puts the worktrees
+  of agents working on superlinear itself.
+
+## [1.5.0] 2026-10-09
+
+### Added
+
+- Each poll checks the pull requests opened by agents that have exited. When
+  one merges, the daemon marks the issue done in Linear and removes its
+  worktree and local branch with `work finish`. A closed pull request, or an
+  agent that opened none, ends the watch and leaves the worktree in place.
 
 ## [1.4.0] 2026-10-09
 

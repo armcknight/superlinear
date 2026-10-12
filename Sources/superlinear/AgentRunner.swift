@@ -79,7 +79,8 @@ struct AgentRunner: Sendable {
     /// Claude's output, written by `work`.
     func agentLog(for run: AgentRun) -> String { "\(logsDirectory)/\(run.identifier).log" }
     /// The output of `work` itself, appended across launches.
-    func workLog(for run: AgentRun) -> String { "\(logsDirectory)/\(run.identifier).work.log" }
+    func workLog(for run: AgentRun) -> String { workLog(identifier: run.identifier) }
+    func workLog(identifier: String) -> String { "\(logsDirectory)/\(identifier).work.log" }
 
     // MARK: Launching
 

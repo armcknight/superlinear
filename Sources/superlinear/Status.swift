@@ -1,20 +1,12 @@
 import Foundation
 
-/// A pull request as `gh pr list --json` describes it.
-struct PullRequest: Codable, Sendable, Equatable {
-    let number: Int
-    let url: String
-    /// `OPEN`, `CLOSED` or `MERGED`.
-    let state: String
-    let headRefName: String
-    let isDraft: Bool
-
+extension PullRequest {
     static let jsonFields = "number,url,state,headRefName,isDraft"
 
     /// The pull request that speaks for `branch`: an open one first, then a
     /// merged one, then a closed one, the newest of each.
     static func best(for branch: String, among pullRequests: [PullRequest]) -> PullRequest? {
-        let rank = ["OPEN": 0, "MERGED": 1]
+        let rank: [State: Int] = [.open: 0, .merged: 1]
         return pullRequests.filter { $0.headRefName == branch }.min { a, b in
             let (rankA, rankB) = (rank[a.state] ?? 2, rank[b.state] ?? 2)
             return rankA == rankB ? a.number > b.number : rankA < rankB
@@ -104,8 +96,8 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
             return running ? .running : .interrupted
         }
         switch pullRequest?.state {
-        case "OPEN": return .openPullRequest
-        case "MERGED": return issue?.isCompleted == true ? .completed : .merged
+        case .open: return .openPullRequest
+        case .merged: return issue?.isCompleted == true ? .completed : .merged
         default: return issue?.isClosed == true ? .closed : .noPullRequest
         }
     }
@@ -182,7 +174,7 @@ struct WorkspaceReport: Sendable {
             return "to resume, attempt \(run.resumes + 1)"
         case .openPullRequest:
             guard let pullRequest else { return nil }
-            return pullRequest.isDraft ? "\(pullRequest.url) (draft)" : pullRequest.url
+            return pullRequest.isDraft == true ? "\(pullRequest.url) (draft)" : pullRequest.url
         case .merged:
             return [pullRequest?.url, linearState].compactMap { $0 }.joined(separator: ", ")
         case .completed:

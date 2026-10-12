@@ -16,7 +16,7 @@ struct StatusTests {
     private func pullRequest(_ number: Int, branch: String = "b", state: String, draft: Bool = false) -> PullRequest {
         PullRequest(
             number: number, url: "https://github.com/o/r/pull/\(number)",
-            state: state, headRefName: branch, isDraft: draft
+            state: PullRequest.State(rawValue: state)!, headRefName: branch, isDraft: draft
         )
     }
 
@@ -84,7 +84,7 @@ struct StatusTests {
     func decodesGitHubJSON() throws {
         let json = #"[{"headRefName":"linear/sl-1","isDraft":true,"number":7,"state":"OPEN","url":"https://github.com/o/r/pull/7"}]"#
         let prs = try JSONDecoder().decode([PullRequest].self, from: Data(json.utf8))
-        #expect(prs == [PullRequest(number: 7, url: "https://github.com/o/r/pull/7", state: "OPEN", headRefName: "linear/sl-1", isDraft: true)])
+        #expect(prs == [PullRequest(number: 7, url: "https://github.com/o/r/pull/7", state: .open, headRefName: "linear/sl-1", isDraft: true)])
     }
 
     @Test("Linear's issue status decodes, nested state included")
