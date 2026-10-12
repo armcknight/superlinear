@@ -100,6 +100,7 @@ signal(SIGINT, SIG_IGN)
 
 var daemonTask: Task<Void, Error>?
 var binaryWatcher: BinaryWatcher?
+var configWatcher: ConfigWatcher?
 
 let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 sigterm.setEventHandler {
@@ -118,7 +119,9 @@ sigint.setEventHandler {
 sigint.resume()
 
 do {
-    let config = try Config.load(from: configPath)
+    let path = configPath ?? Config.defaultPath
+    let contents = try Data(contentsOf: URL(fileURLWithPath: path))
+    let config = try Config.decoded(from: contents)
 
     if config.workspaces.isEmpty {
         print("[superlinear] No workspaces configured. Edit ~/.config/superlinear/config.json")
@@ -130,6 +133,10 @@ do {
         try await daemon.run()
     }
     binaryWatcher = BinaryWatcher.watchedPath().map(BinaryWatcher.start)
+    configWatcher = ConfigWatcher.start(
+        path: path, started: contents,
+        restartable: ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == LaunchAgent.label
+    )
 } catch {
     print("[superlinear] Failed to load config: \(error)")
     exit(1)

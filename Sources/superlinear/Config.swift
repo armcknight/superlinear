@@ -41,10 +41,14 @@ struct Config: Codable, Sendable {
         maxConcurrentAgents = Swift.max(1, max)
     }
 
+    static var defaultPath: String { "\(Paths.home)/.config/superlinear/config.json" }
+
     static func load(from path: String? = nil) throws -> Config {
-        let configPath = path ?? "\(Paths.home)/.config/superlinear/config.json"
-        let url = URL(fileURLWithPath: configPath)
-        let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode(Config.self, from: data)
+        let data = try Data(contentsOf: URL(fileURLWithPath: path ?? defaultPath))
+        return try decoded(from: data)
+    }
+
+    static func decoded(from data: Data) throws -> Config {
+        try JSONDecoder().decode(Config.self, from: data)
     }
 }

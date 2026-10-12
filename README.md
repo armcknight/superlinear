@@ -29,7 +29,7 @@ This is a personal tool, published as a reference. It is opinionated about how w
 
 ### Restarts
 
-Agents outlive the daemon, so restarting it — an upgrade, `make reload`, a crash — does not stop work in flight. On start, the daemon checks each run left in the state file:
+Agents outlive the daemon, so restarting it — an upgrade, a config edit, `make reload`, a crash — does not stop work in flight. On start, the daemon checks each run left in the state file:
 
 - **Still running:** it waits for that process and records the run finished when it exits.
 - **Finished while the daemon was down:** a small wrapper around `work` leaves its exit status in a file, so the run is recorded finished.
@@ -124,6 +124,8 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
 `maxConcurrentAgents`, at the top level beside `workspaces`, limits how many agents run at once across all workspaces. It defaults to `3`. Further issues wait in a queue, kept in the state file, and start oldest first as running agents finish. An interrupted agent keeps its place, so it resumes before newer issues start.
 
 Each workspace entry is one Linear-account-to-repository pairing. List several to watch more than one repository.
+
+Edits take effect on their own. The daemon checks the file every five seconds; when it changes to a config that loads, the daemon exits and launchd restarts it on the new one, with agents in flight carrying on. An edit that does not load — invalid JSON, a missing key, no workspaces — is logged once and ignored until fixed. A daemon run in the foreground only logs that a restart is needed.
 
 ## Releasing
 

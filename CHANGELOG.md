@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Config edits take effect without a reload. The daemon checks the config file
+  every five seconds, and when it changes to one that loads, exits so launchd
+  restarts it on the new config; agents in flight carry on. An edit that does
+  not load is logged once and ignored, so a half-saved file does not stop the
+  daemon. A daemon run in the foreground only logs that a restart is needed.
+
 ## [1.6.0] 2026-10-11
 
 ### Added
