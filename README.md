@@ -37,7 +37,7 @@ Review a pull request the daemon is watching, and an agent comes back to address
 
 The issue then goes back in the queue. Its agent runs in the same worktree, on the same branch, under a new Claude session, with a prompt to read every review and its inline comments, satisfy the points not yet addressed, commit, push and see CI through. It does not reply on GitHub. When it ends, the issue waits for its merge again, and only reviews submitted after that agent started bring it back. Reviews from other people and from bots, such as Seer, are left alone: the first agent already handles bots' reviews.
 
-Issues already awaiting their merge when you upgrade to a version that follows reviews take the upgrade as their starting point, so reviews left before it do not start agents.
+Issues already awaiting their merge when you upgrade to a version that follows reviews take their pull request's newest commit as the starting point: a review submitted after the last push still starts an agent, and older reviews, which the agent may have addressed, do not.
 
 ### Disk space
 

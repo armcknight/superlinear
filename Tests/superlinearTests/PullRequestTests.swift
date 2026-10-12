@@ -36,6 +36,17 @@ struct PullRequestTests {
         #expect(args[args.firstIndex(of: "--head")! + 1] == "linear/sl-1-x")
         #expect(args[args.firstIndex(of: "--state")! + 1] == "all")
         #expect(args.last?.split(separator: ",").contains("reviews") == true)
+        #expect(args.last?.split(separator: ",").contains("commits") == true)
+    }
+
+    // A watch from before reviews were followed starts from the newest commit,
+    // so a review left after the last push is still answered.
+    @Test("A pull request's last commit date comes from its newest commit")
+    func lastCommitDate() throws {
+        let json = #"[{"number":1,"url":"u","state":"OPEN","commits":[{"committedDate":"2026-10-12T06:09:40Z"},{"committedDate":"2026-10-10T02:09:15Z"}]}]"#
+        let prs = try PullRequestChecker.decodePullRequests(Data(json.utf8))
+        #expect(prs.first?.lastCommitDate == ISO8601DateFormatter().date(from: "2026-10-12T06:09:40Z"))
+        #expect(PullRequest(number: 1, url: "u", state: .open).lastCommitDate == nil)
     }
 
     @Test("Reviews decode from gh's JSON, whatever their state")

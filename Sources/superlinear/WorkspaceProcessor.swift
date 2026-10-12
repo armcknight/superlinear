@@ -154,12 +154,12 @@ struct WorkspaceProcessor: Sendable {
     /// Queues an agent for the open pull request when `gh`'s own user has
     /// reviewed it since the issue's last agent started.
     private func checkReviews(of pending: PendingMerge, pullRequests: [PullRequest], repoPath: String) async {
-        // First, so a watch from before reviews were followed starts counting
-        // from now rather than from the first poll that finds a review.
-        let handledThrough = await daemon.reviewsHandledThrough(pending, workspace: workspace.name)
-        guard let pullRequest = pullRequests.first(where: { $0.state == .open }),
-              let reviews = pullRequest.reviews, !reviews.isEmpty
-        else { return }
+        guard let pullRequest = pullRequests.first(where: { $0.state == .open }) else { return }
+        // Before looking at reviews, so a watch from before reviews were
+        // followed gets its baseline from the commits it has now.
+        let handledThrough = await daemon.reviewsHandledThrough(
+            pending, lastCommit: pullRequest.lastCommitDate, workspace: workspace.name)
+        guard let reviews = pullRequest.reviews, !reviews.isEmpty else { return }
         let login: String
         do {
             login = try await daemon.viewerLogin(repoPath: repoPath)

@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same worktree. It reads every review and inline comment, implements what
   they ask for, commits, pushes and sees CI through, without replying on
   GitHub. Approvals with nothing written, drafts and dismissed reviews are
-  ignored, as are reviews from anyone else. `superlinear status` lists these runs,
+  ignored, as are reviews from anyone else. For issues already awaiting their
+  merge before the upgrade, reviews count from the pull request's newest
+  commit. `superlinear status` lists these runs,
   running or queued, under their own "Addressing review" section, and their
   pull requests under "Awaiting review" as "agent addressing review" in place
   of GitHub's review state.

@@ -309,14 +309,15 @@ actor Daemon {
     }
 
     /// The time through which the issue's reviews count as addressed. A watch
-    /// from before reviews were followed has none; it takes the present, so
-    /// reviews left before the upgrade do not start agents.
-    func reviewsHandledThrough(_ pending: PendingMerge, workspace: String) -> Date {
+    /// from before reviews were followed has none; it takes the pull
+    /// request's newest commit, as no agent can have addressed a review
+    /// submitted after its last push, or else the present.
+    func reviewsHandledThrough(_ pending: PendingMerge, lastCommit: Date?, workspace: String) -> Date {
         if let date = pending.reviewsHandledThrough { return date }
-        let now = Date()
-        state.workspaces[workspace]?.pendingMerges[pending.issueId]?.reviewsHandledThrough = now
+        let date = lastCommit ?? Date()
+        state.workspaces[workspace]?.pendingMerges[pending.issueId]?.reviewsHandledThrough = date
         save()
-        return now
+        return date
     }
 
     /// The GitHub login `gh` is signed in as, looked up once.

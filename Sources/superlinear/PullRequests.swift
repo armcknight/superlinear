@@ -65,7 +65,7 @@ struct PullRequestReview: Codable, Sendable, Equatable {
 }
 
 /// A pull request as `gh pr list --json` reports it. The merge check asks
-/// for `number,url,state,reviews` on one branch; `superlinear status` lists a
+/// for `number,url,state,reviews,commits` on one branch; `superlinear status` lists a
 /// whole repository and asks for the branch, draft flag and size as well.
 struct PullRequest: Codable, Sendable, Equatable {
     enum State: String, Codable, Sendable {
@@ -85,12 +85,23 @@ struct PullRequest: Codable, Sendable, Equatable {
     var mergedAt: Date? = nil
     /// Its reviews, when the listing asked for them.
     var reviews: [PullRequestReview]? = nil
+    /// Its commits, when the listing asked for them.
+    var commits: [Commit]? = nil
     /// Lines added and removed, and files changed, when the listing asked.
     var additions: Int? = nil
     var deletions: Int? = nil
     var changedFiles: Int? = nil
     /// The branch it would merge into, when the listing asked.
     var baseRefName: String? = nil
+}
+
+extension PullRequest {
+    struct Commit: Codable, Sendable, Equatable {
+        let committedDate: Date
+    }
+
+    /// When its newest commit was made, if the listing asked for commits.
+    var lastCommitDate: Date? { commits?.map(\.committedDate).max() }
 }
 
 /// What a poll found for an issue awaiting its merge.
@@ -137,7 +148,7 @@ struct PullRequestChecker: Sendable {
     }
 
     static func listArguments(branch: String) -> [String] {
-        ["gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,url,state,reviews"]
+        ["gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,url,state,reviews,commits"]
     }
 
     static let viewerArguments = ["gh", "api", "user", "--jq", ".login"]
