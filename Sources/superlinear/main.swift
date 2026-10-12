@@ -8,6 +8,7 @@ let usage = """
 Usage: superlinear [--config <path>]
        superlinear install [--force]
        superlinear uninstall
+       superlinear status [--config <path>]
 
 Watches Linear for new issues and starts an autonomous Claude Code agent
 for each one. With no subcommand, runs the daemon in the foreground.
@@ -18,6 +19,10 @@ Subcommands:
               binary leaves an agent that runs a local build in place;
               --force replaces it anyway.
   uninstall   Unload the launchd agent and remove it.
+  status      List each workspace's tasks: agents running or queued, open
+              pull requests, and tasks completed, with pull request URLs.
+              A task is completed once its pull request is merged and its
+              Linear issue is done.
 
 Options:
   --config <path>   Config file. Default: ~/.config/superlinear/config.json
@@ -58,6 +63,12 @@ case .uninstall:
         print("[superlinear] Uninstall failed: \(error.localizedDescription)")
         exit(1)
     }
+
+case .status(let path):
+    // Reads the state file and Linear; it takes no daemon lock, so it runs
+    // beside a daemon.
+    Task { exit(await StatusCommand.run(configPath: path)) }
+    dispatchMain()
 
 case .version:
     print(Superlinear.fullVersion)

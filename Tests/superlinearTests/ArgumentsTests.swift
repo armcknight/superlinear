@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import superlinear
 
-// An unknown word once fell through to running the daemon, so a command this
-// version lacks started a second daemon in the foreground.
+// An unknown word once fell through to running the daemon, so `status`, before
+// this version had it, started a second daemon in the foreground.
 @Suite("Command parsing")
 struct ArgumentsTests {
     @Test("No arguments runs the daemon")
@@ -17,13 +17,15 @@ struct ArgumentsTests {
         #expect(Command.parse(["install"]) == .install(force: false))
         #expect(Command.parse(["install", "--force"]) == .install(force: true))
         #expect(Command.parse(["uninstall"]) == .uninstall)
+        #expect(Command.parse(["status"]) == .status(configPath: nil))
+        #expect(Command.parse(["status", "--config", "/c.json"]) == .status(configPath: "/c.json"))
         #expect(Command.parse(["--version"]) == .version)
         #expect(Command.parse(["-h"]) == .help)
     }
 
     @Test("Anything unknown is an error, not a daemon")
     func unknownIsInvalid() {
-        for arguments in [["status"], ["--verbose"], ["--config"], ["install", "--now"], ["uninstall", "x"]] {
+        for arguments in [["stats"], ["status", "--json"], ["--verbose"], ["--config"], ["install", "--now"], ["uninstall", "x"]] {
             guard case .invalid = Command.parse(arguments) else {
                 Issue.record("\(arguments) should be invalid")
                 continue

@@ -6,6 +6,7 @@ enum Command: Equatable {
     case run(configPath: String?)
     case install(force: Bool)
     case uninstall
+    case status(configPath: String?)
     case version
     case help
     case invalid(String)
@@ -24,6 +25,17 @@ enum Command: Equatable {
         case "uninstall":
             if let extra = rest.dropFirst().first { return .invalid("unknown option for uninstall: \(extra)") }
             return .uninstall
+        case "status":
+            rest = rest.dropFirst()
+            var configPath: String?
+            while let argument = rest.first {
+                rest = rest.dropFirst()
+                guard argument == "--config" else { return .invalid("unknown option for status: \(argument)") }
+                guard let path = rest.first else { return .invalid("--config needs a path") }
+                configPath = path
+                rest = rest.dropFirst()
+            }
+            return .status(configPath: configPath)
         default:
             break
         }

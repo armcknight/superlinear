@@ -18,9 +18,11 @@ struct PendingMerge: Codable, Sendable, Equatable {
     }
 }
 
-/// A pull request as `gh pr list --json number,url,state` reports it.
-struct PullRequest: Decodable, Sendable, Equatable {
-    enum State: String, Decodable, Sendable {
+/// A pull request as `gh pr list --json` reports it. The merge check asks
+/// for `number,url,state` on one branch; `superlinear status` lists a whole
+/// repository and asks for the branch and draft flag as well.
+struct PullRequest: Codable, Sendable, Equatable {
+    enum State: String, Codable, Sendable {
         case open = "OPEN"
         case closed = "CLOSED"
         case merged = "MERGED"
@@ -29,6 +31,10 @@ struct PullRequest: Decodable, Sendable, Equatable {
     let number: Int
     let url: String
     let state: State
+    /// The branch it was opened from, when the listing asked for it.
+    var headRefName: String? = nil
+    /// Whether it is a draft, when the listing asked for it.
+    var isDraft: Bool? = nil
 }
 
 /// What a poll found for an issue awaiting its merge.
