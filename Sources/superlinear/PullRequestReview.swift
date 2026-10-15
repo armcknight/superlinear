@@ -17,6 +17,8 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
     var deletions: Int? = nil
     var changedFiles: Int? = nil
     var baseRefName: String? = nil
+    /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN`.
+    var mergeable: String? = nil
 
     struct Review: Codable, Sendable, Equatable {
         /// `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED` and so on.
@@ -31,7 +33,7 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
     }
 
     static let jsonFields =
-        "number,url,title,headRefName,isDraft,reviewDecision,latestReviews,statusCheckRollup,additions,deletions,changedFiles,baseRefName"
+        "number,url,title,headRefName,isDraft,reviewDecision,latestReviews,statusCheckRollup,additions,deletions,changedFiles,baseRefName,mergeable"
 
     enum ReviewState: String, Equatable {
         case notReviewed = "not reviewed"

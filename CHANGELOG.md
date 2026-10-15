@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An open pull request that conflicts with its base branch brings an agent
+  back to merge the base branch in. Each poll reads GitHub's mergeable state
+  for the pull requests of issues awaiting their merge. For one that
+  conflicts, an agent in the same worktree merges `origin/<base>`, resolves
+  the conflicts, tests, commits the merge, pushes and sees CI through,
+  without rebasing or force-pushing. A review that needs an agent goes first.
+  Each pair of branch and base heads gets one agent, so a conflict that an
+  agent could not resolve waits until either branch moves. `superlinear
+  status` lists these agents under "Resolving conflicts", and marks
+  conflicting pull requests under "Awaiting review".
+
 - `superlinear status` lists stale branches and worktrees per workspace:
   local branches whose pull request merged or closed, and worktrees under
   `worktrees/` whose agent ended without opening one. Each shows whether it

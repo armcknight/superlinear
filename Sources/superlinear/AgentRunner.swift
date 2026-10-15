@@ -44,6 +44,38 @@ func reviewPrompt(for review: ReviewRequest) -> String {
     """
 }
 
+/// The prompt for a run that merges the base branch into the branch of a pull
+/// request that conflicts with it, so the pull request can merge again.
+func conflictPrompt(for conflict: ConflictRequest) -> String {
+    let base = conflict.baseBranch
+    return """
+    You are working autonomously on a Linear issue whose pull request no longer merges cleanly. Do \
+    not ask for confirmation at any step — proceed through the entire workflow without pausing.
+
+    An earlier agent already implemented the issue on this branch and opened pull request \
+    #\(conflict.number): \(conflict.url)
+
+    Its base branch, `\(base)`, has since moved on, and GitHub reports that the pull request \
+    conflicts with it. Your task:
+    1. Read the Linear issue for this branch with `direnv exec . linctl issue get`, and the branch's \
+    commits against the base branch, to learn what the branch does.
+    2. Run `git fetch origin \(base)`, then `git merge origin/\(base)`. Do not rebase and do not \
+    force-push: the pull request's history must stay as it is.
+    3. Resolve every conflict so that the result keeps both the branch's changes and the changes on \
+    `\(base)`. Read the commits on `\(base)` that touch the conflicting files to learn what they \
+    intend. Where the two cannot both be kept, keep the behavior of `\(base)` and adapt the \
+    branch's changes to it.
+    4. Build and run the tests, and fix what the merge broke. Commit the merge, and any fixes after it.
+    5. Push the branch.
+    6. Update the pull request description with `gh pr edit` if the merge makes it out of date.
+    7. Monitor CI until all checks pass, fixing breakages as they come.
+
+    Do not post comments on GitHub. If the branch already merges cleanly with `origin/\(base)`, \
+    stop. If you encounter ambiguity, make a reasonable decision and document it in the pull \
+    request description.
+    """
+}
+
 private let resumePrompt = """
 You were interrupted partway through the task above. Work out where you stopped — check the \
 worktree's git status and log, the Linear issue's state, and whether a pull request exists and \
@@ -187,7 +219,7 @@ struct AgentRunner: Sendable {
 
     /// The prompt that starts the run's session.
     static func prompt(for run: AgentRun) -> String {
-        run.review.map(reviewPrompt) ?? autonomousPrompt
+        run.review.map(reviewPrompt) ?? run.conflict.map(conflictPrompt) ?? autonomousPrompt
     }
 
     // MARK: Recovery

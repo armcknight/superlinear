@@ -125,7 +125,8 @@ struct WorkspaceProcessor: Sendable {
     /// Looks up the pull request of each issue whose agent has ended. A merged
     /// one completes the issue in Linear and removes its worktree; a closed
     /// one, or none at all, ends the watch. An open one with new reviews from
-    /// the signed-in GitHub user gets an agent to address them.
+    /// the signed-in GitHub user gets an agent to address them; failing that,
+    /// one that conflicts with its base branch gets an agent to merge it in.
     private func checkPullRequests(client: LinearClient, listing: PullRequestListing) async {
         let checker = PullRequestChecker()
         let repoPath = listing.repoPath
@@ -145,7 +146,13 @@ struct WorkspaceProcessor: Sendable {
 
             switch status {
             case .open:
-                await checkReviews(of: pending, pullRequests: pullRequests, repoPath: repoPath)
+                // One agent at a time on a branch: conflicts wait for the
+                // review agent to end.
+                // A conflict run waits too when the reviews could not be checked,
+                // as the watch after it would count them as addressed.
+                guard await checkReviews(of: pending, pullRequests: pullRequests, repoPath: repoPath) == .none
+                else { continue }
+                await checkConflicts(of: pending, pullRequests: pullRequests, listing: listing)
                 continue
             case .merged(let pr):
                 log("\(pending.identifier) merged in \(pr.url)")
@@ -176,8 +183,8 @@ struct WorkspaceProcessor: Sendable {
 
     /// Queues an agent for the open pull request when `gh`'s own user has
     /// reviewed it since the issue's last agent started.
-    private func checkReviews(of pending: PendingMerge, pullRequests: [PullRequest], repoPath: String) async {
-        guard let pullRequest = pullRequests.first(where: { $0.state == .open }) else { return }
+    private func checkReviews(of pending: PendingMerge, pullRequests: [PullRequest], repoPath: String) async -> ReviewCheck {
+        guard let pullRequest = pullRequests.first(where: { $0.state == .open }) else { return .none }
         // A watch from before reviews were followed counts from the pull
         // request's head commit. Looked up once, before looking at reviews, so
         // its baseline is the head the pull request has now.
@@ -186,27 +193,62 @@ struct WorkspaceProcessor: Sendable {
             do {
                 lastCommit = try await PullRequestChecker().commitDate(sha: sha, repoPath: repoPath)
             } catch {
-                if await pausedForRateLimit(error, repoPath: repoPath) { return }
+                if await pausedForRateLimit(error, repoPath: repoPath) { return .failed }
                 // Rather than the present, which would pass over its reviews.
                 log("Could not find when \(pending.identifier)'s head commit was made, retrying next poll: \(error)")
-                return
+                return .failed
             }
         }
         let handledThrough = await daemon.reviewsHandledThrough(
             pending, lastCommit: lastCommit, workspace: workspace.name)
-        guard let reviews = pullRequest.reviews, !reviews.isEmpty else { return }
+        guard let reviews = pullRequest.reviews, !reviews.isEmpty else { return .none }
         let login: String
         do {
             login = try await daemon.viewerLogin(repoPath: repoPath)
         } catch {
-            if await pausedForRateLimit(error, repoPath: repoPath) { return }
+            if await pausedForRateLimit(error, repoPath: repoPath) { return .failed }
             await logOnce("Could not find the GitHub user whose reviews to address: \(error)")
-            return
+            return .failed
         }
         let unaddressed = PullRequestReview.unaddressed(reviews, by: login, after: handledThrough)
-        guard !unaddressed.isEmpty else { return }
+        guard !unaddressed.isEmpty else { return .none }
         log("\(pending.identifier) has \(unaddressed.count) new review(s) from \(login) on \(pullRequest.url)")
         await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
+        return .queued
+    }
+
+    /// Queues an agent to merge the base branch into the open pull request's
+    /// branch when GitHub finds they conflict, unless the issue's last agent
+    /// already tried with the same heads.
+    private func checkConflicts(of pending: PendingMerge, pullRequests: [PullRequest], listing: PullRequestListing) async {
+        guard let pullRequest = pullRequests.first(where: { $0.state == .open }), pullRequest.conflicts,
+              let head = pullRequest.headRefOid, let base = pullRequest.baseRefName
+        else { return }
+        // GitHub's base commit for the pull request is the one at its last
+        // push, so the base branch's head comes from git.
+        guard let baseHead = await listing.remoteHead(of: base) else {
+            await logOnce("Could not fetch \(base) to check \(pending.identifier)'s conflicts with it")
+            return
+        }
+        let attempt = ConflictAttempt(head: head, base: baseHead)
+        guard attempt != pending.conflictAttempt else {
+            await logOnce(
+                "\(pending.identifier)'s pull request still conflicts with \(base) after an agent tried to resolve it; "
+                    + "waiting for either branch to move: \(pullRequest.url)")
+            return
+        }
+        log("\(pending.identifier)'s pull request conflicts with \(base): \(pullRequest.url)")
+        await daemon.enqueueConflictResolution(
+            of: pending, pullRequest: pullRequest, baseBranch: base, attempt: attempt, workspace: workspace)
+    }
+
+    private enum ReviewCheck {
+        /// An agent is queued to address new reviews.
+        case queued
+        /// No review needs an agent.
+        case none
+        /// The reviews could not be checked; tried again next poll.
+        case failed
     }
 
     private func log(_ message: String) {

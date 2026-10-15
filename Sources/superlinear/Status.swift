@@ -38,6 +38,9 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
     case running
     /// An agent is addressing a review of its pull request, or is queued to.
     case addressingReview
+    /// An agent is merging the base branch into its pull request's branch to
+    /// resolve their conflicts, or is queued to.
+    case resolvingConflicts
     /// Its agent stopped without finishing, as at a reboot. The daemon resumes
     /// it when it next starts.
     case interrupted
@@ -61,6 +64,7 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
         switch self {
         case .running: "Running"
         case .addressingReview: "Addressing review"
+        case .resolvingConflicts: "Resolving conflicts"
         case .interrupted: "Interrupted"
         case .queued: "Queued"
         case .openPullRequest: "Open pull requests"
@@ -79,6 +83,7 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
         if let run {
             // Interrupted, it resumes like any other run.
             if run.review != nil && (running || run.isQueued) { return .addressingReview }
+            if run.conflict != nil && (running || run.isQueued) { return .resolvingConflicts }
             if run.isQueued { return .queued }
             return running ? .running : .interrupted
         }
@@ -171,13 +176,13 @@ struct WorkspaceReport: Sendable {
         case .running:
             guard let run else { return nil }
             return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run))"
-        case .addressingReview:
-            guard let run, let review = run.review else { return nil }
+        case .addressingReview, .resolvingConflicts:
+            guard let run, let url = run.review?.url ?? run.conflict?.url else { return nil }
             if run.isQueued {
                 let attempt = run.resumes > 0 ? ", to resume, attempt \(run.resumes + 1)" : ""
-                return "queued\(attempt), \(review.url)"
+                return "queued\(attempt), \(url)"
             }
-            return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run)), \(review.url)"
+            return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run)), \(url)"
         case .interrupted:
             return "resumes when the daemon next starts"
         case .queued:
@@ -212,7 +217,14 @@ struct WorkspaceReport: Sendable {
         let width = (tasks.map(\.identifier.count) + reviews.map(\.issue.identifier.count)).max() ?? 0
         let indent = String(repeating: " ", count: 4 + width + 2)
         // Their pull requests wait on an agent, not on a reviewer.
-        let addressed = Set(entries.filter { $0.category == .addressingReview }.map(\.identifier))
+        var agentAt: [String: String] = [:]
+        for entry in entries {
+            switch entry.category {
+            case .addressingReview: agentAt[entry.identifier] = "agent addressing review"
+            case .resolvingConflicts: agentAt[entry.identifier] = "agent resolving conflicts"
+            default: break
+            }
+        }
 
         for (heading, drafts) in [("Awaiting review", false), ("Draft pull requests", true)] {
             let section = reviews.filter { $0.pullRequest.isDraft == drafts }
@@ -222,10 +234,11 @@ struct WorkspaceReport: Sendable {
                 let pullRequest = review.pullRequest
                 let padded = review.issue.identifier.padding(toLength: width, withPad: " ", startingAt: 0)
                 lines.append("    \(padded)  #\(pullRequest.number) \(pullRequest.title)".trimmingTrailingWhitespace())
-                let reviewState = addressed.contains(review.issue.identifier)
-                    ? "agent addressing review" : pullRequest.reviewState.rawValue
+                let reviewState = agentAt[review.issue.identifier] ?? pullRequest.reviewState.rawValue
                 let state = drafts ? [] : [reviewState]
-                lines.append(indent + (state + [pullRequest.checkState.rawValue, pullRequest.url]).joined(separator: " · "))
+                let conflicts = pullRequest.mergeable == "CONFLICTING" ? ["conflicts with \(pullRequest.baseRefName ?? "base")"] : []
+                lines.append(
+                    indent + (state + conflicts + [pullRequest.checkState.rawValue, pullRequest.url]).joined(separator: " · "))
             }
         }
 

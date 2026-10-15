@@ -109,6 +109,37 @@ actor Daemon {
         fillSlots()
     }
 
+    /// Queues an agent to merge the base branch into the branch of an issue
+    /// awaiting its merge whose pull request conflicts with it. Like a review
+    /// run, it works in the issue's existing worktree, under a new Claude
+    /// session, and the issue awaits its merge again once it ends.
+    func enqueueConflictResolution(
+        of pending: PendingMerge, pullRequest: PullRequest, baseBranch: String,
+        attempt: ConflictAttempt, workspace: WorkspaceConfig
+    ) {
+        // The watch may have ended, or have had its review baseline set,
+        // since the poll read it.
+        guard let current = state.workspaces[workspace.name]?.pendingMerges[pending.issueId] else { return }
+        let run = AgentRun(
+            issueId: pending.issueId,
+            identifier: pending.identifier,
+            branchName: pending.branchName,
+            sessionId: UUID().uuidString.lowercased(),
+            queuedAt: Date(),
+            conflict: ConflictRequest(
+                number: pullRequest.number, url: pullRequest.url, baseBranch: baseBranch,
+                attempt: attempt, reviewsHandledThrough: current.reviewsHandledThrough
+            )
+        )
+        state.startReview(run, workspace: workspace.name)
+        log(
+            "Queued \(pending.identifier) to resolve the conflicts of \(pullRequest.url) with \(baseBranch)",
+            workspace: workspace.name
+        )
+        save()
+        fillSlots()
+    }
+
     /// Picks up the runs a previous daemon left in the state file.
     private func recoverRuns() {
         recovering = true
@@ -197,6 +228,9 @@ actor Daemon {
             log(mode == .resume ? "Resuming \(run.identifier)" : "Starting \(run.identifier)", workspace: workspace.name)
             if let review = run.review {
                 log("  Addressing the review on \(review.url)", workspace: workspace.name)
+            }
+            if let conflict = run.conflict {
+                log("  Resolving the conflicts of \(conflict.url) with \(conflict.baseBranch)", workspace: workspace.name)
             }
             log("  Branch: \(run.branchName)", workspace: workspace.name)
             log("  Session: \(run.sessionId)", workspace: workspace.name)
