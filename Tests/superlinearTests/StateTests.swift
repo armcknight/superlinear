@@ -75,9 +75,14 @@ struct StateTests {
         state.updateLastPoll(Date(timeIntervalSince1970: 1_700_000_000), workspace: "w")
         state.recordRun(AgentRun(
             issueId: "SL-2", identifier: "SL-2", branchName: "b", sessionId: "s",
-            pid: 42, processStartedAt: Date(timeIntervalSince1970: 1_700_000_100), resumes: 1
+            pid: 42, processStartedAt: Date(timeIntervalSince1970: 1_700_000_100), resumes: 1,
+            launchedAt: Date(timeIntervalSince1970: 1_700_000_050),
+            review: ReviewRequest(number: 4, url: "https://github.com/o/r/pull/4")
         ), workspace: "w")
-        state.awaitMerge(PendingMerge(issueId: "SL-3", identifier: "SL-3", branchName: "c"), workspace: "w")
+        state.awaitMerge(PendingMerge(
+            issueId: "SL-3", identifier: "SL-3", branchName: "c",
+            reviewsHandledThrough: Date(timeIntervalSince1970: 1_700_000_200)
+        ), workspace: "w")
         state.recordRun(AgentRun(
             issueId: "github:4", identifier: "GH-4", branchName: "github/gh-4", sessionId: "t", gitHubIssue: 4
         ), workspace: "w")
@@ -120,6 +125,49 @@ struct StateTests {
 
         state.stopAwaitingMerge(issueId: "SL-1", workspace: "w")
         #expect(state.pendingMerges(workspace: "w").isEmpty)
+    }
+
+    @Test("A watch takes its review baseline from the run's first launch")
+    func pendingMergeReviewBaseline() {
+        var run = AgentRun(
+            issueId: "SL-1", identifier: "SL-1", branchName: "b", sessionId: "s",
+            processStartedAt: Date(timeIntervalSince1970: 200)
+        )
+        // Runs launched before the first launch was recorded.
+        #expect(PendingMerge(run).reviewsHandledThrough == Date(timeIntervalSince1970: 200))
+        // A resume moves the process start, but not the first launch.
+        run.launchedAt = Date(timeIntervalSince1970: 100)
+        #expect(PendingMerge(run).reviewsHandledThrough == Date(timeIntervalSince1970: 100))
+    }
+
+    @Test("A watch from before reviews were followed has no review baseline")
+    func legacyPendingMergeLoads() throws {
+        let json = #"""
+        {"workspaces":{"w":{"processedIssueIds":[],"lastPollTimestamp":"2023-11-14T22:13:20Z",
+        "pendingMerges":{"SL-1":{"issueId":"SL-1","identifier":"SL-1","branchName":"b"}}}}}
+        """#
+        let state = try State.decoded(from: Data(json.utf8))
+        #expect(state.pendingMerges(workspace: "w") == [
+            PendingMerge(issueId: "SL-1", identifier: "SL-1", branchName: "b"),
+        ])
+        #expect(state.pendingMerges(workspace: "w").first?.reviewsHandledThrough == nil)
+    }
+
+    // The review run goes on following the same pull requests, so their links
+    // must not be forgotten and linked a second time.
+    @Test("Starting a review moves the issue from its merge watch to a run, keeping its links")
+    func startReview() {
+        var state = State()
+        state.awaitMerge(PendingMerge(issueId: "SL-1", identifier: "SL-1", branchName: "b"), workspace: "w")
+        state.recordLinkedPullRequest("https://github.com/o/r/pull/1", issueId: "SL-1", workspace: "w")
+        let run = AgentRun(
+            issueId: "SL-1", identifier: "SL-1", branchName: "b", sessionId: "s",
+            review: ReviewRequest(number: 1, url: "https://github.com/o/r/pull/1")
+        )
+        state.startReview(run, workspace: "w")
+        #expect(state.pendingMerges(workspace: "w").isEmpty)
+        #expect(state.runs(workspace: "w") == [run])
+        #expect(state.linkedPullRequests(issueId: "SL-1", workspace: "w") == ["https://github.com/o/r/pull/1"])
     }
 
     @Test("Runs are recorded per issue and removed when done")

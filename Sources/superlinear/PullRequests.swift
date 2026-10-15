@@ -6,25 +6,74 @@ struct PendingMerge: Codable, Sendable, Equatable {
     var issueId: String
     var identifier: String
     var branchName: String
+    /// Reviews submitted at or before this time are taken as addressed: the
+    /// last agent on the issue was already running when they came in. Absent
+    /// in state files written before reviews were followed.
+    var reviewsHandledThrough: Date?
     /// The GitHub issue's number, when the issue comes from GitHub.
     var gitHubIssue: Int? = nil
 
-    init(issueId: String, identifier: String, branchName: String, gitHubIssue: Int? = nil) {
+    init(
+        issueId: String, identifier: String, branchName: String, reviewsHandledThrough: Date? = nil,
+        gitHubIssue: Int? = nil
+    ) {
         self.issueId = issueId
         self.identifier = identifier
         self.branchName = branchName
+        self.reviewsHandledThrough = reviewsHandledThrough
         self.gitHubIssue = gitHubIssue
     }
 
+    /// The watch that follows a run once its agent ends. Reviews from after
+    /// the agent started are left to the next one; it may have read some of
+    /// them, but a review it missed would otherwise go unanswered.
     init(_ run: AgentRun) {
         self.init(
-            issueId: run.issueId, identifier: run.identifier, branchName: run.branchName, gitHubIssue: run.gitHubIssue)
+            issueId: run.issueId, identifier: run.identifier, branchName: run.branchName,
+            reviewsHandledThrough: run.launchedAt ?? run.processStartedAt, gitHubIssue: run.gitHubIssue
+        )
     }
 }
 
-/// A pull request as `gh pr list --json` reports it. The merge check asks
-/// for `number,url,state` on one branch; `superlinear status` lists a whole
-/// repository and asks for the branch, draft flag and size as well.
+/// A review on a pull request, as `gh pr list --json reviews` reports it.
+struct PullRequestReview: Codable, Sendable, Equatable {
+    struct Author: Codable, Sendable, Equatable {
+        let login: String
+    }
+
+    let author: Author?
+    /// `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED` or `PENDING`.
+    /// A string, so a state GitHub adds later does not fail the merge check
+    /// that decodes it.
+    let state: String
+    let body: String
+    let submittedAt: Date?
+
+    /// Whether the review asks for anything: an approval with nothing written
+    /// does not, and neither does a draft or a dismissed review.
+    var asksForChanges: Bool {
+        switch state {
+        case "CHANGES_REQUESTED", "COMMENTED": true
+        case "APPROVED": !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        default: false
+        }
+    }
+
+    /// The reviews by `login`, submitted after `date`, that ask for changes.
+    static func unaddressed(_ reviews: [PullRequestReview], by login: String, after date: Date) -> [PullRequestReview] {
+        reviews.filter { review in
+            guard review.author?.login == login, review.asksForChanges,
+                  let submittedAt = review.submittedAt
+            else { return false }
+            return submittedAt > date
+        }
+    }
+}
+
+/// A pull request as `gh pr list --json` reports it. Each poll lists a
+/// repository's pull requests once, and its open ones with their reviews
+/// and head commits once more; `superlinear status` lists a
+/// whole repository and asks for the branch, draft flag and size as well.
 struct PullRequest: Codable, Sendable, Equatable {
     enum State: String, Codable, Sendable {
         case open = "OPEN"
@@ -41,6 +90,10 @@ struct PullRequest: Codable, Sendable, Equatable {
     var isDraft: Bool? = nil
     /// When it merged, when the listing asked for it.
     var mergedAt: Date? = nil
+    /// Its reviews, when the listing asked for them.
+    var reviews: [PullRequestReview]? = nil
+    /// The commit its branch points at, when the listing asked for it.
+    var headRefOid: String? = nil
     /// Lines added and removed, and files changed, when the listing asked.
     var additions: Int? = nil
     var deletions: Int? = nil
@@ -81,8 +134,8 @@ struct CommandError: Error, CustomStringConvertible {
     }
 }
 
-/// Asks GitHub about the pull requests agents opened, and tears down the
-/// worktrees of the ones that merged.
+/// Asks GitHub about the pull requests agents opened and the reviews left on
+/// them, and tears down the worktrees of the ones that merged.
 struct PullRequestChecker: Sendable {
     /// The environment commands run in. `gh` and `work` are found through its
     /// PATH, as they are for agents.
@@ -92,8 +145,36 @@ struct PullRequestChecker: Sendable {
         self.environment = environment
     }
 
-    static func listArguments(branch: String) -> [String] {
-        ["gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,url,state"]
+    static let listOpenArguments = [
+        "gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", "number,url,state,headRefName,headRefOid,reviews",
+    ]
+
+    static let viewerArguments = ["gh", "api", "user", "--jq", ".login"]
+
+    /// The GitHub login `gh` is signed in as, whose reviews agents answer.
+    func viewerLogin(repoPath: String) async throws -> String {
+        let login = String(decoding: try await run(Self.viewerArguments, in: repoPath), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !login.isEmpty else {
+            throw CommandError(command: Self.viewerArguments, status: 0, output: "no login")
+        }
+        return login
+    }
+
+    static func commitDateArguments(sha: String) -> [String] {
+        ["gh", "api", "repos/{owner}/{repo}/commits/\(sha)", "--jq", ".commit.committer.date"]
+    }
+
+    /// When the commit `sha` was made, from GitHub's REST API, whose rate
+    /// limit is apart from the GraphQL one the listings use.
+    func commitDate(sha: String, repoPath: String) async throws -> Date {
+        let arguments = Self.commitDateArguments(sha: sha)
+        let text = String(decoding: try await run(arguments, in: repoPath), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let date = ISO8601DateFormatter().date(from: text) else {
+            throw CommandError(command: arguments, status: 0, output: "no commit date in \(text)")
+        }
+        return date
     }
 
     static let listAllArguments = [
@@ -111,10 +192,12 @@ struct PullRequestChecker: Sendable {
         return try decoder.decode([PullRequest].self, from: data)
     }
 
-    /// The pull requests opened from `branch` in the repository at `repoPath`.
-    func pullRequests(branch: String, repoPath: String) async throws -> [PullRequest] {
-        let output = try await run(Self.listArguments(branch: branch), in: repoPath)
-        return try Self.decodePullRequests(output)
+    /// The repository's open pull requests, newest 1,000, with their
+    /// reviews, which cost GitHub more to list than the rest, and head
+    /// commits. Not their commit lists: those cost so much that GitHub
+    /// refuses a page of 100 pull requests as over the rate limit.
+    func openPullRequestsWithReviews(repoPath: String) async throws -> [PullRequest] {
+        try Self.decodePullRequests(try await run(Self.listOpenArguments, in: repoPath))
     }
 
     /// Removes the worktree and local branch with `work finish`, appending its
@@ -159,5 +242,54 @@ struct PullRequestChecker: Sendable {
             }
             return output
         }.value
+    }
+}
+
+/// A repository's pull requests for one poll, listed at most once each way
+/// and shared by every step that needs them. GitHub allows 5,000 GraphQL
+/// points an hour, shared with agents and with `superlinear status`; a
+/// listing per branch per poll used them all up.
+actor PullRequestListing {
+    let repoPath: String
+    let checker: PullRequestChecker
+    // Failures are kept too, so a poll that hits the rate limit does not try
+    // again for every branch.
+    private var all: Result<[PullRequest], Error>?
+    private var open: Result<[PullRequest], Error>?
+
+    init(repoPath: String, checker: PullRequestChecker = PullRequestChecker()) {
+        self.repoPath = repoPath
+        self.checker = checker
+    }
+
+    /// The pull requests opened from `branch`. Open ones come with their
+    /// reviews and head commits.
+    func pullRequests(branch: String) async throws -> [PullRequest] {
+        let mine = try await allPullRequests().filter { $0.headRefName == branch }
+        guard mine.contains(where: { $0.state == .open }) else { return mine }
+        if open == nil { open = await Self.result { try await checker.openPullRequestsWithReviews(repoPath: repoPath) } }
+        return Self.merge(mine, withOpen: try open!.get())
+    }
+
+    func allPullRequests() async throws -> [PullRequest] {
+        if all == nil { all = await Self.result { try await checker.allPullRequests(repoPath: repoPath) } }
+        return try all!.get()
+    }
+
+    private static func result(_ body: @Sendable () async throws -> [PullRequest]) async -> Result<[PullRequest], Error> {
+        do {
+            return .success(try await body())
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// Replaces each open pull request with its listing that has reviews and
+    /// a head commit, where there is one.
+    static func merge(_ pullRequests: [PullRequest], withOpen open: [PullRequest]) -> [PullRequest] {
+        pullRequests.map { pullRequest in
+            guard pullRequest.state == .open else { return pullRequest }
+            return open.first { $0.number == pullRequest.number } ?? pullRequest
+        }
     }
 }

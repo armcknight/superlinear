@@ -23,6 +23,12 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// Launches that failed, as when the disk is full. Absent in state files
     /// written before failures were counted.
     var launchFailures: Int?
+    /// When the run first launched. Unlike `processStartedAt`, a resume does
+    /// not move it. Absent in state files written before reviews were followed.
+    var launchedAt: Date?
+    /// The pull request whose review the run answers, for a run started by a
+    /// review rather than by a new issue.
+    var review: ReviewRequest?
     /// The number of the GitHub issue the agent works on, when the run comes
     /// from GitHub rather than Linear.
     var gitHubIssue: Int? = nil
@@ -30,6 +36,12 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// Waiting for a free slot: recorded, but not launched, or launched and
     /// since requeued after an interruption.
     var isQueued: Bool { pid == nil }
+}
+
+/// A pull request with reviews for an agent to address.
+struct ReviewRequest: Codable, Sendable, Equatable {
+    var number: Int
+    var url: String
 }
 
 struct WorkspaceState: Codable, Sendable {
@@ -150,6 +162,13 @@ struct State: Codable, Sendable {
 
     mutating func awaitMerge(_ pending: PendingMerge, workspace: String) {
         workspaces[workspace, default: WorkspaceState()].pendingMerges[pending.issueId] = pending
+    }
+
+    /// Hands an issue awaiting its merge to a run that addresses a review. The
+    /// linked pull requests stay recorded, as the run goes on following them.
+    mutating func startReview(_ run: AgentRun, workspace: String) {
+        workspaces[workspace]?.pendingMerges[run.issueId] = nil
+        recordRun(run, workspace: workspace)
     }
 
     mutating func stopAwaitingMerge(issueId: String, workspace: String) {

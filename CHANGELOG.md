@@ -9,12 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Your reviews on an agent's pull request bring an agent back to address
+  them. Each poll reads the reviews on the open pull request of every issue
+  awaiting its merge, and a review from the GitHub user `gh` is signed in as,
+  submitted after the issue's last agent started, queues a new agent in the
+  same worktree. It reads every review and inline comment, implements what
+  they ask for, commits, pushes and sees CI through, without replying on
+  GitHub. Approvals with nothing written, drafts and dismissed reviews are
+  ignored, as are reviews from anyone else. For issues already awaiting their
+  merge before the upgrade, reviews count from the date of the pull
+  request's head commit, looked up once through GitHub's REST API. `superlinear status` lists these runs,
+  running or queued, under their own "Addressing review" section, and their
+  pull requests under "Awaiting review" as "agent addressing review" in place
+  of GitHub's review state.
 - Agents can work from the repository's GitHub issues too. With
   `"githubIssues": true` on a workspace, each poll queues the open issues you
   opened since the option went on, and any issue on which you comment
   `/superlinear-do`. Their agents read the issue with `gh`, open a pull
   request that closes it, and the daemon closes the issue on the merge if
   GitHub has not. `superlinear status` lists them as `GH-<number>`.
+
+### Fixed
+
+- Each poll lists a repository's pull requests once, and its open ones with
+  their reviews and head commits once more when a watched pull request is
+  open.
+  Before, it ran one `gh pr list` per watched branch and per running agent
+  every poll, which with dozens of open pull requests used up GitHub's 5,000
+  GraphQL points an hour and left agents and `superlinear status` rate
+  limited.
+- `make install` replaces the binary with a new file instead of overwriting
+  it, which made macOS kill it on launch while the daemon ran it.
 
 ## [1.13.0] 2026-10-12
 

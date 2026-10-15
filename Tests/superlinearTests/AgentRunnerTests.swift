@@ -25,11 +25,33 @@ struct AgentRunnerTests {
     func gitHubPrompt() {
         var gitHub = run
         gitHub.gitHubIssue = 12
-        let prompt = AgentRunner.prompt(for: gitHub, mode: .start)
+        let prompt = AgentRunner.prompt(for: gitHub)
         #expect(prompt.contains("gh issue view 12"))
         #expect(prompt.contains("Closes #12"))
-        #expect(!AgentRunner.prompt(for: run, mode: .start).contains("gh issue view"))
-        #expect(AgentRunner.prompt(for: gitHub, mode: .resume) == AgentRunner.prompt(for: run, mode: .resume))
+        #expect(!AgentRunner.prompt(for: run).contains("gh issue view"))
+    }
+
+    @Test("A review run on a GitHub issue reads the issue from GitHub, not Linear")
+    func gitHubReviewPrompt() {
+        var review = run
+        review.gitHubIssue = 7
+        review.review = ReviewRequest(number: 12, url: "https://github.com/o/r/pull/12")
+        let prompt = AgentRunner.prompt(for: review)
+        #expect(prompt.contains("pulls/12/comments"))
+        #expect(prompt.contains("gh issue view 7"))
+        #expect(!prompt.contains("linctl"))
+    }
+
+    @Test("A review run gets a prompt for its pull request; any other run the issue prompt")
+    func prompts() {
+        var review = run
+        review.review = ReviewRequest(number: 12, url: "https://github.com/o/r/pull/12")
+        let prompt = AgentRunner.prompt(for: review)
+        #expect(prompt.contains("https://github.com/o/r/pull/12"))
+        #expect(prompt.contains("pulls/12/comments"))
+        #expect(prompt.contains("Do not reply to the review"))
+        #expect(!AgentRunner.prompt(for: run).contains("pull request #"))
+        #expect(AgentRunner.prompt(for: run).contains("/armcknight-claude:start"))
     }
 
     // The order matters: a status means the agent ended, whatever else is true,

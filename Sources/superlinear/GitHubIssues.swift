@@ -90,12 +90,6 @@ struct GitHubIssueClient: Sendable {
         "gh", "issue", "list", "--state", "all", "--limit", "1000", "--json", "number,title,state,stateReason",
     ]
 
-    /// The login `gh` is authenticated as.
-    func viewerLogin(repoPath: String) async throws -> String {
-        let output = try await checker.run(["gh", "api", "user", "--jq", ".login"], in: repoPath)
-        return String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     /// The repository's open issues, newest 1,000, with their comments.
     func openIssues(repoPath: String) async throws -> [GitHubIssue] {
         try Self.decode(try await checker.run(Self.listOpenArguments, in: repoPath))

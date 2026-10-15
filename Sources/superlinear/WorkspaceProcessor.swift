@@ -31,9 +31,10 @@ struct WorkspaceProcessor: Sendable {
             await pollGitHubIssues()
         }
 
-        await linkRunningAgentsPullRequests(client: client)
-        await checkPullRequests(client: client)
-        await sweepStartedIssues(client: client)
+        let listing = PullRequestListing(repoPath: NSString(string: workspace.repoPath).expandingTildeInPath)
+        await linkRunningAgentsPullRequests(client: client, listing: listing)
+        await checkPullRequests(client: client, listing: listing)
+        await sweepStartedIssues(client: client, listing: listing)
     }
 
     /// Queues the repository's open GitHub issues that you opened since GitHub
@@ -45,7 +46,7 @@ struct WorkspaceProcessor: Sendable {
         let since = await daemon.gitHubIssuesSince(workspace: workspace.name)
         let requested: [GitHubIssue]
         do {
-            let login = try await client.viewerLogin(repoPath: repoPath)
+            let login = try await daemon.viewerLogin(repoPath: repoPath)
             requested = try await client.openIssues(repoPath: repoPath).filter {
                 $0.isRequested(by: login, openedSince: since)
             }
@@ -66,14 +67,13 @@ struct WorkspaceProcessor: Sendable {
     /// Links and completes started issues that no run or merge watch follows,
     /// such as work done by hand or by agents from before a state reset. Their
     /// worktrees are left alone, since they may hold work of your own.
-    private func sweepStartedIssues(client: LinearClient) async {
-        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+    private func sweepStartedIssues(client: LinearClient, listing: PullRequestListing) async {
         let issues: [LinearIssueStatus]
         let pullRequests: [PullRequest]
         do {
             issues = try await client.fetchStartedIssues(teamIds: workspace.teamIds)
             guard !issues.isEmpty else { return }
-            pullRequests = try await PullRequestChecker().allPullRequests(repoPath: repoPath)
+            pullRequests = try await listing.allPullRequests()
         } catch {
             await logOnce("Could not check started issues' pull requests: \(error)")
             return
@@ -103,14 +103,12 @@ struct WorkspaceProcessor: Sendable {
 
     /// Links the pull requests of agents still running, which open them well
     /// before they end, as they go on to watch CI.
-    private func linkRunningAgentsPullRequests(client: LinearClient) async {
-        let checker = PullRequestChecker()
-        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+    private func linkRunningAgentsPullRequests(client: LinearClient, listing: PullRequestListing) async {
         // GitHub links a pull request to the issue it closes by itself.
         for run in await daemon.launchedRuns(workspace: workspace.name) where run.gitHubIssue == nil {
             // Most running agents have no pull request yet; a failed lookup is
             // retried next poll, and logged when the agent ends.
-            guard let pullRequests = try? await checker.pullRequests(branch: run.branchName, repoPath: repoPath)
+            guard let pullRequests = try? await listing.allPullRequests().filter({ $0.headRefName == run.branchName })
             else { continue }
             await link(pullRequests, issueId: run.issueId, identifier: run.identifier, client: client)
         }
@@ -135,14 +133,15 @@ struct WorkspaceProcessor: Sendable {
 
     /// Looks up the pull request of each issue whose agent has ended. A merged
     /// one completes the issue in Linear and removes its worktree; a closed
-    /// one, or none at all, ends the watch.
-    private func checkPullRequests(client: LinearClient) async {
+    /// one, or none at all, ends the watch. An open one with new reviews from
+    /// the signed-in GitHub user gets an agent to address them.
+    private func checkPullRequests(client: LinearClient, listing: PullRequestListing) async {
         let checker = PullRequestChecker()
-        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let repoPath = listing.repoPath
         for pending in await daemon.pendingMerges(workspace: workspace.name) {
             let pullRequests: [PullRequest]
             do {
-                pullRequests = try await checker.pullRequests(branch: pending.branchName, repoPath: repoPath)
+                pullRequests = try await listing.pullRequests(branch: pending.branchName)
             } catch {
                 log("Could not check the pull request for \(pending.identifier): \(error)")
                 continue
@@ -155,6 +154,7 @@ struct WorkspaceProcessor: Sendable {
 
             switch status {
             case .open:
+                await checkReviews(of: pending, pullRequests: pullRequests, repoPath: repoPath)
                 continue
             case .merged(let pr):
                 log("\(pending.identifier) merged in \(pr.url)")
@@ -185,6 +185,39 @@ struct WorkspaceProcessor: Sendable {
             }
             await daemon.stopAwaitingMerge(issueId: pending.issueId, workspace: workspace.name)
         }
+    }
+
+    /// Queues an agent for the open pull request when `gh`'s own user has
+    /// reviewed it since the issue's last agent started.
+    private func checkReviews(of pending: PendingMerge, pullRequests: [PullRequest], repoPath: String) async {
+        guard let pullRequest = pullRequests.first(where: { $0.state == .open }) else { return }
+        // A watch from before reviews were followed counts from the pull
+        // request's head commit. Looked up once, before looking at reviews, so
+        // its baseline is the head the pull request has now.
+        var lastCommit: Date?
+        if pending.reviewsHandledThrough == nil, let sha = pullRequest.headRefOid {
+            do {
+                lastCommit = try await PullRequestChecker().commitDate(sha: sha, repoPath: repoPath)
+            } catch {
+                // Rather than the present, which would pass over its reviews.
+                log("Could not find when \(pending.identifier)'s head commit was made, retrying next poll: \(error)")
+                return
+            }
+        }
+        let handledThrough = await daemon.reviewsHandledThrough(
+            pending, lastCommit: lastCommit, workspace: workspace.name)
+        guard let reviews = pullRequest.reviews, !reviews.isEmpty else { return }
+        let login: String
+        do {
+            login = try await daemon.viewerLogin(repoPath: repoPath)
+        } catch {
+            await logOnce("Could not find the GitHub user whose reviews to address: \(error)")
+            return
+        }
+        let unaddressed = PullRequestReview.unaddressed(reviews, by: login, after: handledThrough)
+        guard !unaddressed.isEmpty else { return }
+        log("\(pending.identifier) has \(unaddressed.count) new review(s) from \(login) on \(pullRequest.url)")
+        await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
     }
 
     private func log(_ message: String) {
