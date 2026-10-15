@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `superlinear status` shows its own version and binary, and the daemon's
-  pid, version, binary and start time, or that the daemon is not running.
-  It warns when the daemon's binary was replaced after the daemon started.
-  Each workspace shows when its last poll ended, whether it failed, and
-  when the next one is due. The daemon writes `daemon.json` when it starts,
+- `superlinear status` ends with its own version and binary, and the
+  daemon's pid, version, binary and start time, or that the daemon is not
+  running. It warns when the daemon's binary was replaced after the daemon
+  started. Then, under "Polls", each workspace shows when its last poll
+  ended, whether it failed, and when the next one is due. The daemon writes `daemon.json` when it starts,
   and the poll times into the state file.
 
 - A daemon running a local build restarts within a minute of `make install`

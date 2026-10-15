@@ -110,15 +110,20 @@ struct PollRecord: Codable, Sendable, Equatable {
     /// Why the poll failed, if it did.
     var error: String?
 
-    /// The line `superlinear status` prints about it. A poll that should have
-    /// run while the daemon is up is overdue: polls are taking long.
+    /// How long a poll runs before the status calls it slow.
+    static let slowPoll: TimeInterval = 10 * 60
+
+    /// The line `superlinear status` prints about it. Once the next poll is
+    /// due, it is running.
     func rendered(daemonRunning: Bool, now: Date = Date()) -> String {
         var parts = ["last poll ended \(StatusTime.rendered(endedAt, now: now))"]
         if let error { parts[0] += ", failed: \(error)" }
         if !daemonRunning {
             parts.append("no next poll: the daemon is not running")
-        } else if nextAt < now.addingTimeInterval(-60) {
-            parts.append("next poll overdue since \(StatusTime.rendered(nextAt, now: now)); one is still running")
+        } else if nextAt <= now {
+            // The next poll started when due, and records itself when it ends.
+            let since = "polling since \(StatusTime.rendered(nextAt, now: now))"
+            parts.append(nextAt < now.addingTimeInterval(-Self.slowPoll) ? since + ", which is slow" : since)
         } else {
             parts.append("next poll \(StatusTime.rendered(nextAt, now: now))")
         }

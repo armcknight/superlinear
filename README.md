@@ -215,9 +215,7 @@ With no subcommand it runs the daemon in the foreground, which is how to test a 
 
 ### Status
 
-`superlinear status` starts with its own version and binary, then the daemon's: its pid, version, binary and start time, or that it is not running. It warns when the daemon's binary has been replaced since the daemon started. Under each workspace's name, it shows when the last poll ended, whether it failed, and when the next poll is due.
-
-It then lists, for each workspace, the open pull requests that belong to a Linear issue, then the tasks the daemon tracks, grouped by where they stand:
+`superlinear status` lists, for each workspace, the open pull requests that belong to a Linear issue, then the tasks the daemon tracks, grouped by where they stand:
 
 | Section | Meaning |
 | --- | --- |
@@ -242,6 +240,8 @@ After the workspaces comes a summary:
 - **Per pull request:** the total, median, minimum and maximum of each measure, and a histogram of its values in 16 equal ranges from minimum to maximum, over the agents' pull requests — those of finished tasks that are open or merged, and the open ones listed for review. The measures are lines added and removed and files changed; tokens, cache reads and agent time, from the Claude transcripts; and CI time.
 - **All tracked tasks:** the tokens, cache reads, agent time and CI time of every task, with or without a pull request.
 - **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
+
+The report ends with this command's version and binary, then the daemon's: its pid, version, binary and start time, or that it is not running. It warns when the daemon's binary has been replaced since the daemon started. Last, under **Polls**, each workspace shows when its last poll ended, whether it failed, and when the next one is due, or, once that time has passed, that it is polling now. Each workspace polls on its own loop, which waits its `pollIntervalSeconds` after each poll ends, so each has its own times.
 
 Lines and files of an open pull request come from `git diff --shortstat` in the local repository, measured from the later of two fork points: where the branch left the local base branch, and where it left `origin/<base>`. An agent forks off the local base, so when that is ahead of GitHub's, GitHub counts the unpushed commits as part of each pull request. The workspace then shows a warning to push the base branch. Merged pull requests, and branches found neither locally nor on `origin`, use GitHub's numbers.
 

@@ -123,8 +123,6 @@ struct WorkspaceReport: Sendable {
     var pullRequestStats: [PullRequestStats] = []
     /// Local branches and worktrees no longer needed.
     var stale: [StaleBranch] = []
-    /// When the daemon last polled the workspace and polls next, if known.
-    var poll: String? = nil
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
     var warnings: [String]
@@ -207,7 +205,6 @@ struct WorkspaceReport: Sendable {
     /// The report as text, one section per category with entries in it.
     func rendered(now: Date = Date()) -> String {
         var lines = [name]
-        if let poll { lines.append("  \(poll)") }
         for warning in warnings {
             lines.append("  warning: \(warning)")
         }
@@ -403,13 +400,7 @@ enum StatusCommand {
             return reports.sorted { $0.0 < $1.0 }.map(\.1)
         }
 
-        let daemon = DaemonStatus.read()
-        for index in reports.indices {
-            let poll = state.workspaces[reports[index].name]?.poll
-            reports[index].poll = poll?.rendered(daemonRunning: daemon.running)
-        }
-
-        var header = [DaemonStatus.statusLine() + "\n" + daemon.rendered()]
+        var header: [String] = []
         if let repoPath = rateLimitedRepoPath(reports, config: config) {
             // One line, rather than one per GitHub call in every workspace.
             for index in reports.indices {
@@ -420,7 +411,8 @@ enum StatusCommand {
             header.append("warning: GitHub's rate limit is used up until \(time), so pull requests could not all be listed")
         }
         let summary = StatusSummary(reports: reports).rendered()
-        print((header + reports.map { $0.rendered() } + [summary]).joined(separator: "\n\n"))
+        let footer = DaemonStatus.read().footer(polls: config.workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })
+        print((header + reports.map { $0.rendered() } + [summary, footer]).joined(separator: "\n\n"))
         return 0
     }
 }
@@ -453,6 +445,21 @@ struct DaemonStatus {
             return "Daemon: pid \(lockPid), started before daemons recorded their version; restart it to see more"
         }
         return "Daemon: not running"
+    }
+
+    /// The end of the report: this command's build, the daemon's, and each
+    /// workspace's polls, in config order. Each workspace polls on its own
+    /// loop, so each has its own times.
+    func footer(polls: [(name: String, poll: PollRecord?)], now: Date = Date()) -> String {
+        var lines = [Self.statusLine(), rendered(now: now)]
+        guard !polls.isEmpty else { return lines.joined(separator: "\n") }
+        lines.append("Polls")
+        let width = polls.map(\.name.count).max() ?? 0
+        for (name, poll) in polls {
+            let padded = name.padding(toLength: width, withPad: " ", startingAt: 0)
+            lines.append("  \(padded)  \(poll?.rendered(daemonRunning: running, now: now) ?? "not polled yet")")
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// The version and binary of this `superlinear status`.

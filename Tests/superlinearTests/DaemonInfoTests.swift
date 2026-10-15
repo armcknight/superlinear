@@ -37,8 +37,10 @@ struct DaemonInfoTests {
         #expect(failed.rendered(daemonRunning: true, now: now).contains("(20s ago), failed: offline · "))
         #expect(poll.rendered(daemonRunning: false, now: now).hasSuffix("no next poll: the daemon is not running"))
 
-        let late = PollRecord(endedAt: now.addingTimeInterval(-600), nextAt: now.addingTimeInterval(-540))
-        #expect(late.rendered(daemonRunning: true, now: now).contains("next poll overdue since"))
+        let polling = PollRecord(endedAt: now.addingTimeInterval(-80), nextAt: now.addingTimeInterval(-20))
+        #expect(polling.rendered(daemonRunning: true, now: now).hasSuffix(" · polling since \(StatusTime.rendered(now.addingTimeInterval(-20), now: now))"))
+        let slow = PollRecord(endedAt: now.addingTimeInterval(-1_000), nextAt: now.addingTimeInterval(-940))
+        #expect(slow.rendered(daemonRunning: true, now: now).hasSuffix(", which is slow"))
     }
 
     @Test("A poll record survives the state file, and older state files load without one")
@@ -109,9 +111,16 @@ struct DaemonInfoTests {
         #expect(DaemonStatus.read(home: home).rendered().hasPrefix("Daemon: pid \(getpid()), started before"))
     }
 
-    @Test("A workspace's poll line comes right under its name")
-    func reportShowsPoll() {
-        let report = WorkspaceReport(name: "w", entries: [], poll: "last poll ended 12:00 (now)", warnings: [])
-        #expect(report.rendered() == "w\n  last poll ended 12:00 (now)\n  No tasks")
+    @Test("The footer gives the builds, then each workspace's polls in order")
+    func footer() {
+        let status = DaemonStatus(running: false)
+        let poll = PollRecord(endedAt: now.addingTimeInterval(-5), nextAt: now.addingTimeInterval(55))
+        let lines = status.footer(polls: [("iMox", poll), ("superlinear", nil)], now: now).split(separator: "\n")
+        #expect(lines.count == 5)
+        #expect(lines[0].hasPrefix("superlinear "))
+        #expect(lines[1] == "Daemon: not running")
+        #expect(lines[2] == "Polls")
+        #expect(lines[3].hasPrefix("  iMox         last poll ended "))
+        #expect(lines[4] == "  superlinear  not polled yet")
     }
 }
