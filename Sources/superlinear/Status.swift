@@ -123,6 +123,8 @@ struct WorkspaceReport: Sendable {
     var pullRequestStats: [PullRequestStats] = []
     /// Local branches and worktrees no longer needed.
     var stale: [StaleBranch] = []
+    /// When the daemon last polled the workspace and polls next, if known.
+    var poll: String? = nil
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
     var warnings: [String]
@@ -205,6 +207,7 @@ struct WorkspaceReport: Sendable {
     /// The report as text, one section per category with entries in it.
     func rendered(now: Date = Date()) -> String {
         var lines = [name]
+        if let poll { lines.append("  \(poll)") }
         for warning in warnings {
             lines.append("  warning: \(warning)")
         }
@@ -400,7 +403,13 @@ enum StatusCommand {
             return reports.sorted { $0.0 < $1.0 }.map(\.1)
         }
 
-        var header: [String] = []
+        let daemon = DaemonStatus.read()
+        for index in reports.indices {
+            let poll = state.workspaces[reports[index].name]?.poll
+            reports[index].poll = poll?.rendered(daemonRunning: daemon.running)
+        }
+
+        var header = [DaemonStatus.statusLine() + "\n" + daemon.rendered()]
         if let repoPath = rateLimitedRepoPath(reports, config: config) {
             // One line, rather than one per GitHub call in every workspace.
             for index in reports.indices {
@@ -413,6 +422,43 @@ enum StatusCommand {
         let summary = StatusSummary(reports: reports).rendered()
         print((header + reports.map { $0.rendered() } + [summary]).joined(separator: "\n\n"))
         return 0
+    }
+}
+
+/// What `superlinear status` says about the daemon: from the file it writes
+/// when it starts, or, for a daemon from before it wrote one, from its lock.
+struct DaemonStatus {
+    var info: DaemonInfo?
+    /// The pid in the lock file, for a daemon that wrote no info file.
+    var lockPid: Int32?
+    var running: Bool
+    var binaryReplaced = false
+
+    static func read(home: String = Paths.home) -> DaemonStatus {
+        if let info = DaemonInfo.read(from: DaemonInfo.fileURL(home: home)) {
+            let running = info.isRunning
+            let current = BinaryWatcher.identity(of: info.executablePath)
+            let replaced = running && info.binaryIdentity != nil && current != nil && current != info.binaryIdentity
+            return DaemonStatus(info: info, running: running, binaryReplaced: replaced)
+        }
+        let text = (try? String(contentsOfFile: "\(home)/.local/share/superlinear/daemon.lock", encoding: .utf8)) ?? ""
+        let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        let running = pid.map { kill($0, 0) == 0 || errno == EPERM } ?? false
+        return DaemonStatus(lockPid: pid, running: running)
+    }
+
+    func rendered(now: Date = Date()) -> String {
+        if let info { return info.rendered(running: running, binaryReplaced: binaryReplaced, now: now) }
+        if running, let lockPid {
+            return "Daemon: pid \(lockPid), started before daemons recorded their version; restart it to see more"
+        }
+        return "Daemon: not running"
+    }
+
+    /// The version and binary of this `superlinear status`.
+    static func statusLine() -> String {
+        let path = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        return "superlinear \(Superlinear.fullVersion) at \(path)"
     }
 }
 

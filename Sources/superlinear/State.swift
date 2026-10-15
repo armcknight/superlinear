@@ -77,6 +77,9 @@ struct WorkspaceState: Codable, Sendable {
     /// Pull request URLs already linked to each issue in Linear, keyed by
     /// issue ID, so each is linked once.
     var linkedPullRequests: [String: [String]]
+    /// The last poll, and when the next is due. Absent in state files written
+    /// before polls were recorded, and until the first poll ends.
+    var poll: PollRecord?
 
     init() {
         processedIssueIds = []
@@ -96,6 +99,30 @@ struct WorkspaceState: Codable, Sendable {
         inFlight = try container.decodeIfPresent([String: AgentRun].self, forKey: .inFlight) ?? [:]
         pendingMerges = try container.decodeIfPresent([String: PendingMerge].self, forKey: .pendingMerges) ?? [:]
         linkedPullRequests = try container.decodeIfPresent([String: [String]].self, forKey: .linkedPullRequests) ?? [:]
+        poll = try container.decodeIfPresent(PollRecord.self, forKey: .poll)
+    }
+}
+
+/// When a workspace's last poll ended, how, and when the next is due.
+struct PollRecord: Codable, Sendable, Equatable {
+    var endedAt: Date
+    var nextAt: Date
+    /// Why the poll failed, if it did.
+    var error: String?
+
+    /// The line `superlinear status` prints about it. A poll that should have
+    /// run while the daemon is up is overdue: polls are taking long.
+    func rendered(daemonRunning: Bool, now: Date = Date()) -> String {
+        var parts = ["last poll ended \(StatusTime.rendered(endedAt, now: now))"]
+        if let error { parts[0] += ", failed: \(error)" }
+        if !daemonRunning {
+            parts.append("no next poll: the daemon is not running")
+        } else if nextAt < now.addingTimeInterval(-60) {
+            parts.append("next poll overdue since \(StatusTime.rendered(nextAt, now: now)); one is still running")
+        } else {
+            parts.append("next poll \(StatusTime.rendered(nextAt, now: now))")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -144,6 +171,10 @@ struct State: Codable, Sendable {
 
     mutating func markProcessed(_ issueId: String, workspace: String) {
         workspaces[workspace, default: WorkspaceState()].processedIssueIds.insert(issueId)
+    }
+
+    mutating func recordPoll(_ poll: PollRecord, workspace: String) {
+        workspaces[workspace, default: WorkspaceState()].poll = poll
     }
 
     mutating func updateLastPoll(_ date: Date, workspace: String) {

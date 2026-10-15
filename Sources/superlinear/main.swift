@@ -129,6 +129,11 @@ do {
         exit(1)
     }
 
+    do {
+        try DaemonInfo.current().write()
+    } catch {
+        print("[superlinear] Could not write \(DaemonInfo.fileURL().path): \(error)")
+    }
     let daemon = Daemon(config: config)
     daemonTask = Task {
         try await daemon.run()

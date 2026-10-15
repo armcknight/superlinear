@@ -53,11 +53,22 @@ actor Daemon {
     private func runWorkspaceLoop(_ workspace: WorkspaceConfig) async {
         let processor = WorkspaceProcessor(workspace: workspace, daemon: self)
         while !Task.isCancelled {
+            var failure: String?
             do {
                 try await processor.poll()
             } catch {
                 log("Poll error: \(error)", workspace: workspace.name)
+                failure = "\(error)"
             }
+            let ended = Date()
+            state.recordPoll(
+                PollRecord(
+                    endedAt: ended, nextAt: ended.addingTimeInterval(TimeInterval(workspace.pollIntervalSeconds)),
+                    error: failure
+                ),
+                workspace: workspace.name
+            )
+            save()
             // Retries queued runs whose launch failed, once the pause is over.
             fillSlots()
             do {

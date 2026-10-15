@@ -1,6 +1,7 @@
 import Foundation
 
-/// Keeps a Homebrew-installed daemon in step with the cask, without cask hooks.
+/// Keeps the daemon in step with the binary launchd starts it from: a
+/// Homebrew cask's, without cask hooks, or a local build's.
 ///
 /// Homebrew 7 deprecates cask flight blocks and sandboxes their replacements,
 /// which cannot reach launchd or ~/Library/LaunchAgents. So the daemon watches
@@ -13,8 +14,14 @@ import Foundation
 ///   own agent rather than leave launchd retrying a missing binary. The grace
 ///   period covers the moment mid-upgrade when the link does not exist.
 ///
-/// Only a daemon that launchd started from a Homebrew binary watches. A local
-/// build is reloaded by `make load`.
+/// A local build is replaced in place by `make install`, which moves a new
+/// file over the old: the daemon exits when the file at its path is no longer
+/// the one it started from, and launchd starts the new one. A local build that
+/// goes missing is left alone.
+///
+/// Only a daemon that launchd started as the agent watches. Switching between
+/// a Homebrew binary and a local build takes `superlinear install` from the
+/// other one, as the agent names a single binary.
 struct BinaryWatcher {
     static let interval: TimeInterval = 60
     static let uninstallGrace: TimeInterval = 5 * 60
@@ -25,26 +32,39 @@ struct BinaryWatcher {
         case removeAgent
     }
 
-    /// What to do, given the binary the daemon started as, what the link it was
-    /// started through resolves to now (nil when it is gone), and since when it
-    /// has been gone.
-    static func action(started: String, current: String?, missingSince: Date?, now: Date) -> Action {
+    /// What to do, given the identity of the binary the daemon started as, the
+    /// identity of what its path holds now (nil when it is gone), and since
+    /// when it has been gone. Only a Homebrew binary's absence removes the
+    /// agent.
+    static func action(
+        started: String, current: String?, missingSince: Date?, now: Date, homebrew: Bool = true
+    ) -> Action {
         if let current { return current == started ? .none : .restart }
-        guard let missingSince else { return .none }
+        guard homebrew, let missingSince else { return .none }
         return now.timeIntervalSince(missingSince) >= uninstallGrace ? .removeAgent : .none
     }
 
-    /// The link to watch, or nil when this daemon should not watch: one not
-    /// started by launchd as the agent, or not from a Homebrew binary.
+    /// The path to watch, or nil when this daemon should not watch: one not
+    /// started by launchd as the agent.
     static func watchedPath(
         arguments: [String] = CommandLine.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String? {
         guard environment["XPC_SERVICE_NAME"] == LaunchAgent.label,
-              let invoked = arguments.first, invoked.hasPrefix("/"),
-              LaunchAgent.isHomebrewBinary(LaunchAgent.resolvingSymlinks(invoked))
+              let invoked = arguments.first, invoked.hasPrefix("/")
         else { return nil }
         return invoked
+    }
+
+    /// What `path` resolves to, and the file there, or nil when it is gone. An
+    /// upgrade repoints a Homebrew link; `make install` moves a new file, with
+    /// a new inode, to the same path.
+    static func identity(of path: String) -> String? {
+        let resolved = LaunchAgent.resolvingSymlinks(path)
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: resolved),
+              let inode = attributes[.systemFileNumber] as? NSNumber
+        else { return nil }
+        return "\(resolved)#\(inode)"
     }
 
     private let path: String
@@ -58,22 +78,26 @@ struct BinaryWatcher {
 
     private init(path: String) {
         self.path = path
-        self.started = LaunchAgent.resolvingSymlinks(path)
+        self.started = Self.identity(of: path) ?? LaunchAgent.resolvingSymlinks(path)
         self.timer = DispatchSource.makeTimerSource(queue: .main)
 
         var missingSince: Date?
         let started = started
+        let homebrew = LaunchAgent.isHomebrewBinary(LaunchAgent.resolvingSymlinks(path))
         timer.setEventHandler {
-            let current = FileManager.default.fileExists(atPath: path)
-                ? LaunchAgent.resolvingSymlinks(path) : nil
+            let current = Self.identity(of: path)
             if current == nil, missingSince == nil { missingSince = Date() }
             if current != nil { missingSince = nil }
 
-            switch Self.action(started: started, current: current, missingSince: missingSince, now: Date()) {
+            switch Self.action(
+                started: started, current: current, missingSince: missingSince, now: Date(), homebrew: homebrew
+            ) {
             case .none:
                 break
             case .restart:
-                print("[superlinear] \(path) now points at \(current ?? "?"); exiting so launchd restarts the new version")
+                let resolved = LaunchAgent.resolvingSymlinks(path)
+                let what = homebrew ? "now points at \(resolved)" : "was replaced"
+                print("[superlinear] \(path) \(what); exiting so launchd restarts the new version")
                 exit(0)
             case .removeAgent:
                 Self.removeAgent(path: path)
@@ -81,7 +105,7 @@ struct BinaryWatcher {
         }
         timer.schedule(deadline: .now() + Self.interval, repeating: Self.interval)
         timer.resume()
-        print("[superlinear] Watching \(path) for Homebrew upgrades and uninstalls")
+        print("[superlinear] Watching \(path) for \(homebrew ? "Homebrew upgrades and uninstalls" : "a new build")")
     }
 
     private static func removeAgent(path: String) {
