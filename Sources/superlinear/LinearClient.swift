@@ -196,7 +196,7 @@ struct LinearClient: Sendable {
     }
 
     /// Runs an `issues` query, following its pages to the end.
-    private func fetchAll<Node: Decodable>(_ query: LinearQuery, variables: [String: Any]) async throws -> [Node] {
+    func fetchAll<Node: Decodable>(_ query: LinearQuery, variables: [String: Any]) async throws -> [Node] {
         var allNodes: [Node] = []
         var cursor: String? = nil
 

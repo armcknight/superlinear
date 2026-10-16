@@ -2,7 +2,7 @@ import Foundation
 
 /// What an agent's Claude sessions used, read from their transcripts: the
 /// tokens Claude reports for each message, and the time the agent was active.
-struct AgentUsage: Sendable, Equatable {
+struct AgentUsage: Codable, Sendable, Equatable {
     /// Input tokens, cache writes included.
     var inputTokens = 0
     var outputTokens = 0

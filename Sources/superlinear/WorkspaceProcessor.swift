@@ -36,6 +36,7 @@ struct WorkspaceProcessor: Sendable {
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
         await daemon.expireProposals(workspace: workspace)
+        await daemon.planIfDue(workspace)
 
         // Each step checks first, as one hitting the rate limit pauses the rest.
         let listing = PullRequestListing(repoPath: NSString(string: workspace.repoPath).expandingTildeInPath)

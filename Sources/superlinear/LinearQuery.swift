@@ -41,6 +41,13 @@ enum LinearQuery: CaseIterable, Sendable {
     case changeProjectSpec
     case changeDocumentSpec
     case postProjectUpdate
+    /// Open issues with what the planning job looks at, in any team.
+    case planningIssues
+    /// Open issues with what the planning job looks at, in some teams.
+    case planningIssuesInTeams
+    /// The projects with some IDs, with their descriptions and milestones.
+    case planningProjects
+    case teams
 
     var text: String {
         switch self {
@@ -247,8 +254,63 @@ enum LinearQuery: CaseIterable, Sendable {
               projectUpdateCreate(input: { projectId: $projectId, body: $body }) { success projectUpdate { id url } }
             }
             """
+        case .planningIssues: """
+            query PlanningIssues($cursor: String) {
+              issues(filter: { state: { type: { nin: ["completed", "canceled"] } } }, first: 25, after: $cursor) {
+            \(Self.planningIssueFields)
+              }
+            }
+            """
+        case .planningIssuesInTeams: """
+            query PlanningIssues($teamIds: [ID!], $cursor: String) {
+              issues(
+                filter: { state: { type: { nin: ["completed", "canceled"] } }, team: { id: { in: $teamIds } } }
+                first: 25
+                after: $cursor
+              ) {
+            \(Self.planningIssueFields)
+              }
+            }
+            """
+        case .planningProjects: """
+            query PlanningProjects($ids: [ID!]) {
+              projects(filter: { id: { in: $ids } }, first: 50) {
+                nodes {
+                  id
+                  name
+                  content
+                  updatedAt
+                  projectMilestones(first: 25) { nodes { name targetDate } }
+                }
+              }
+            }
+            """
+        case .teams: """
+            query Teams {
+              teams(first: 100) { nodes { id key name } }
+            }
+            """
         }
     }
+
+    private static let planningIssueFields = """
+        nodes {
+          id
+          identifier
+          title
+          description
+          priority
+          updatedAt
+          state { name type }
+          team { id key }
+          project { id name }
+          projectMilestone { name }
+          labels(first: 20) { nodes { name } }
+          relations(first: 20) { nodes { type relatedIssue { identifier } } }
+          inverseRelations(first: 20) { nodes { type issue { identifier } } }
+        }
+        pageInfo { hasNextPage endCursor }
+    """
 
     /// What it takes to decide whether, and in what order, an agent starts
     /// on an issue. Pages are smaller than elsewhere, as the nested labels and
@@ -422,6 +484,103 @@ extension LinearQuery {
 
     struct DocumentSpecData: Decodable {
         let document: SpecNode
+    }
+
+    /// An open issue as the planning query answers with it.
+    struct PlanningIssueNode: Decodable {
+        let id: LinearIssue.ID
+        let identifier: LinearIssue.Identifier
+        let title: String
+        let description: String?
+        let priority: Double?
+        let updatedAt: Date
+        let state: State
+        let team: Team
+        let project: Project?
+        let projectMilestone: Milestone?
+        let labels: Nodes<Label>
+        let relations: Nodes<Relation>
+        let inverseRelations: Nodes<InverseRelation>
+
+        struct State: Decodable {
+            let name: String
+            let type: LinearStateType
+        }
+
+        struct Team: Decodable {
+            let id: LinearTeam.ID
+            let key: String
+        }
+
+        struct Project: Decodable {
+            let id: LinearProject.ID
+            let name: String
+        }
+
+        struct Milestone: Decodable {
+            let name: String
+        }
+
+        struct Label: Decodable {
+            let name: String
+        }
+
+        struct Relation: Decodable {
+            let type: String
+            let relatedIssue: Related
+        }
+
+        struct InverseRelation: Decodable {
+            let type: String
+            let issue: Related
+        }
+
+        struct Related: Decodable {
+            let identifier: LinearIssue.Identifier
+        }
+
+        var planningIssue: PlanningIssue {
+            PlanningIssue(
+                id: id, identifier: identifier, title: title, description: description ?? "",
+                stateName: state.name, stateType: state.type, priority: priority, teamId: team.id, teamKey: team.key,
+                projectId: project?.id, projectName: project?.name, milestone: projectMilestone?.name,
+                labels: labels.nodes.map(\.name),
+                relations: relations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.relatedIssue.identifier, outgoing: true) }
+                    + inverseRelations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.issue.identifier, outgoing: false) },
+                updatedAt: updatedAt
+            )
+        }
+    }
+
+    struct Nodes<Node: Decodable>: Decodable {
+        let nodes: [Node]
+    }
+
+    struct PlanningProjectsData: Decodable {
+        let projects: Nodes<Project>
+
+        struct Project: Decodable {
+            let id: LinearProject.ID
+            let name: String
+            let content: String?
+            let updatedAt: Date
+            let projectMilestones: Nodes<Milestone>
+        }
+
+        struct Milestone: Decodable {
+            let name: String
+            let targetDate: String?
+        }
+    }
+
+    struct TeamsData: Decodable {
+        let teams: Nodes<Team>
+
+        struct Team: Decodable {
+            let id: LinearTeam.ID
+            let key: String
+            let name: String
+        }
     }
 
     /// The part of a mutation's answer that says whether it worked.

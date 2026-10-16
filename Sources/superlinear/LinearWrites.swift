@@ -119,3 +119,37 @@ extension LinearClient: StandupWriting {
         try await completeIssue(id: id.rawValue)
     }
 }
+
+/// The reads the planning job makes in Linear.
+extension LinearClient: PlanningReading {
+    func planningIssues(teamIds: [String]) async throws -> [PlanningIssue] {
+        let nodes: [LinearQuery.PlanningIssueNode] = teamIds.isEmpty
+            ? try await fetchAll(.planningIssues, variables: [:])
+            : try await fetchAll(.planningIssuesInTeams, variables: ["teamIds": teamIds])
+        return nodes.map(\.planningIssue)
+    }
+
+    func planningProjects(ids: [LinearProject.ID]) async throws -> [PlanningProject] {
+        var projects: [PlanningProject] = []
+        for start in stride(from: 0, to: ids.count, by: 50) {
+            let batch = ids[start..<min(start + 50, ids.count)].map(\.rawValue)
+            let nodes = try await execute(
+                .planningProjects, variables: ["ids": batch], as: LinearQuery.PlanningProjectsData.self
+            ).projects.nodes
+            projects += nodes.map {
+                PlanningProject(
+                    id: $0.id, name: $0.name, content: $0.content ?? "", updatedAt: $0.updatedAt,
+                    milestones: $0.projectMilestones.nodes.map { .init(name: $0.name, targetDate: $0.targetDate) })
+            }
+        }
+        return projects
+    }
+
+    func planningTeams(ids: [String]) async throws -> [PlanningTeam] {
+        let teams = try await execute(.teams, variables: [:], as: LinearQuery.TeamsData.self).teams.nodes
+        let wanted = Set(ids)
+        return teams
+            .filter { wanted.isEmpty || wanted.contains($0.id.rawValue) }
+            .map { PlanningTeam(id: $0.id, key: $0.key, name: $0.name) }
+    }
+}

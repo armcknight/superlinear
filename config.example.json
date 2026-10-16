@@ -9,7 +9,8 @@
       "pollIntervalSeconds": 60,
       "selection": "new",
       "readyStates": ["unstarted"],
-      "humanLabels": ["Needs human", "Spike"]
+      "humanLabels": ["Needs human", "Spike"],
+      "planning": { "enabled": false }
     }
   ]
 }

@@ -172,7 +172,7 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
 | `pollIntervalSeconds` | no | Seconds between polls. Defaults to `60`. |
 | `autonomy` | no | The trust level of each kind of proposal: a map from kind to `"auto"`, `"standup"` or `"never"`. Kinds left out keep their defaults. See [Proposals and trust levels](#proposals-and-trust-levels). |
 | `proposalExpiryDays` | no | Days after which a pending proposal expires, counted from the first standup that showed it. Defaults to `7`. |
-| `planning` | no | Planning settings. `planning.specDocumentURL` is the URL of the Linear document holding the project's spec; decisions entered at [standup](#standup) are added to it. |
+| `planning` | no | Planning settings. `planning.enabled` turns on the [daily planning job](#daily-planning); it defaults to `false`. `planning.specDocumentURL` is the URL of the Linear document holding the project's spec; the planning job reads it, and decisions entered at [standup](#standup) are added to it. |
 | `selection` | no | `"new"` to start issues created since the last poll, or `"ready"` to start every issue in `readyStates`. See [Selection](#selection). Defaults to `"new"`. |
 | `readyStates` | no | Linear state types that mean "build this" in `ready` mode: any of `triage`, `backlog`, `unstarted`, `started`, `completed` and `canceled`, usually the first three. Any other value, such as a state name like `"Todo"`, is an error. Defaults to `["unstarted"]`, which is Todo. |
 | `humanLabels` | no | Names of labels that keep an issue for a person: no agent starts on it. Matched in any case. Defaults to `["Needs human", "Spike"]`. |
@@ -185,7 +185,7 @@ Edits take effect on their own. The daemon checks the file every five seconds; w
 
 ## Proposals and trust levels
 
-superlinear can propose changes to the Linear workspace: new issues, edits, closures, relations, promotions from Backlog to Todo, spec changes, and project updates. Each proposal is kept in the state file with its kind, its target (an issue, a project, a document, or for a new issue its team), the change itself (for an edit, the old and the new text, so a diff can be shown), the reason, its source (a pull request, a commit range, or an agent session), when it was made, and its status: `pending`, `applied`, `rejected` or `expired`, with the reason for a rejection. Nothing makes proposals yet; the daily planning job and agents' follow-ups will.
+superlinear can propose changes to the Linear workspace: new issues, edits, closures, relations, promotions from Backlog to Todo, spec changes, and project updates. Each proposal is kept in the state file with its kind, its target (an issue, a project, a document, or for a new issue its team), the change itself (for an edit, the old and the new text, so a diff can be shown), the reason, its source (a pull request, a commit range, or an agent session), when it was made, and its status: `pending`, `applied`, `rejected` or `expired`, with the reason for a rejection. The [daily planning job](#daily-planning) makes them; agents' follow-ups will too.
 
 The workspace's `autonomy` config sets what happens to each kind:
 
@@ -245,7 +245,38 @@ An interactive review in the terminal, run when you want: there is no schedule. 
 
 `--print` prints sections 1, 3, 4 and 5 without prompts and records nothing, for a quick look or a script. Without `--print`, the standup needs a terminal.
 
-The standup does not yet offer to run the daily planning job first, which is still to come, nor show budgets or late milestones.
+Before the first workspace, for each workspace with planning on whose last [planning job](#daily-planning) started over 12 hours ago, or that has had none, the standup says when it ran and how many tokens it used, and offers to run one first, so that its proposals come up in the same standup. It does not yet show budgets or late milestones.
+
+## Daily planning
+
+```sh
+superlinear plan [--workspace <name>]
+```
+
+Once a day, for each workspace with `planning.enabled`, superlinear reviews what was merged and how the open issues stand, and stores what it finds as [proposals](#proposals-and-trust-levels). It never writes to Linear itself; each proposal's trust level decides whether it is applied at once or waits for a standup.
+
+There is no time to configure: the job starts on the first poll after the last one, the daemon's or `superlinear plan`'s, is 24 hours old, and on the first poll of a workspace that has had none. `superlinear plan` runs it at once, in the foreground, for the workspace named, or for every workspace with planning on; the [standup](#standup) offers it when the last run is over 12 hours old.
+
+A job runs one headless Claude session, `claude -p`, in the worktree that has the repository's default branch checked out, which is that of `origin/HEAD`, or `main` or `master`. superlinear first fetches the branch and fast-forwards that worktree to it when the worktree is clean. The session may read the code and run `git log`, `git show` and `git diff`, and write one file. Its prompt gives:
+
+- the commits on the default branch since the head the last successful job looked at, or, on the first job, those of the last 24 hours, at most 100, each with its pull request, from `gh pr list --state merged`, and the Linear issues its message, branch or title names;
+- the open issues of the watched teams, with their state, priority, project, milestone, labels, relations, description and managed block, and each project's description and milestones;
+- the spec document, when `planning.specDocumentURL` is set.
+
+The session writes a JSON file of proposals, not to Linear. It looks for:
+
+- issues that the merged changes made obsolete or already did: `closeIssue`, with the commit;
+- issue descriptions whose assumptions the changes broke: `editIssue` of the managed block;
+- missing relations between issues, and duplicates: `addRelation`;
+- gaps: work that the spec or a project's exit criteria need but that no issue covers, and issues you created that have no acceptance criteria or spec references: `createIssue`, `editIssue`;
+- places where the code and the spec no longer agree: `changeSpec`, or `createIssue` to fix the code;
+- backlog issues that are now unblocked and should be promoted to Todo: `promoteIssue`.
+
+When the session ends, superlinear checks the file against what the job was given. A proposal is refused when it has no reason, names an issue that is not open in the watched teams or is `superlinear: hands off`, promotes an issue not in the backlog, adds a relation that exists, or edits text into what it is. Each proposal's source is the pull request or commit it names, or else the job's commit range, or its session when there were no commits. The rest go through the proposal store's rules, so one pending or rejected before is not proposed again, and `auto` kinds are applied. The job's time, head, token use, and the numbers proposed and skipped are kept in the state file, and its refusals in the daemon log.
+
+The job has no token budget of its own. Like an agent, it outlives a daemon restart: a later daemon waits for it, takes in its proposals if it ended meanwhile, or resumes its Claude session if it was interrupted, up to three times. A session that the Claude usage limit stops ends as a failed job for now; pausing and resuming it as agents will be is [SPL-26](https://linear.app/superlinear-linear/issue/SPL-26). Jobs do not count toward `maxConcurrentAgents`.
+
+`superlinear plan` stores its proposals and runs in `~/.local/share/superlinear/planning.json`, apart from the state file that only the daemon writes; the daemon, `superlinear proposals` and the standup take them in from there. It refuses to start while the daemon or another `plan` runs a job for the workspace.
 
 ## Releasing
 
@@ -283,13 +314,15 @@ Signing is on because launchd starts this binary, not your shell. An unsigned CL
 | Path | Contents |
 | --- | --- |
 | `~/.config/superlinear/config.json` | Configuration, including API keys. |
-| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, blocked and human-labeled issues, proposals, and 30 days of what the daemon did, for the standup, per workspace. |
+| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, blocked and human-labeled issues, proposals, 30 days of what the daemon did, for the standup, and the last 30 planning jobs, per workspace. |
 | `~/.local/share/superlinear/standup.json` | Per workspace, the time of the last standup, and what standups decided: proposals shown and decided, decisions, held issues and the queue's order. |
+| `~/.local/share/superlinear/planning.json` | Per workspace, the planning jobs `superlinear plan` ran and the proposals they stored, for the daemon to take in. |
 | `~/.local/share/superlinear/audit/<workspace>.jsonl` | Each change superlinear applied in Linear, with the proposal and Linear's response. |
 | `~/.local/share/superlinear/daemon.lock` | Held by the running daemon, so a second one exits. |
-| `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. |
+| `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. A planning job also keeps what it was given and the proposals file its session writes, until it is taken in. |
 | `~/.local/share/superlinear/daemon.log` | Daemon output. |
 | `~/.local/share/superlinear/logs/<ISSUE-ID>.log` | Agent output for one issue. A resumed run appends to it. |
+| `~/.local/share/superlinear/logs/planning-<workspace>.log` | Output of the workspace's planning sessions, appended across jobs. |
 | `~/.local/share/superlinear/logs/<ISSUE-ID>.work.log` | Output of `work` itself for one issue, such as worktree setup, teardown after the merge, and errors. |
 
 Per-issue logs are written only when the agent exits. `claude -p` buffers its output, so following the file during a run shows nothing.
@@ -303,6 +336,7 @@ superlinear uninstall
 superlinear status [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear standup [--print] [--workspace <name>] [--config <path>]
+superlinear plan [--workspace <name>] [--config <path>]
 ```
 
 With no subcommand it runs the daemon in the foreground, which is how to test a configuration without registering a launch agent. `--config` overrides the default path, `--version` prints the version, and `--help` prints this.
