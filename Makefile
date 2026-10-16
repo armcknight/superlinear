@@ -98,13 +98,13 @@ config:
 status:
 	@launchctl list | grep $(LABEL) || echo "Not running"
 
-## reset: clear state and logs so every issue is reprocessed
+## reset: clear state and logs, as for a new workspace
 reset:
 	rm -f $(STATE)
 	rm -f $(LOGS_DIR)/*.log
 	rm -rf $(RUNS_DIR)
 	-tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^superlinear_' | xargs -I{} tmux kill-session -t {}
-	@echo "State, logs, and tmux sessions cleared. Daemon will reprocess all issues on next poll."
+	@echo "State, logs, and tmux sessions cleared. The next poll starts over as for a new workspace."
 
 ## patch: bump the patch version (x.y.Z) and commit (also: minor, major)
 patch:

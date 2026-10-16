@@ -5,24 +5,26 @@ struct WorkspaceProcessor: Sendable {
     let daemon: Daemon
 
     func poll() async throws {
-        let lastPoll = await daemon.lastPollTimestamp(workspace: workspace.name)
         let client = LinearClient(apiKey: workspace.apiKey)
-
-        log("Polling since \(ISO8601DateFormatter().string(from: lastPoll))")
-
-        let issues = try await client.fetchNewIssues(since: lastPoll, teamIds: workspace.teamIds)
+        // Before the query, so an issue created while it runs is not missed.
         let pollTime = Date()
 
-        let newIssues = await daemon.filterUnprocessed(issues, workspace: workspace.name)
+        let candidates = try await fetchCandidates(client: client)
+        let plan = IssueSelection.plan(
+            candidates, workspace: workspace, handled: await daemon.handledIssueIds(workspace: workspace.name)
+        )
+        await daemon.recordWaiting(plan, workspace: workspace.name)
 
-        if newIssues.isEmpty {
-            log("No new issues")
+        if plan.start.isEmpty {
+            log("No issues to start")
         } else {
-            log("Found \(newIssues.count) new issue(s)")
+            log("Found \(plan.start.count) issue(s) to start")
         }
 
-        for issue in newIssues {
-            await daemon.enqueueAgent(for: issue, workspace: workspace)
+        for (index, issue) in plan.start.enumerated() {
+            // Apart, so they start in the plan's order.
+            let queuedAt = pollTime.addingTimeInterval(Double(index) / 1000)
+            await daemon.enqueueAgent(for: issue, workspace: workspace, queuedAt: queuedAt)
         }
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
@@ -33,6 +35,45 @@ struct WorkspaceProcessor: Sendable {
         if await daemon.gitHubAvailable() { await linkRunningAgentsPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await checkPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await sweepStartedIssues(client: client, listing: listing) }
+    }
+
+    /// The issues an agent might start on this poll: in `new` mode, those
+    /// created since the last poll, and the waiting ones checked again; in
+    /// `ready` mode, every open issue in a ready state, which includes every
+    /// waiting issue still worth waiting for.
+    private func fetchCandidates(client: LinearClient) async throws -> [LinearIssue] {
+        switch workspace.selection {
+        case .ready:
+            log("Polling issues in \(workspace.readyStates.map(\.rawValue).joined(separator: ", "))")
+            return try await client.fetchReadyIssues(states: workspace.readyStates, teamIds: workspace.teamIds)
+        case .new:
+            let lastPoll = await daemon.lastPollTimestamp(workspace: workspace.name)
+            if lastPoll == .distantPast {
+                log("First poll: only issues created from now on start agents")
+            } else {
+                log("Polling since \(ISO8601DateFormatter().string(from: lastPoll))")
+            }
+            return try await Self.newCandidates(
+                lastPoll: lastPoll,
+                waiting: await daemon.waitingIssueIds(workspace: workspace.name),
+                created: { try await client.fetchNewIssues(since: $0, teamIds: workspace.teamIds) },
+                byIds: { try await client.fetchCandidates(ids: $0) }
+            )
+        }
+    }
+
+    /// The `new` mode candidates: issues created since `lastPoll`, then the
+    /// `waiting` ones not among them. A workspace's first poll, with no last
+    /// poll, fetches no created issues rather than every open one, so only
+    /// issues created after it start.
+    static func newCandidates(
+        lastPoll: Date, waiting: Set<LinearIssue.ID>,
+        created: (Date) async throws -> [LinearIssue], byIds: ([LinearIssue.ID]) async throws -> [LinearIssue]
+    ) async throws -> [LinearIssue] {
+        let fresh = lastPoll == .distantPast ? [] : try await created(lastPoll)
+        let rest = waiting.subtracting(fresh.map(\.id))
+        guard !rest.isEmpty else { return fresh }
+        return try await fresh + byIds(rest.sorted())
     }
 
     /// Pauses GitHub work when `error` is a rate limit, and says whether it was.

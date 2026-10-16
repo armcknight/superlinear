@@ -46,6 +46,10 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
     case interrupted
     /// Waiting for a free agent slot.
     case queued
+    /// Waiting for the issues blocking it to be completed or canceled.
+    case blocked
+    /// A human label keeps agents off it.
+    case needsHuman
     /// The agent finished and its pull request is open.
     case openPullRequest
     /// The pull request is merged, but the Linear issue is not done.
@@ -67,6 +71,8 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
         case .resolvingConflicts: "Resolving conflicts"
         case .interrupted: "Interrupted"
         case .queued: "Queued"
+        case .blocked: "Blocked"
+        case .needsHuman: "Needs human"
         case .openPullRequest: "Open pull requests"
         case .merged: "Merged, issue not done"
         case .noPullRequest: "Finished without a pull request"
@@ -160,7 +166,20 @@ struct WorkspaceReport: Sendable {
                 pullRequest: pullRequest
             )
         }
-        return entries.sorted { a, b in
+        // As of the daemon's last poll, so they need neither Linear nor GitHub.
+        let blocked = state.blocked.values.map { waiting in
+            TaskEntry(
+                identifier: waiting.identifier, title: waiting.title, category: .blocked,
+                detail: "blocked by " + waiting.blockers.joined(separator: ", ")
+            )
+        }
+        let needsHuman = state.needsHuman.values.map { waiting in
+            TaskEntry(
+                identifier: waiting.identifier, title: waiting.title, category: .needsHuman,
+                detail: "labeled " + waiting.labels.joined(separator: ", ")
+            )
+        }
+        return (entries + blocked + needsHuman).sorted { a, b in
             a.category == b.category
                 ? a.identifier.localizedStandardCompare(b.identifier) == .orderedAscending
                 : a.category < b.category
@@ -188,6 +207,9 @@ struct WorkspaceReport: Sendable {
         case .queued:
             guard let run, run.resumes > 0 else { return nil }
             return "to resume, attempt \(run.resumes + 1)"
+        case .blocked, .needsHuman:
+            // Waiting issues have entries of their own.
+            return nil
         case .openPullRequest:
             guard let pullRequest else { return nil }
             return pullRequest.isDraft == true ? "\(pullRequest.url) (draft)" : pullRequest.url

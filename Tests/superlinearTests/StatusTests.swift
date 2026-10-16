@@ -241,4 +241,22 @@ struct StatusTests {
         #expect(WorkspaceReport(name: "w", entries: [], warnings: []).rendered() == "w\n  No tasks")
         #expect(WorkspaceReport(name: "w", entries: [], warnings: ["no network"]).rendered() == "w\n  warning: no network")
     }
+
+    @Test("Blocked and human-labeled issues are listed from the state file, with their blockers and labels")
+    func waitingIssues() {
+        var workspaceState = state(processed: [])
+        workspaceState.blocked = ["id-5": WaitingIssue(identifier: "SL-5", title: "Five", blockers: ["SL-3", "SL-4"])]
+        workspaceState.needsHuman = ["id-6": WaitingIssue(identifier: "SL-6", title: "Six", labels: ["Spike"])]
+        let entries = WorkspaceReport.entries(state: workspaceState, issues: [], pullRequests: nil, runner: runner)
+        #expect(entries.map(\.category) == [.blocked, .needsHuman])
+        #expect(WorkspaceReport(name: "w", entries: entries, warnings: []).rendered() == """
+        w
+          Blocked
+            SL-5  Five
+                  blocked by SL-3, SL-4
+          Needs human
+            SL-6  Six
+                  labeled Spike
+        """)
+    }
 }

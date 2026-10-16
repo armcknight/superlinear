@@ -84,16 +84,17 @@ actor Daemon {
 
     /// Queues an agent for a new issue and starts it when a slot is free. The
     /// issue counts as processed from the moment it is queued, so no later poll
-    /// queues it twice, and the poll does not wait for its agent.
-    func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig) {
+    /// queues it twice, and the poll does not wait for its agent. Issues queued
+    /// at once start in the order of their `queuedAt`.
+    func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig, queuedAt: Date = Date()) {
         let run = AgentRun(
-            issueId: issue.id,
+            issueId: issue.id.rawValue,
             identifier: issue.identifier,
             branchName: issue.branchName,
             sessionId: UUID().uuidString.lowercased(),
-            queuedAt: Date()
+            queuedAt: queuedAt
         )
-        state.markProcessed(issue.id, workspace: workspace.name)
+        state.markProcessed(issue.id.rawValue, workspace: workspace.name)
         state.recordRun(run, workspace: workspace.name)
         log("Queued \(issue.identifier): \(issue.title)", workspace: workspace.name)
         save()
@@ -237,6 +238,9 @@ actor Daemon {
             processes[run.issueId] = process
             state.recordRun(launched, workspace: workspace.name)
             log(mode == .resume ? "Resuming \(run.identifier)" : "Starting \(run.identifier)", workspace: workspace.name)
+            if workspace.selection == .ready, run.review == nil, run.conflict == nil, mode == .start, run.resumes == 0 {
+                markStarted(run, workspace: workspace)
+            }
             if let review = run.review {
                 log("  Addressing the review on \(review.url)", workspace: workspace.name)
             }
@@ -271,6 +275,21 @@ actor Daemon {
             }
             save()
             return false
+        }
+    }
+
+    /// Moves the issue of a run just launched to its team's first started
+    /// state, so it leaves the ready states. The agent does not wait for it.
+    private func markStarted(_ run: AgentRun, workspace: WorkspaceConfig) {
+        let client = LinearClient(apiKey: workspace.apiKey)
+        Task.detached {
+            do {
+                if try await client.startIssue(id: run.issueId) {
+                    await self.log("  Moved \(run.identifier) to started in Linear", workspace: workspace.name)
+                }
+            } catch {
+                await self.log("  Could not move \(run.identifier) to started in Linear: \(error)", workspace: workspace.name)
+            }
         }
     }
 
@@ -336,8 +355,31 @@ actor Daemon {
         state.lastPollTimestamp(workspace: workspace)
     }
 
-    func filterUnprocessed(_ issues: [LinearIssue], workspace: String) -> [LinearIssue] {
-        issues.filter { !state.isProcessed($0.id, workspace: workspace) }
+    /// Issues the daemon has queued, run or watched, which no poll starts again.
+    func handledIssueIds(workspace: String) -> Set<LinearIssue.ID> {
+        state.handledIssueIds(workspace: workspace)
+    }
+
+    /// Issues waiting on blockers or a human, which each poll checks again.
+    func waitingIssueIds(workspace: String) -> Set<LinearIssue.ID> {
+        state.workspaces[workspace]?.waitingIssueIds ?? []
+    }
+
+    /// Records the issues the latest poll found waiting, logging those that
+    /// were not waiting, or not for the same reason, before.
+    func recordWaiting(_ plan: IssueSelectionPlan, workspace: String) {
+        let before = state.workspaces[workspace] ?? WorkspaceState()
+        for (id, issue) in plan.needsHuman.sorted(by: { $0.value.identifier < $1.value.identifier })
+        where before.needsHuman[id] == nil {
+            log("\(issue.identifier) needs a human (\(issue.labels.joined(separator: ", "))); "
+                + "no agent starts on it", workspace: workspace)
+        }
+        for (id, issue) in plan.blocked.sorted(by: { $0.value.identifier < $1.value.identifier })
+        where before.blocked[id]?.blockers != issue.blockers {
+            log("\(issue.identifier) waits for \(issue.blockers.joined(separator: ", "))", workspace: workspace)
+        }
+        state.recordWaiting(blocked: plan.blocked, needsHuman: plan.needsHuman, workspace: workspace)
+        save()
     }
 
     func pendingMerges(workspace: String) -> [PendingMerge] {

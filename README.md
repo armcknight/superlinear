@@ -12,9 +12,9 @@ This is a personal tool, published as a reference. It is opinionated about how w
 
 1. `launchd` starts the binary at login and restarts it if it exits.
 2. Each configured workspace polls on its own loop, concurrently.
-3. Each poll queries the Linear GraphQL API for issues created since the last poll, in the `backlog` or `unstarted` state, optionally filtered by team. Results are paginated 50 at a time.
-4. Issue IDs already recorded in the state file are discarded, so an issue is processed once.
-5. Each remaining issue is recorded as processed and queued. While fewer than `maxConcurrentAgents` agents run, the oldest queued issue starts. The poll does not wait for agents — the next one runs on schedule however long they take. It picks a Claude session ID, writes the prompt to a file, then runs, in the repository directory:
+3. Each poll asks the Linear GraphQL API for the issues an agent might start on, optionally filtered by team, 25 at a time. Which ones depends on the workspace's `selection` — see [Selection](#selection).
+4. Issues already recorded in the state file are discarded, so an issue is processed once. So are issues blocked by another open issue and issues with a human label, which wait in the state file and are checked again each poll.
+5. Each remaining issue is recorded as processed and queued, in the order the selection gives. While fewer than `maxConcurrentAgents` agents run, the issue queued longest ago starts. The poll does not wait for agents — the next one runs on schedule however long they take. It picks a Claude session ID, writes the prompt to a file, then runs, in the repository directory:
 
    ```
    work start --headless --prompt-file <prompt> --log-file <log> --session-id <uuid> <issue-branch-name>
@@ -26,6 +26,23 @@ This is a personal tool, published as a reference. It is opinionated about how w
    - **Merged:** the issue moves to its team's first completed state in Linear, unless it is already completed or canceled, and `work finish <branch>` removes the worktree and the local branch. If Linear cannot be updated, the next poll tries again.
    - **Open:** the next poll checks again — unless you have reviewed it, or it conflicts with its base branch. See [Reviews](#reviews) and [Conflicts](#conflicts).
    - **Closed without a merge**, or **no pull request:** the daemon logs it and stops watching. The worktree stays for you to inspect.
+
+### Selection
+
+Each workspace picks its issues in one of two modes, set by `selection`.
+
+- **`new`**, the default: issues created since the last poll, in the `backlog` or `unstarted` state, oldest first. Suits a workspace where filing an issue means "build this".
+- **`ready`**: every open issue whose state type is in `readyStates` — `unstarted`, which is Todo, by default — however old. They start urgent first and no priority last, then by project sort order, milestone sort order and issue sort order, as Linear orders them; an issue outside a project or milestone comes after those in one. When its agent starts, the issue moves to its team's first `started` state, such as In Progress. Suits a planned roadmap: issues wait in Backlog, and moving one to Todo is how you, or a later standup, say "build this". This costs one query per poll, which brings each issue's blockers along.
+
+In both modes:
+
+- **Blockers:** an issue that another issue blocks, through a Linear "blocks" relation, does not start while that issue is neither completed nor canceled. It waits in the state file as blocked, and starts on the first poll after its last blocker is closed.
+- **Human labels:** an issue with a label in `humanLabels` — "Needs human" or "Spike" by default, in any case — never starts an agent. Should the label come off, it starts like any other issue.
+- **Moving on:** a waiting issue moved out of the states an agent starts from, or archived, stops waiting.
+
+`superlinear status` lists waiting issues under "Blocked", with their open blockers, and "Needs human", with their human labels, as of the daemon's last poll. In `new` mode each poll fetches the waiting issues again, in one more query when there are any; in `ready` mode the ready query brings them.
+
+**First poll:** a workspace with no state — just added to the config, or after `make reset` — in `new` mode takes its first poll as the starting point, logs that once, and starts no issue created before it. Without that, its first poll would start an agent for every open issue in the workspace. In `ready` mode the first poll starts every ready issue, which is what Todo means there.
 
 ### Reviews
 
@@ -137,7 +154,10 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
       "apiKey": "lin_api_YOUR_KEY_HERE",
       "repoPath": "~/Code/my-repo",
       "teamIds": [],
-      "pollIntervalSeconds": 60
+      "pollIntervalSeconds": 60,
+      "selection": "ready",
+      "readyStates": ["unstarted"],
+      "humanLabels": ["Needs human", "Spike"]
     }
   ]
 }
@@ -152,6 +172,9 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
 | `pollIntervalSeconds` | no | Seconds between polls. Defaults to `60`. |
 | `autonomy` | no | The trust level of each kind of proposal: a map from kind to `"auto"`, `"standup"` or `"never"`. Kinds left out keep their defaults. See [Proposals and trust levels](#proposals-and-trust-levels). |
 | `proposalExpiryDays` | no | Days after which a pending proposal expires. Defaults to `7`. |
+| `selection` | no | `"new"` to start issues created since the last poll, or `"ready"` to start every issue in `readyStates`. See [Selection](#selection). Defaults to `"new"`. |
+| `readyStates` | no | Linear state types that mean "build this" in `ready` mode: any of `triage`, `backlog`, `unstarted`, `started`, `completed` and `canceled`, usually the first three. Any other value, such as a state name like `"Todo"`, is an error. Defaults to `["unstarted"]`, which is Todo. |
+| `humanLabels` | no | Names of labels that keep an issue for a person: no agent starts on it. Matched in any case. Defaults to `["Needs human", "Spike"]`. |
 
 `maxConcurrentAgents`, at the top level beside `workspaces`, limits how many agents run at once across all workspaces. It defaults to `3`. Further issues wait in a queue, kept in the state file, and start oldest first as running agents finish. An interrupted agent keeps its place, so it resumes before newer issues start.
 
@@ -225,7 +248,7 @@ Signing is on because launchd starts this binary, not your shell. An unsigned CL
 | `logs` | Follow the daemon log. |
 | `config` | Create the example config if absent, then open it. |
 | `status` | Show whether launchd is running the daemon. |
-| `reset` | Delete state, run records and per-issue logs, and kill leftover `superlinear_*` tmux sessions. Every issue is reprocessed on the next poll. Agents already running are not stopped. |
+| `reset` | Delete state, run records and per-issue logs, and kill leftover `superlinear_*` tmux sessions. The next poll starts over as for a new workspace: see [Selection](#selection). Agents already running are not stopped. |
 | `patch` | Bump the version and commit. Also `minor`, `major`. |
 | `deploy` | Tag and push the current version, shipping the stable cask. Also `deploy-beta` for an RC. |
 
@@ -236,7 +259,7 @@ Signing is on because launchd starts this binary, not your shell. An unsigned CL
 | Path | Contents |
 | --- | --- |
 | `~/.config/superlinear/config.json` | Configuration, including API keys. |
-| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, and proposals, per workspace. |
+| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, blocked and human-labeled issues, and proposals, per workspace. |
 | `~/.local/share/superlinear/audit/<workspace>.jsonl` | Each change superlinear applied in Linear, with the proposal and Linear's response. |
 | `~/.local/share/superlinear/daemon.lock` | Held by the running daemon, so a second one exits. |
 | `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. |
