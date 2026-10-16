@@ -1,0 +1,30 @@
+#!/bin/sh
+# Usage: check-shared-lanes <tag>
+#
+# Exits 0 when fastlane/Fastfile imports this repository's shared Fastfile at
+# the tag and defines no test or beta lane of its own, which fastlane would
+# reject as defined twice.
+
+tag="$1"
+fastfile=fastlane/Fastfile
+
+if [ -z "$tag" ]; then
+  echo "Usage: check-shared-lanes <tag>" >&2
+  exit 2
+fi
+
+if [ ! -f "$fastfile" ]; then
+  echo "$fastfile does not exist." >&2
+  exit 1
+fi
+
+# The call usually spans lines, so they are joined first.
+if ! tr '\n' ' ' < "$fastfile" | grep -Eq "import_from_git[[:space:]]*\([^)]*armcknight/templates[^)]*branch:[[:space:]]*[\"']$tag[\"']"; then
+  echo "$fastfile does not import armcknight/templates at $tag." >&2
+  exit 1
+fi
+
+if grep -Eq "^[[:space:]]*lane[[:space:](]+:(test|beta)([^a-z0-9_]|$)" "$fastfile"; then
+  echo "$fastfile defines its own test or beta lane." >&2
+  exit 1
+fi

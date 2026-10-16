@@ -1,0 +1,14 @@
+name: test
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: armcknight/templates/.github/workflows/apple-test.yml@{{templates.tag}}
+    with:
+      platform: {{inputs.platform}}
+      xcodegen: {{inputs.xcodegen}}

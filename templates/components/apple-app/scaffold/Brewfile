@@ -1,0 +1,3 @@
+# The tools the apple-app component's lanes use.
+brew "xcbeautify"
+brew "xcodegen"

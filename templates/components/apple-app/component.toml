@@ -1,0 +1,227 @@
+name = "apple-app"
+description = "An iOS (with an optional embedded watch app), tvOS or macOS app, tested on each pull request and uploaded to TestFlight nightly."
+
+# An Xcode project, an XcodeGen spec or a Tuist manifest with an application
+# target. The product type also matches a watch app, which is always embedded in
+# an iOS app here, so it does not cause a false detection.
+[detect]
+any = [
+  { glob = "**/*.xcodeproj/project.pbxproj", contains = "com\\.apple\\.product-type\\.application" },
+  { glob = "project.yml", contains = "type:\\s*application\\b" },
+  { glob = "Project.swift", contains = "product:\\s*\\.app\\b" },
+]
+
+[[inputs]]
+name = "app_name"
+description = "The app's product name."
+example = "Babysittr"
+infer = [{ from = "build-setting", key = "PRODUCT_NAME" }]
+
+[[inputs]]
+name = "scheme"
+description = "The shared Xcode scheme that builds and tests the app."
+example = "Babysittr"
+infer = [{ from = "regex", glob = "**/*.xcodeproj/xcshareddata/xcschemes/*.xcscheme", pattern = "BuildableName = \"([^\"]+)\\.app\"" }]
+
+[[inputs]]
+name = "project"
+description = "The Xcode project, relative to the repository root. Leave empty when `workspace` is set."
+example = "Babysittr.xcodeproj"
+infer = [{ from = "glob", glob = "*.xcodeproj" }]
+
+[[inputs]]
+name = "workspace"
+description = "The Xcode workspace, relative to the repository root, when the app builds from one."
+example = "Trgnmtry.xcworkspace"
+default = ""
+infer = [{ from = "glob", glob = "*.xcworkspace" }]
+
+[[inputs]]
+name = "xcodegen"
+description = "Whether the Xcode project is generated from project.yml with XcodeGen before each build."
+example = "true"
+infer = [{ from = "glob", glob = "project.yml", exists = true }]
+
+[[inputs]]
+name = "platform"
+description = "The app's platform, as fastlane names it: ios, tvos or mac. An iOS app with an embedded watch app is ios."
+example = "ios"
+infer = [{ from = "build-setting", key = "SDKROOT", map = { iphoneos = "ios", appletvos = "tvos", macosx = "mac" } }]
+
+[[inputs]]
+name = "bundle_id"
+description = "The app's bundle identifier in App Store Connect."
+example = "io.mcknight.babysittr"
+infer = [
+  { from = "fastlane-config", file = "fastlane/Appfile", key = "app_identifier" },
+  { from = "build-setting", key = "PRODUCT_BUNDLE_IDENTIFIER" },
+]
+
+[[inputs]]
+name = "app_identifiers"
+description = "Every bundle identifier that needs an App Store profile, comma separated: the app, its extensions and its watch app."
+example = "io.mcknight.babysittr,io.mcknight.babysittr.watchkitapp"
+infer = [{ from = "fastlane-config", file = "fastlane/Matchfile", key = "app_identifier" }]
+
+[[inputs]]
+name = "team_id"
+description = "The Apple Developer team ID."
+example = "29274SF4VL"
+infer = [
+  { from = "fastlane-config", file = "fastlane/Appfile", key = "team_id" },
+  { from = "build-setting", key = "DEVELOPMENT_TEAM" },
+]
+
+[[inputs]]
+name = "match_git_url"
+description = "The SSH URL of the fastlane match repository that holds the certificates and profiles."
+example = "git@github.com:armcknight/fastlane-match.git"
+infer = [{ from = "fastlane-config", file = "fastlane/Matchfile", key = "git_url" }]
+
+[[inputs]]
+name = "test_device"
+description = "The simulator the tests run on. Ignored for mac."
+example = "iPhone 16 Pro"
+default = "iPhone 16 Pro"
+
+[[inputs]]
+name = "tester_group"
+description = "The internal TestFlight group that gets each build."
+example = "Internal"
+default = "Internal"
+
+[[secrets]]
+name = "ASC_KEY_ID"
+description = "The key ID of the App Store Connect API key."
+source = "keychain:superlinear.asc.key-id"
+scope = "team"
+human = { text = "In App Store Connect, Users and Access, Integrations, App Store Connect API, Team Keys: generate a key with the App Manager role. Store its key ID, its issuer ID and the downloaded .p8 file, base64 encoded, in the Keychain items superlinear.asc.key-id, superlinear.asc.issuer-id and superlinear.asc.key-p8-base64. The .p8 file downloads only one time.", twoFactor = true }
+
+[[secrets]]
+name = "ASC_ISSUER_ID"
+description = "The issuer ID of the App Store Connect API key."
+source = "keychain:superlinear.asc.issuer-id"
+scope = "team"
+
+[[secrets]]
+name = "ASC_KEY_P8_BASE64"
+description = "The App Store Connect API key's .p8 file, base64 encoded. The key has the App Manager role."
+source = "keychain:superlinear.asc.key-p8-base64"
+scope = "team"
+rotateEvery = "1y"
+
+[[secrets]]
+name = "MATCH_PASSWORD"
+description = "The passphrase that decrypts the fastlane match repository."
+source = "keychain:superlinear.match.password"
+scope = "team"
+
+[[secrets]]
+name = "MATCH_DEPLOY_KEY"
+description = "The private half of a read-only deploy key on the fastlane match repository."
+source = "generate:ssh-key"
+scope = "team"
+human = { text = "Add the public half of the generated key (the Keychain item superlinear.match.deploy-key.pub) to the fastlane match repository as a read-only deploy key." }
+rotateEvery = "1y"
+
+[[steps]]
+id = "gemfile"
+description = "The Gemfile has fastlane."
+check = "grep -Eq '^[[:space:]]*gem[[:space:]]+.fastlane.' Gemfile"
+fix = "bundle add fastlane"
+
+[[steps]]
+id = "shared-lanes"
+description = "fastlane/Fastfile imports the shared lanes at the pinned tag and does not define its own test or beta lanes."
+check = "{{templates}}/components/apple-app/bin/check-shared-lanes {{templates.tag}}"
+fix = { human = { text = "Replace the test and deploy lanes in fastlane/Fastfile with the shared ones: set the APPLE_APP_* values and call import_from_git as the apple-app scaffold's Fastfile does, then delete the local test and beta lanes. Lanes the shared Fastfile does not have, such as stage, stay." } }
+
+[[steps]]
+id = "workflows"
+description = "The repository calls the shared test and beta workflows."
+check = "grep -qs 'armcknight/templates/.github/workflows/apple-test.yml@' .github/workflows/*.yml && grep -qs 'armcknight/templates/.github/workflows/apple-beta.yml@' .github/workflows/*.yml"
+fix = { human = { text = "Copy .github/workflows/apple-test.yml and apple-beta.yml from the apple-app scaffold, and remove the workflows they replace." } }
+
+[[steps]]
+id = "match-access"
+description = "The fastlane match repository can be read."
+check = "git ls-remote {{inputs.match_git_url}} HEAD >/dev/null"
+fix = { human = { text = "Give this machine read access to {{inputs.match_git_url}}, and add the MATCH_DEPLOY_KEY public key to it as a read-only deploy key." } }
+
+[[steps]]
+id = "app-record"
+description = "The app has a record in App Store Connect."
+scope = "app"
+check = "bundle exec ruby {{templates}}/components/apple-app/bin/check-app-store-connect {{inputs.bundle_id}}"
+fix = { human = { text = "In App Store Connect, Apps: make a new app for the bundle ID {{inputs.bundle_id}} (register the bundle ID in the developer portal first if it is not listed), named {{inputs.app_name}}." } }
+
+[[steps]]
+id = "tester-group"
+description = "The app has the internal TestFlight group that gets each build."
+scope = "app"
+check = "bundle exec ruby {{templates}}/components/apple-app/bin/check-app-store-connect {{inputs.bundle_id}} {{inputs.tester_group}}"
+fix = { human = { text = "In App Store Connect, {{inputs.app_name}}, TestFlight: add an internal group named {{inputs.tester_group}}, turn on automatic distribution, and add the testers." } }
+
+[[steps]]
+id = "nightly"
+description = "The beta workflow runs nightly."
+check = "grep -Eqs '^[[:space:]]+schedule:' .github/workflows/apple-beta.yml"
+fix = { human = { text = "Run the apple-beta workflow by hand one time. When its build is in TestFlight, uncomment the schedule in .github/workflows/apple-beta.yml." } }
+
+[[shared]]
+kind = "fastlane"
+path = "fastlane/Fastfile"
+version = "v1"
+description = "The test and beta lanes for ios, tvos and mac."
+
+[[shared]]
+kind = "workflow"
+path = ".github/workflows/apple-test.yml"
+version = "v1"
+description = "Runs the test lane on each pull request."
+
+[[shared]]
+kind = "workflow"
+path = ".github/workflows/apple-beta.yml"
+version = "v1"
+description = "Runs the beta lane when the default branch changed after the last uploaded build."
+
+[[shared]]
+kind = "make"
+path = "make/apple-app.mk"
+version = "v1"
+description = "The apple-app-test and apple-app-beta targets."
+
+[[shared]]
+kind = "brewfile"
+path = "components/apple-app/scaffold/Brewfile"
+version = "v1"
+description = "The tools the lanes use."
+
+[[shared]]
+kind = "script"
+path = "components/apple-app/bin/check-app-store-connect"
+version = "v1"
+description = "Checks the app record and its tester group in App Store Connect."
+
+[[shared]]
+kind = "script"
+path = "components/apple-app/bin/check-shared-lanes"
+version = "v1"
+description = "Checks that fastlane/Fastfile uses the shared lanes."
+
+[[docs]]
+title = "Components"
+anchor = "components"
+
+[[docs]]
+title = "Bootstrap"
+anchor = "bootstrap"
+
+[[docs]]
+title = "Builds"
+anchor = "builds"
+
+[[docs]]
+title = "The apple-app component"
+anchor = "apple-app"

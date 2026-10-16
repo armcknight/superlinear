@@ -1,0 +1,46 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Usage: check-app-store-connect <bundle id> [<internal TestFlight group>]
+#
+# Exits 0 when App Store Connect has an app record for the bundle ID and, when
+# a group is given, an internal TestFlight group of that name for it. Exits 1
+# when either is missing, and 2 when it cannot ask App Store Connect.
+#
+# Reads the App Store Connect API key from ASC_KEY_ID, ASC_ISSUER_ID and
+# ASC_KEY_P8_BASE64. Run it with the project's bundle (`bundle exec ruby`),
+# which has fastlane, and so spaceship.
+
+require "base64"
+require "spaceship"
+
+bundle_id, group_name = ARGV
+abort("Usage: check-app-store-connect <bundle id> [<internal TestFlight group>]") if bundle_id.to_s.empty?
+
+begin
+  Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key: Base64.decode64(ENV.fetch("ASC_KEY_P8_BASE64"))
+  )
+  app = Spaceship::ConnectAPI::App.find(bundle_id)
+rescue KeyError => e
+  warn("Missing #{e.key}.")
+  exit(2)
+rescue StandardError => e
+  warn("Could not ask App Store Connect: #{e.message}")
+  exit(2)
+end
+
+if app.nil?
+  warn("App Store Connect has no app with the bundle ID #{bundle_id}.")
+  exit(1)
+end
+
+exit(0) if group_name.to_s.empty?
+
+group = app.get_beta_groups.find { |g| g.is_internal_group && g.name == group_name }
+if group.nil?
+  warn("#{app.name} has no internal TestFlight group named #{group_name}.")
+  exit(1)
+end

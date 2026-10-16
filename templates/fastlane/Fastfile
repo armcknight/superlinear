@@ -1,0 +1,219 @@
+# The apple-app component's shared lanes. A project imports them at a tag:
+#
+#   ENV["APPLE_APP_SCHEME"] ||= "Babysittr"
+#   ...
+#   import_from_git(url: "https://github.com/armcknight/templates.git", branch: "v1", path: "fastlane/Fastfile")
+#
+# and runs `fastlane ios test`, `fastlane ios beta`, and the same for tvos and
+# mac. Each setting is read from a lane option first, then from its APPLE_APP_*
+# environment variable; see APPLE_APP_SETTINGS. The project must not define a
+# test or beta lane of its own, as fastlane rejects a lane defined twice.
+#
+# The beta lane needs these environment variables, which the apple-beta
+# workflow sets from the repository's secrets:
+#
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64   an App Store Connect API key with the App Manager role
+#   MATCH_PASSWORD                                  the match repository's passphrase
+#
+# and read access to the match repository, which the workflow gives through
+# the MATCH_DEPLOY_KEY secret.
+
+require "open3"
+
+# Option name => [environment variable, default]. A nil default means required.
+APPLE_APP_SETTINGS = {
+  scheme: ["APPLE_APP_SCHEME", nil],
+  project: ["APPLE_APP_PROJECT", ""],
+  workspace: ["APPLE_APP_WORKSPACE", ""],
+  bundle_id: ["APPLE_APP_BUNDLE_ID", nil],
+  app_identifiers: ["APPLE_APP_IDENTIFIERS", ""],
+  team_id: ["APPLE_APP_TEAM_ID", ""],
+  match_git_url: ["APPLE_APP_MATCH_GIT_URL", ""],
+  test_device: ["APPLE_APP_TEST_DEVICE", "iPhone 16 Pro"],
+  test_configuration: ["APPLE_APP_TEST_CONFIGURATION", "Debug"],
+  beta_configuration: ["APPLE_APP_BETA_CONFIGURATION", "Release"],
+  tag_builds: ["APPLE_APP_TAG_BUILDS", "true"]
+}.freeze
+
+# fastlane's platform => the name match uses for it.
+APPLE_APP_MATCH_PLATFORMS = { ios: "ios", tvos: "tvos", mac: "macos" }.freeze
+
+# fastlane's platform => the name App Store Connect uses for it.
+APPLE_APP_ASC_PLATFORMS = { ios: "ios", tvos: "appletvos", mac: "osx" }.freeze
+
+# TestFlight rejects a "What to Test" text longer than this.
+APPLE_APP_WHAT_TO_TEST_LIMIT = 4000
+
+def apple_app_settings(options)
+  APPLE_APP_SETTINGS.to_h do |key, (variable, default)|
+    value = options[key]&.to_s
+    value = ENV.fetch(variable, "") if value.nil? || value.empty?
+    value = default if value.empty?
+    UI.user_error!("Set #{variable}, or pass #{key}: to the lane.") if value.nil?
+    [key, value]
+  end
+end
+
+# The project or the workspace, as the build and test actions take them.
+def apple_app_container(settings)
+  return { workspace: settings[:workspace] } unless settings[:workspace].empty?
+  return { project: settings[:project] } unless settings[:project].empty?
+
+  {}
+end
+
+def apple_app_identifiers(settings)
+  identifiers = settings[:app_identifiers].split(",").map(&:strip).reject(&:empty?)
+  identifiers.empty? ? [settings[:bundle_id]] : identifiers
+end
+
+# The tag that marks a build uploaded for the platform. The apple-beta
+# workflow looks for it on the default branch's head to skip a nightly build
+# with nothing new, and the beta lane lists the pull requests merged since the
+# previous one.
+def apple_app_build_tag(platform, build_number)
+  "beta/#{platform}/#{build_number}"
+end
+
+# The "What to Test" text: the pull requests merged since the platform's last
+# uploaded build, newest first, from the first-parent history. A squash merge's
+# subject ends with "(#123)"; a merge commit's subject is "Merge pull request
+# #123 from ..." and its body starts with the pull request's title. With no
+# earlier build, the last 20 commits are read.
+def apple_app_what_to_test(platform)
+  # Not fastlane's sh, which mixes standard error into the output it returns.
+  last_tag, status = Open3.capture2("git", "describe", "--tags", "--abbrev=0", "--match", "beta/#{platform}/*", err: File::NULL)
+  range = status.success? ? ["#{last_tag.strip}..HEAD"] : ["-n", "20", "HEAD"]
+  log, status = Open3.capture2("git", "log", "--first-parent", "--format=%s%x1f%b%x1e", *range)
+  UI.user_error!("git log failed; the beta lane needs the full history (fetch-depth: 0).") unless status.success?
+
+  titles = log.split("\x1e").map(&:strip).reject(&:empty?).filter_map do |entry|
+    subject, body = entry.split("\x1f", 2)
+    if (merge = subject.match(/\AMerge pull request #(\d+)\b/))
+      title = body.to_s.lines.first.to_s.strip
+      "#{title.empty? ? subject : title} (##{merge[1]})"
+    elsif subject.match?(/\(#\d+\)\z/)
+      subject
+    end
+  end
+
+  text = titles.empty? ? "No pull requests were merged since the last build." : titles.map { |t| "- #{t}" }.join("\n")
+  return text if text.length <= APPLE_APP_WHAT_TO_TEST_LIMIT
+
+  "#{text[0, APPLE_APP_WHAT_TO_TEST_LIMIT - 2]}\n…"
+end
+
+def apple_app_test(platform, options)
+  settings = apple_app_settings(options)
+
+  xcargs = "CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES"
+  if ENV["CI"]
+    xcargs += " GCC_PREPROCESSOR_DEFINITIONS='$(inherited) CI=1' SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) CI'"
+  end
+
+  parameters = {
+    scheme: settings[:scheme],
+    output_types: "junit",
+    output_files: "junit.xml",
+    code_coverage: true,
+    result_bundle: true,
+    configuration: settings[:test_configuration],
+    xcargs: xcargs
+  }.merge(apple_app_container(settings))
+
+  if platform == :mac
+    parameters[:destination] = "platform=macOS"
+  else
+    parameters[:devices] = [settings[:test_device]]
+  end
+
+  run_tests(**parameters)
+end
+
+def apple_app_beta(platform, options)
+  settings = apple_app_settings(options)
+  asc_platform = APPLE_APP_ASC_PLATFORMS.fetch(platform)
+
+  setup_ci if ENV["CI"]
+
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_content: ENV.fetch("ASC_KEY_P8_BASE64"),
+    is_key_content_base64: true
+  )
+
+  match_parameters = {
+    type: "appstore",
+    readonly: true,
+    app_identifier: apple_app_identifiers(settings),
+    platform: APPLE_APP_MATCH_PLATFORMS.fetch(platform)
+  }
+  match_parameters[:git_url] = settings[:match_git_url] unless settings[:match_git_url].empty?
+  match_parameters[:team_id] = settings[:team_id] unless settings[:team_id].empty?
+  # A Mac App Store upload is a .pkg, signed with the installer certificate.
+  match_parameters[:additional_cert_types] = ["mac_installer_distribution"] if platform == :mac
+  match(**match_parameters)
+
+  build_number = latest_testflight_build_number(
+    app_identifier: settings[:bundle_id],
+    platform: asc_platform,
+    initial_build_number: 0
+  ).to_i + 1
+  UI.message("Building #{settings[:bundle_id]} #{build_number} for #{asc_platform}.")
+
+  what_to_test = apple_app_what_to_test(platform)
+
+  # The build number goes to every target, the embedded watch app's too, as
+  # App Store Connect requires. CFBundleVersion must be
+  # $(CURRENT_PROJECT_VERSION) in each Info.plist, as it is by default.
+  build_app(
+    **apple_app_container(settings),
+    scheme: settings[:scheme],
+    configuration: settings[:beta_configuration],
+    export_method: "app-store",
+    clean: true,
+    xcodebuild_formatter: "xcbeautify",
+    xcargs: "CURRENT_PROJECT_VERSION=#{build_number}"
+  )
+
+  # Without waiting for processing, TestFlight cannot distribute to a group
+  # here; the internal group's automatic distribution does that.
+  upload_to_testflight(
+    app_identifier: settings[:bundle_id],
+    app_platform: asc_platform,
+    changelog: what_to_test,
+    skip_waiting_for_build_processing: true,
+    skip_submission: true
+  )
+
+  return unless settings[:tag_builds] == "true"
+
+  tag = apple_app_build_tag(platform, build_number)
+  add_git_tag(tag: tag)
+  push_git_tags(tag: tag)
+end
+
+platform :ios do
+  desc "Run the tests on a simulator"
+  lane(:test) { |options| apple_app_test(:ios, options) }
+
+  desc "Build and upload to TestFlight, with the next build number"
+  lane(:beta) { |options| apple_app_beta(:ios, options) }
+end
+
+platform :tvos do
+  desc "Run the tests on a simulator"
+  lane(:test) { |options| apple_app_test(:tvos, options) }
+
+  desc "Build and upload to TestFlight, with the next build number"
+  lane(:beta) { |options| apple_app_beta(:tvos, options) }
+end
+
+platform :mac do
+  desc "Run the tests on this Mac"
+  lane(:test) { |options| apple_app_test(:mac, options) }
+
+  desc "Build and upload to TestFlight, with the next build number"
+  lane(:beta) { |options| apple_app_beta(:mac, options) }
+end

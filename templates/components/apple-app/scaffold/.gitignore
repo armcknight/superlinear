@@ -1,0 +1,9 @@
+# Downloaded Makefile fragments; see the Makefile.
+/.superlinear/make/
+
+# fastlane output
+/fastlane/report.xml
+/fastlane/test_output/
+/*.ipa
+/*.pkg
+/*.dSYM.zip

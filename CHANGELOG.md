@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The content of the `armcknight/templates` repository, in `templates/` until
+  that repository is published: the component manifest format
+  (`component.toml`) with its JSON Schema and a validator, and the first
+  component, `apple-app`, with shared `test` and `beta` fastlane lanes for
+  iOS, tvOS and macOS, the reusable `apple-test.yml` and `apple-beta.yml`
+  workflows, a Makefile fragment, and a scaffold. `docs/anchors.md` holds
+  stable links into the guide for manifests to use. CI validates the
+  manifests and checks the links.
+
 - `superlinear standup`, an interactive review in the terminal: what
   superlinear did since the last standup; pull requests waiting on you,
   those holding back the most work first, by stack; pending proposals to

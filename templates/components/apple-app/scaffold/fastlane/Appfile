@@ -1,0 +1,2 @@
+app_identifier("{{inputs.bundle_id}}")
+team_id("{{inputs.team_id}}")

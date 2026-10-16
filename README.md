@@ -247,6 +247,14 @@ An interactive review in the terminal, run when you want: there is no schedule. 
 
 The standup does not yet offer to run the daily planning job first, which is still to come, nor show budgets or late milestones.
 
+## Components
+
+Components are reusable parts of a project, such as `apple-app`, `swift-cli`, `vapor-fly` and `supabase`. Each has a manifest, `component.toml`, that says how to detect a project that uses it, which inputs and secrets it needs, the steps to check and set up, and the shared workflows, fastlane lanes and Makefile fragments it uses. The first is `apple-app`: tests on each pull request and nightly TestFlight builds for iOS, tvOS and macOS apps.
+
+They live in the [armcknight/templates](https://github.com/armcknight/templates) repository. Until it is published, its content is in [templates/](templates), where CI validates the manifests against their [schema](templates/schema/component.schema.json) and checks the links. See [its README](templates/README.md) for the manifest format. [docs/anchors.md](docs/anchors.md) holds the stable links into this guide that manifests and generated READMEs use.
+
+`superlinear bootstrap`, which sets projects up from the manifests, is still to come.
+
 ## Releasing
 
 ```sh

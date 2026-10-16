@@ -61,3 +61,5 @@ flycheck_*.el
 
 
 # End of https://www.toptal.com/developers/gitignore/api/emacs
+# Python, for templates/scripts
+__pycache__/

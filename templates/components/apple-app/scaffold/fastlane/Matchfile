@@ -1,0 +1,4 @@
+git_url("{{inputs.match_git_url}}")
+storage_mode("git")
+type("appstore")
+team_id("{{inputs.team_id}}")
