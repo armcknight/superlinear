@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The superlinear guide, in `docs/`: the life of an issue, planning,
+  bootstrap, builds, configuration and operations. The README is now an
+  overview that links to it. Each section that other repositories link to
+  has a stable anchor, listed in `docs/anchors.md`. `make check-docs`, which
+  CI runs, checks that the relative links and anchors resolve.
+
 - `superlinear standup`, an interactive review in the terminal: what
   superlinear did since the last standup; pull requests waiting on you,
   those holding back the most work first, by stack; pending proposals to
