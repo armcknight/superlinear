@@ -1,16 +1,70 @@
 import Foundation
 
-struct LinearIssue: Codable, Sendable {
+/// An issue an agent may start on. The fields after `team` decide whether
+/// one does, and in what order; each is absent when the query did not ask.
+struct LinearIssue: Codable, Sendable, Equatable {
     let id: String
     let identifier: String
     let title: String
     let branchName: String
     let createdAt: Date
     let team: Team
+    var state: LinearIssueStatus.State? = nil
+    /// 0 for no priority, then 1 (urgent) to 4 (low).
+    var priority: Double? = nil
+    var sortOrder: Double? = nil
+    var project: Ranked? = nil
+    var projectMilestone: Ranked? = nil
+    var labels: Labels? = nil
+    /// Relations in which another issue is the subject, such as one that
+    /// blocks this one.
+    var inverseRelations: Relations? = nil
 
-    struct Team: Codable, Sendable {
+    struct Team: Codable, Sendable, Equatable {
         let id: String
         let key: String
+    }
+
+    struct Ranked: Codable, Sendable, Equatable {
+        let sortOrder: Double
+    }
+
+    struct Labels: Codable, Sendable, Equatable {
+        let nodes: [Label]
+
+        struct Label: Codable, Sendable, Equatable {
+            let name: String
+        }
+    }
+
+    struct Relations: Codable, Sendable, Equatable {
+        let nodes: [Relation]
+
+        struct Relation: Codable, Sendable, Equatable {
+            /// `blocks`, `duplicate`, `related` or `similar`.
+            let type: String
+            let issue: Related
+        }
+
+        struct Related: Codable, Sendable, Equatable {
+            let id: String
+            let identifier: String
+            let state: Kind
+
+            struct Kind: Codable, Sendable, Equatable {
+                let type: String
+            }
+        }
+    }
+
+    var labelNames: [String] { labels?.nodes.map(\.name) ?? [] }
+
+    /// The identifiers of the issues blocking this one that are neither
+    /// completed nor canceled.
+    var openBlockers: [String] {
+        (inverseRelations?.nodes ?? [])
+            .filter { $0.type == "blocks" && !["completed", "canceled"].contains($0.issue.state.type) }
+            .map(\.issue.identifier)
     }
 }
 
@@ -45,6 +99,28 @@ struct LinearClient: Sendable {
     let apiKey: String
     private let endpoint = URL(string: "https://api.linear.app/graphql")!
 
+    /// What it takes to decide whether, and in what order, an agent starts
+    /// on an issue. Pages are smaller than elsewhere, as the nested labels and
+    /// relations count toward Linear's limit on a query's complexity.
+    private static let candidateFields = """
+        nodes {
+          id
+          identifier
+          title
+          branchName
+          createdAt
+          team { id key }
+          state { name type }
+          priority
+          sortOrder
+          project { sortOrder }
+          projectMilestone { sortOrder }
+          labels(first: 25) { nodes { name } }
+          inverseRelations(first: 50) { nodes { type issue { id identifier state { type } } } }
+        }
+        pageInfo { hasNextPage endCursor }
+    """
+
     // Query filtering by team IDs (non-empty teamIds)
     private static let queryWithTeams = """
     query NewIssues($after: DateComparator, $teamIds: [ID!], $cursor: String) {
@@ -55,18 +131,10 @@ struct LinearClient: Sendable {
           state: { type: { in: ["backlog", "unstarted"] } }
         }
         orderBy: createdAt
-        first: 50
+        first: 25
         after: $cursor
       ) {
-        nodes {
-          id
-          identifier
-          title
-          branchName
-          createdAt
-          team { id key }
-        }
-        pageInfo { hasNextPage endCursor }
+    \(candidateFields)
       }
     }
     """
@@ -80,18 +148,10 @@ struct LinearClient: Sendable {
           state: { type: { in: ["backlog", "unstarted"] } }
         }
         orderBy: createdAt
-        first: 50
+        first: 25
         after: $cursor
       ) {
-        nodes {
-          id
-          identifier
-          title
-          branchName
-          createdAt
-          team { id key }
-        }
-        pageInfo { hasNextPage endCursor }
+    \(candidateFields)
       }
     }
     """
@@ -148,6 +208,54 @@ struct LinearClient: Sendable {
       }
     }
     """
+
+    private static let readyAllTeams = """
+    query ReadyIssues($states: [String!], $cursor: String) {
+      issues(filter: { state: { type: { in: $states } } }, first: 25, after: $cursor) {
+    \(candidateFields)
+      }
+    }
+    """
+
+    private static let readyWithTeams = """
+    query ReadyIssues($states: [String!], $teamIds: [ID!], $cursor: String) {
+      issues(
+        filter: { state: { type: { in: $states } }, team: { id: { in: $teamIds } } }
+        first: 25
+        after: $cursor
+      ) {
+    \(candidateFields)
+      }
+    }
+    """
+
+    private static let candidatesById = """
+    query CandidatesById($ids: [ID!], $cursor: String) {
+      issues(filter: { id: { in: $ids } }, first: 25, after: $cursor) {
+    \(candidateFields)
+      }
+    }
+    """
+
+    /// Open issues whose state type is one of `states`, whenever created,
+    /// optionally filtered by team.
+    func fetchReadyIssues(states: [String], teamIds: [String]) async throws -> [LinearIssue] {
+        if teamIds.isEmpty {
+            return try await fetchAll(Self.readyAllTeams, variables: ["states": states])
+        }
+        return try await fetchAll(Self.readyWithTeams, variables: ["states": states, "teamIds": teamIds])
+    }
+
+    /// The issues with these IDs, with what it takes to decide whether an
+    /// agent starts on them, 25 IDs to a request. Archived issues are absent.
+    func fetchCandidates(ids: [String]) async throws -> [LinearIssue] {
+        var issues: [LinearIssue] = []
+        for start in stride(from: 0, to: ids.count, by: 25) {
+            let batch = Array(ids[start..<min(start + 25, ids.count)])
+            issues += try await fetchAll(Self.candidatesById, variables: ["ids": batch])
+        }
+        return issues
+    }
 
     private static let queryByNumbers = """
     query IssuesByNumber($numbers: [Float!], $keys: [String!], $cursor: String) {
@@ -237,11 +345,11 @@ struct LinearClient: Sendable {
     }
 
     private static let issueStateQuery = """
-    query IssueState($id: String!) {
+    query IssueState($id: String!, $type: String!) {
       issue(id: $id) {
         state { type }
         team {
-          states(filter: { type: { eq: "completed" } }) {
+          states(filter: { type: { eq: $type } }) {
             nodes { id position }
           }
         }
@@ -250,7 +358,7 @@ struct LinearClient: Sendable {
     """
 
     private static let updateStateMutation = """
-    mutation CompleteIssue($id: String!, $stateId: String!) {
+    mutation MoveIssue($id: String!, $stateId: String!) {
       issueUpdate(id: $id, input: { stateId: $stateId }) { success }
     }
     """
@@ -259,13 +367,28 @@ struct LinearClient: Sendable {
     /// changing nothing, when the issue is already completed or canceled, as
     /// Linear's GitHub integration may have done on the merge.
     func completeIssue(id: String) async throws -> Bool {
-        let issue = try await execute(Self.issueStateQuery, variables: ["id": id], as: IssueStateData.self).issue
-        guard !["completed", "canceled"].contains(issue.state.type) else { return false }
-        guard let done = issue.team.states.nodes.min(by: { $0.position < $1.position }) else {
-            throw LinearClientError.apiError(["The issue's team has no completed state"])
+        try await move(id: id, toFirst: "completed", unlessIn: ["completed", "canceled"])
+    }
+
+    /// Moves the issue to its team's first started state, such as In
+    /// Progress. Returns false, changing nothing, when the issue is already
+    /// started, completed or canceled.
+    func startIssue(id: String) async throws -> Bool {
+        try await move(id: id, toFirst: "started", unlessIn: ["started", "completed", "canceled"])
+    }
+
+    /// Moves the issue to its team's first state of type `type`, unless its
+    /// state type is one of `skipped`.
+    private func move(id: String, toFirst type: String, unlessIn skipped: Set<String>) async throws -> Bool {
+        let issue = try await execute(
+            Self.issueStateQuery, variables: ["id": id, "type": type], as: IssueStateData.self
+        ).issue
+        guard !skipped.contains(issue.state.type) else { return false }
+        guard let target = issue.team.states.nodes.min(by: { $0.position < $1.position }) else {
+            throw LinearClientError.apiError(["The issue's team has no \(type) state"])
         }
         let result = try await execute(
-            Self.updateStateMutation, variables: ["id": id, "stateId": done.id], as: IssueUpdateData.self
+            Self.updateStateMutation, variables: ["id": id, "stateId": target.id], as: IssueUpdateData.self
         )
         guard result.issueUpdate.success else { throw LinearClientError.invalidResponse }
         return true

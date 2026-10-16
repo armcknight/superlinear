@@ -194,4 +194,32 @@ struct StateTests {
         let state = try State.decoded(from: Data(json.utf8))
         #expect(state.linkedPullRequests(issueId: "SL-1", workspace: "w").isEmpty)
     }
+
+    @Test("Waiting issues round-trip, are replaced by each poll's, and are absent from older state files")
+    func waitingIssues() throws {
+        var state = State()
+        let blocked = WaitingIssue(identifier: "SL-2", title: "Two", blockers: ["SL-1"])
+        let human = WaitingIssue(identifier: "SL-3", title: "Three", labels: ["Spike"])
+        state.recordWaiting(blocked: ["id-2": blocked], needsHuman: ["id-3": human], workspace: "w")
+        let restored = try State.decoded(from: state.encoded())
+        #expect(restored.workspaces["w"]?.blocked == ["id-2": blocked])
+        #expect(restored.workspaces["w"]?.needsHuman == ["id-3": human])
+        #expect(restored.workspaces["w"]?.waitingIssueIds == ["id-2", "id-3"])
+
+        state.recordWaiting(blocked: [:], needsHuman: ["id-3": human], workspace: "w")
+        #expect(state.workspaces["w"]?.blocked.isEmpty == true)
+
+        let json = #"{"workspaces":{"w":{"processedIssueIds":[],"lastPollTimestamp":"2023-11-14T22:13:20Z"}}}"#
+        #expect(try State.decoded(from: Data(json.utf8)).workspaces["w"]?.waitingIssueIds == [])
+    }
+
+    @Test("Handled issues are the processed, in-flight and watched ones")
+    func handledIssues() {
+        var state = State()
+        state.markProcessed("SL-1", workspace: "w")
+        state.recordRun(AgentRun(issueId: "SL-2", identifier: "SL-2", branchName: "b", sessionId: "s"), workspace: "w")
+        state.awaitMerge(PendingMerge(issueId: "SL-3", identifier: "SL-3", branchName: "c"), workspace: "w")
+        #expect(state.handledIssueIds(workspace: "w") == ["SL-1", "SL-2", "SL-3"])
+        #expect(state.handledIssueIds(workspace: "other").isEmpty)
+    }
 }

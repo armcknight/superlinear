@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A `selection` key per workspace: `"new"`, the default, starts agents for
+  issues created since the last poll, as before; `"ready"` starts them for
+  every open issue in one of the workspace's `readyStates` (default
+  `["unstarted"]`, which is Todo), whenever it was created, urgent first and
+  no priority last, then by project, milestone and issue sort order. In
+  `ready` mode, an issue moves to its team's first started state when its
+  agent starts, so moving an issue from Backlog to Todo is how you say "build
+  this".
+- In both modes, an issue that another open issue blocks waits until its last
+  blocker is completed or canceled, and an issue with a label in the new
+  `humanLabels` key (default `["Needs human", "Spike"]`) never starts an
+  agent. Each poll checks the waiting issues again. `superlinear status`
+  lists them under "Blocked", with their blockers, and "Needs human", with
+  their labels.
+
 - `superlinear status` ends with its own version and binary, and the
   daemon's pid, version, binary and start time, or that the daemon is not
   running. It warns when the daemon's binary was replaced after the daemon
@@ -49,6 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   running or queued, under their own "Addressing review" section, and their
   pull requests under "Awaiting review" as "agent addressing review" in place
   of GitHub's review state.
+
+### Changed
+
+- The first poll of a workspace with no state, in `new` mode, starts nothing
+  created before it, rather than an agent for every open issue in the
+  workspace. The same goes after `make reset`.
 
 ### Fixed
 

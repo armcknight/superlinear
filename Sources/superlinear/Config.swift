@@ -1,14 +1,31 @@
 import Foundation
 
+/// Which issues a workspace starts agents for.
+enum IssueSelection: String, Codable, Sendable {
+    /// Issues created since the last poll, in the backlog or unstarted.
+    case new
+    /// Every open issue in one of the workspace's `readyStates`, whenever
+    /// it was created, most important first.
+    case ready
+}
+
 struct WorkspaceConfig: Codable, Sendable {
+    static let defaultReadyStates = ["unstarted"]
+    static let defaultHumanLabels = ["Needs human", "Spike"]
+
     let name: String
     let apiKey: String
     let repoPath: String
     let teamIds: [String]
     let pollIntervalSeconds: Int
+    let selection: IssueSelection
+    /// Linear state types that mean "build this" in `ready` mode.
+    let readyStates: [String]
+    /// Labels that keep an issue for a person: no agent starts on it.
+    let humanLabels: [String]
 
     enum CodingKeys: String, CodingKey {
-        case name, apiKey, repoPath, teamIds, pollIntervalSeconds
+        case name, apiKey, repoPath, teamIds, pollIntervalSeconds, selection, readyStates, humanLabels
     }
 
     init(from decoder: Decoder) throws {
@@ -18,6 +35,17 @@ struct WorkspaceConfig: Codable, Sendable {
         repoPath = try container.decode(String.self, forKey: .repoPath)
         teamIds = try container.decodeIfPresent([String].self, forKey: .teamIds) ?? []
         pollIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .pollIntervalSeconds) ?? 60
+        selection = try container.decodeIfPresent(IssueSelection.self, forKey: .selection) ?? .new
+        readyStates = try container.decodeIfPresent([String].self, forKey: .readyStates) ?? Self.defaultReadyStates
+        humanLabels = try container.decodeIfPresent([String].self, forKey: .humanLabels) ?? Self.defaultHumanLabels
+    }
+
+    /// The Linear state types an issue may be in for an agent to start on it.
+    var startableStates: Set<String> {
+        switch selection {
+        case .new: ["backlog", "unstarted"]
+        case .ready: Set(readyStates)
+        }
     }
 }
 
