@@ -255,7 +255,8 @@ actor Daemon {
             processes[run.issueId] = process
             state.recordRun(launched, workspace: workspace.name)
             log(mode == .resume ? "Resuming \(run.identifier)" : "Starting \(run.identifier)", workspace: workspace.name)
-            if workspace.selection == .ready, run.review == nil, run.conflict == nil, mode == .start, run.resumes == 0 {
+            if workspace.selection == .ready, run.gitHubIssue == nil, run.review == nil, run.conflict == nil, mode == .start,
+                run.resumes == 0 {
                 markStarted(run, workspace: workspace)
             }
             if let review = run.review {
