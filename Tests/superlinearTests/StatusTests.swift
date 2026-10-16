@@ -8,12 +8,12 @@ import Testing
 struct StatusTests {
     private func issue(_ id: String, branch: String = "b", stateType: String = "started", stateName: String = "In Progress") -> LinearIssueStatus {
         LinearIssueStatus(
-            id: id, identifier: id, title: "Title \(id)", branchName: branch,
+            id: id, identifier: .init(rawValue: id), title: "Title \(id)", branchName: branch,
             state: .init(name: stateName, type: stateType)
         )
     }
 
-    private func pullRequest(_ number: Int, branch: String = "b", state: String, draft: Bool = false) -> PullRequest {
+    private func pullRequest(_ number: PullRequest.Number, branch: String = "b", state: String, draft: Bool = false) -> PullRequest {
         PullRequest(
             number: number, url: "https://github.com/o/r/pull/\(number)",
             state: PullRequest.State(rawValue: state)!, headRefName: branch, isDraft: draft

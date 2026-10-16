@@ -5,7 +5,7 @@ import Foundation
 /// the daemon was down, or interrupted and in need of resuming.
 struct AgentRun: Codable, Sendable, Equatable {
     var issueId: String
-    var identifier: String
+    var identifier: LinearIssue.Identifier
     var branchName: String
     /// The Claude session the agent runs in, chosen by the daemon so it can be
     /// resumed by ID. Lowercase, as Claude names its transcripts.
@@ -44,14 +44,14 @@ struct AgentRun: Codable, Sendable, Equatable {
 
 /// A pull request with reviews for an agent to address.
 struct ReviewRequest: Codable, Sendable, Equatable {
-    var number: Int
+    var number: PullRequest.Number
     var url: String
 }
 
 /// A pull request that conflicts with its base branch, for an agent to merge
 /// the base branch into.
 struct ConflictRequest: Codable, Sendable, Equatable {
-    var number: Int
+    var number: PullRequest.Number
     var url: String
     var baseBranch: String
     /// The branch and base heads the conflict was found on.
@@ -73,21 +73,21 @@ struct ConflictAttempt: Codable, Sendable, Equatable {
 /// An issue no agent starts on yet: one with open blockers, or one with a
 /// human label. Each poll checks it again.
 struct WaitingIssue: Codable, Sendable, Equatable {
-    var identifier: String
+    var identifier: LinearIssue.Identifier
     var title: String
     /// The identifiers of the open issues blocking it.
-    var blockers: [String] = []
+    var blockers: [LinearIssue.Identifier] = []
     /// Its human labels.
     var labels: [String] = []
 
-    init(identifier: String, title: String, blockers: [String] = [], labels: [String] = []) {
+    init(identifier: LinearIssue.Identifier, title: String, blockers: [LinearIssue.Identifier] = [], labels: [String] = []) {
         self.identifier = identifier
         self.title = title
         self.blockers = blockers
         self.labels = labels
     }
 
-    init(_ issue: LinearIssue, blockers: [String] = [], labels: [String] = []) {
+    init(_ issue: LinearIssue, blockers: [LinearIssue.Identifier] = [], labels: [String] = []) {
         self.init(identifier: issue.identifier, title: issue.title, blockers: blockers, labels: labels)
     }
 }
@@ -391,7 +391,7 @@ struct State: Codable, Sendable {
         let outcomes = Dictionary(standup.proposalOutcomes.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         for index in proposals.indices {
             let id = proposals[index].id
-            if proposals[index].firstShownAt == nil, let shown = standup.proposalsShownAt[id.rawValue] {
+            if proposals[index].firstShownAt == nil, let shown = standup.proposalsShownAt[id] {
                 proposals[index].firstShownAt = shown
             }
             if proposals[index].status == .pending, var outcome = outcomes[id] {

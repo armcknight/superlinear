@@ -13,7 +13,7 @@ struct StaleBranchesTests {
             name: name, lastCommit: Date(timeIntervalSince1970: 0), worktree: worktree ? "\(root)/\(name)" : nil)
     }
 
-    private func pullRequest(_ number: Int, _ branch: String, _ state: PullRequest.State) -> PullRequest {
+    private func pullRequest(_ number: PullRequest.Number, _ branch: String, _ state: PullRequest.State) -> PullRequest {
         PullRequest(number: number, url: "u\(number)", state: state, headRefName: branch, headRefOid: "sha\(number)")
     }
 

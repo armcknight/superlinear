@@ -1,18 +1,18 @@
 import Foundation
 
-/// An issue that needs a human, with the number of open issues waiting on
-/// it, directly and through others.
+/// An issue that needs a human, with the open issues waiting on it.
 struct NeedsHumanItem: Sendable, Equatable {
     var id: LinearIssue.ID
     var issue: WaitingIssue
-    var blocking: Int
+    /// The open issues it blocks, directly and through others.
+    var blockedIssues: Set<LinearIssue.Identifier> = []
 }
 
 /// An issue in the plan for today: queued for an agent, about to be, held,
 /// or in the backlog.
 struct PlanItem: Sendable, Equatable {
-    var issueId: String
-    var identifier: String
+    var issueId: LinearIssue.ID
+    var identifier: LinearIssue.Identifier
     var title: String
     /// The daemon has queued it already.
     var queued = false
@@ -22,9 +22,31 @@ struct PlanItem: Sendable, Equatable {
 struct WaitingPullRequest: Sendable, Equatable {
     var pullRequest: ReviewablePullRequest
     /// The pull request it is stacked on, if any.
-    var stackedOn: Int?
+    var stackedOn: PullRequest.Number?
     /// The open issues its issues block, directly and indirectly.
-    var blocking: Int
+    var blockedIssues: Set<LinearIssue.Identifier> = []
+}
+
+/// The sections of a standup, in the order it goes through them.
+enum StandupSection: Int, CaseIterable, Sendable {
+    case done = 1
+    case waitingOnYou
+    case proposals
+    case needsHuman
+    case plan
+    case risks
+
+    var title: String {
+        let name = switch self {
+        case .done: "Done autonomously"
+        case .waitingOnYou: "Waiting on you"
+        case .proposals: "Proposals"
+        case .needsHuman: "Needs human"
+        case .plan: "Plan for today"
+        case .risks: "Risks"
+        }
+        return "\(rawValue). \(name)"
+    }
 }
 
 /// What the standup shows for one workspace.
@@ -44,7 +66,7 @@ struct StandupView: Sendable {
     var plan: [PlanItem] = []
     var held: [PlanItem] = []
     /// The identifiers of the issues the last standup unblocked.
-    var unblocked: [String] = []
+    var unblocked: [LinearIssue.Identifier] = []
     /// Backlog issues that could be promoted to Todo.
     var backlog: [PlanItem] = []
     /// Section 6, or nil when it was not gathered.
@@ -53,7 +75,7 @@ struct StandupView: Sendable {
     var warnings: [String] = []
 
     /// The sections `--print` shows.
-    static let printedSections = [1, 3, 4, 5]
+    static let printedSections: [StandupSection] = [.done, .proposals, .needsHuman, .plan]
 }
 
 /// The pure rules for what each standup section holds.
@@ -68,47 +90,53 @@ enum Standup {
     /// Section 1: the daemon's activity since `since`, and the proposals
     /// applied automatically since then, oldest first.
     static func done(_ state: WorkspaceState, since: Date, now: Date = Date()) -> [String] {
-        var lines: [(Date, String)] = state.activity.filter { $0.time >= since }.map { ($0.time, $0.rendered) }
+        struct Line {
+            var time: Date
+            var text: String
+        }
+        var lines = state.activity.filter { $0.time >= since }.map { Line(time: $0.time, text: $0.rendered) }
         for proposal in state.proposals where proposal.trust == .auto && proposal.status == .applied {
             guard let decided = proposal.decidedAt, decided >= since else { continue }
-            lines.append((decided, "applied automatically: \(proposal.kind.rawValue) → \(targetName(proposal.target))"))
+            lines.append(Line(time: decided, text: "applied automatically: \(proposal.kind.rawValue) → \(targetName(proposal.target))"))
         }
-        return lines.sorted { $0.0 < $1.0 }.map { "\(StatusTime.rendered($0.0, now: now))  \($0.1)" }
+        return lines.sorted { $0.time < $1.time }.map { "\(StatusTime.rendered($0.time, now: now))  \($0.text)" }
     }
 
     static func targetName(_ target: ProposalTarget) -> String {
         "\(target.kind.rawValue) \(target.name ?? target.rawID)"
     }
 
-    /// The number of open issues each issue blocks, directly and through the
-    /// issues it blocks, by identifier, from the daemon's blocked issues.
-    static func blocking(_ blocked: [LinearIssue.ID: WaitingIssue]) -> [String: Int] {
-        var blockedBy: [String: Set<String>] = [:]
+    /// The open issues each issue blocks, directly and through the issues it
+    /// blocks, by identifier, from the daemon's blocked issues.
+    static func blockedIssues(
+        _ blocked: [LinearIssue.ID: WaitingIssue]
+    ) -> [LinearIssue.Identifier: Set<LinearIssue.Identifier>] {
+        var blockedBy: [LinearIssue.Identifier: Set<LinearIssue.Identifier>] = [:]
         for issue in blocked.values {
             for blocker in issue.blockers { blockedBy[blocker, default: []].insert(issue.identifier) }
         }
-        var counts: [String: Int] = [:]
+        var result: [LinearIssue.Identifier: Set<LinearIssue.Identifier>] = [:]
         for start in blockedBy.keys {
-            var seen: Set<String> = []
+            var seen: Set<LinearIssue.Identifier> = []
             var next = Array(blockedBy[start] ?? [])
             while let identifier = next.popLast() {
                 guard identifier != start, seen.insert(identifier).inserted else { continue }
                 next += blockedBy[identifier] ?? []
             }
-            counts[start] = seen.count
+            result[start] = seen
         }
-        return counts
+        return result
     }
 
     /// Section 4: the issues that need a human, those blocking the most first.
     static func needsHuman(_ state: WorkspaceState) -> [NeedsHumanItem] {
-        let counts = blocking(state.blocked)
+        let blocked = blockedIssues(state.blocked)
         return state.needsHuman.map { id, issue in
-            NeedsHumanItem(id: id, issue: issue, blocking: counts[issue.identifier] ?? 0)
+            NeedsHumanItem(id: id, issue: issue, blockedIssues: blocked[issue.identifier] ?? [])
         }.sorted { a, b in
-            a.blocking == b.blocking
-                ? a.issue.identifier.localizedStandardCompare(b.issue.identifier) == .orderedAscending
-                : a.blocking > b.blocking
+            a.blockedIssues.count == b.blockedIssues.count
+                ? a.issue.identifier.sortsBefore(b.issue.identifier)
+                : a.blockedIssues.count > b.blockedIssues.count
         }
     }
 
@@ -122,57 +150,71 @@ enum Standup {
     ) -> [WaitingPullRequest] {
         let busy = Set(state.inFlight.values.compactMap { $0.review?.url ?? $0.conflict?.url })
         let ready = pullRequests.filter { !$0.isDraft && !busy.contains($0.url) }
-        let counts = blocking(state.blocked)
+        let blocked = blockedIssues(state.blocked)
         let byHead = Dictionary(ready.map { ($0.headRefName, $0) }, uniquingKeysWith: { a, _ in a })
         func parent(_ pullRequest: ReviewablePullRequest) -> ReviewablePullRequest? {
             pullRequest.baseRefName.flatMap { byHead[$0] }.flatMap { $0.number == pullRequest.number ? nil : $0 }
         }
-        var children: [Int: [ReviewablePullRequest]] = [:]
+        var children: [PullRequest.Number: [ReviewablePullRequest]] = [:]
         for pullRequest in ready {
             if let parent = parent(pullRequest) { children[parent.number, default: []].append(pullRequest) }
         }
-        func blocks(_ pullRequest: ReviewablePullRequest) -> Int {
-            pullRequest.issueIdentifiers.reduce(0) { $0 + (counts[$1] ?? 0) }
+        func waiting(_ pullRequest: ReviewablePullRequest, stackedOn: PullRequest.Number?) -> WaitingPullRequest {
+            let blockedIssues = pullRequest.issueIdentifiers.reduce(into: Set()) { $0.formUnion(blocked[$1] ?? []) }
+            return WaitingPullRequest(pullRequest: pullRequest, stackedOn: stackedOn, blockedIssues: blockedIssues)
         }
 
-        var stacks: [(weight: Int, root: Int, items: [WaitingPullRequest])] = []
-        var placed: Set<Int> = []
+        /// A stack of pull requests, bottom first.
+        struct Stack {
+            var items: [WaitingPullRequest]
+            var bottom: PullRequest.Number { items[0].pullRequest.number }
+            /// The work it holds back: the open issues its pull requests
+            /// block, and the pull requests stacked on the bottom one.
+            var weight: Int {
+                items.reduce(into: Set()) { $0.formUnion($1.blockedIssues) }.count + items.count - 1
+            }
+        }
+        var stacks: [Stack] = []
+        var placed: Set<PullRequest.Number> = []
         for root in ready.sorted(by: { $0.number < $1.number }) where parent(root) == nil {
             var items: [WaitingPullRequest] = []
-            var next = [(root, Int?.none)]
+            var next = [waiting(root, stackedOn: nil)]
             while !next.isEmpty {
-                let (pullRequest, below) = next.removeFirst()
-                guard placed.insert(pullRequest.number).inserted else { continue }
-                items.append(WaitingPullRequest(pullRequest: pullRequest, stackedOn: below, blocking: blocks(pullRequest)))
-                let above = (children[pullRequest.number] ?? []).sorted { $0.number < $1.number }
-                next = above.map { ($0, pullRequest.number) } + next
+                let item = next.removeFirst()
+                let number = item.pullRequest.number
+                guard placed.insert(number).inserted else { continue }
+                items.append(item)
+                let above = (children[number] ?? []).sorted { $0.number < $1.number }
+                next = above.map { waiting($0, stackedOn: number) } + next
             }
-            let weight = items.reduce(0) { $0 + $1.blocking } + items.count - 1
-            stacks.append((weight, root.number, items))
+            stacks.append(Stack(items: items))
         }
         // Pull requests in a cycle of bases have no bottom; list them alone.
         for pullRequest in ready where !placed.contains(pullRequest.number) {
-            stacks.append((blocks(pullRequest), pullRequest.number,
-                           [WaitingPullRequest(pullRequest: pullRequest, stackedOn: nil, blocking: blocks(pullRequest))]))
+            stacks.append(Stack(items: [waiting(pullRequest, stackedOn: nil)]))
         }
-        return stacks.sorted { $0.weight == $1.weight ? $0.root < $1.root : $0.weight > $1.weight }.flatMap(\.items)
+        return stacks.sorted { $0.weight == $1.weight ? $0.bottom < $1.bottom : $0.weight > $1.weight }.flatMap(\.items)
     }
 
     /// Section 5: the issues agents start next, in the order the daemon will
-    /// start them, and those held. `upcoming` are the ready issues not yet
-    /// queued, in the selection's order.
-    static func plan(
-        _ state: WorkspaceState, upcoming: [LinearIssue], standup: WorkspaceStandup
-    ) -> (plan: [PlanItem], held: [PlanItem]) {
+    /// start them, and those held.
+    struct Plan: Sendable, Equatable {
+        var queue: [PlanItem]
+        var held: [PlanItem]
+    }
+
+    /// Section 5. `upcoming` are the ready issues not yet queued, in the
+    /// selection's order.
+    static func plan(_ state: WorkspaceState, upcoming: [LinearIssue], standup: WorkspaceStandup) -> Plan {
         let queued = state.inFlight.values.filter(\.isFresh)
             .sorted { a, b in
                 let (dateA, dateB) = (a.queuedAt ?? .distantPast, b.queuedAt ?? .distantPast)
                 return dateA == dateB ? a.identifier < b.identifier : dateA < dateB
             }
-            .map { PlanItem(issueId: $0.issueId, identifier: $0.identifier, title: "", queued: true) }
+            .map { PlanItem(issueId: LinearIssue.ID(rawValue: $0.issueId), identifier: $0.identifier, title: "", queued: true) }
         let queuedIds = Set(queued.map(\.issueId))
-        let next = upcoming.filter { !queuedIds.contains($0.id.rawValue) }
-            .map { PlanItem(issueId: $0.id.rawValue, identifier: $0.identifier, title: $0.title) }
+        let next = upcoming.filter { !queuedIds.contains($0.id) }
+            .map { PlanItem(issueId: $0.id, identifier: $0.identifier, title: $0.title) }
         let all = standup.ordered(queued + next, id: \.issueId)
         var held = all.filter { standup.held[$0.issueId] != nil }
         let listed = Set(held.map(\.issueId))
@@ -180,23 +222,75 @@ enum Standup {
         for (id, identifier) in standup.held.sorted(by: { $0.value < $1.value }) where !listed.contains(id) {
             held.append(PlanItem(issueId: id, identifier: identifier, title: ""))
         }
-        return (all.filter { standup.held[$0.issueId] == nil }, held)
+        return Plan(queue: all.filter { standup.held[$0.issueId] == nil }, held: held)
     }
 
     /// The issues in `blocked` whose every open blocker is in `closed`.
-    static func unblocked(_ blocked: [LinearIssue.ID: WaitingIssue], closing closed: Set<String>) -> [String] {
+    static func unblocked(
+        _ blocked: [LinearIssue.ID: WaitingIssue], closing closed: Set<LinearIssue.Identifier>
+    ) -> [LinearIssue.Identifier] {
         blocked.values.filter { !$0.blockers.isEmpty && Set($0.blockers).isSubset(of: closed) }
             .map(\.identifier)
-            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            .sorted { $0.sortsBefore($1) }
     }
 
     /// The most recent workflow run on the default branch, and GitHub's rate
     /// limit, as risks.
     struct DefaultBranchRun: Decodable, Sendable, Equatable {
-        var status: String
-        var conclusion: String?
+        /// Where the run is, as `gh run list` reports it.
+        enum Status: String, Decodable, Sendable {
+            case queued, requested, waiting, pending, completed
+            case inProgress = "in_progress"
+            /// A status GitHub added since.
+            case unknown
+
+            init(from decoder: Decoder) throws {
+                self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+            }
+        }
+
+        /// How a completed run ended, as `gh run list` reports it.
+        enum Conclusion: String, Decodable, Sendable {
+            case success, failure, neutral, cancelled, skipped, stale
+            case timedOut = "timed_out"
+            case actionRequired = "action_required"
+            case startupFailure = "startup_failure"
+            /// A conclusion GitHub added since.
+            case unknown
+
+            init(from decoder: Decoder) throws {
+                self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+            }
+
+            /// Whether the run passed, or did nothing to fail.
+            var isPassing: Bool { [.success, .skipped, .neutral].contains(self) }
+        }
+
+        var status: Status
+        var conclusion: Conclusion?
         var url: String?
         var workflowName: String?
+
+        init(status: Status, conclusion: Conclusion? = nil, url: String? = nil, workflowName: String? = nil) {
+            self.status = status
+            self.conclusion = conclusion
+            self.url = url
+            self.workflowName = workflowName
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            status = try container.decode(Status.self, forKey: .status)
+            // `gh` reports an empty conclusion for a run still going.
+            let conclusion = try container.decodeIfPresent(String.self, forKey: .conclusion) ?? ""
+            self.conclusion = conclusion.isEmpty ? nil : Conclusion(rawValue: conclusion) ?? .unknown
+            url = try container.decodeIfPresent(String.self, forKey: .url)
+            workflowName = try container.decodeIfPresent(String.self, forKey: .workflowName)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case status, conclusion, url, workflowName
+        }
     }
 
     struct RateLimit: Sendable, Equatable {
@@ -213,10 +307,10 @@ enum Standup {
         defaultBranch: String?, latestRun: DefaultBranchRun?, rateLimit: RateLimit?, now: Date = Date()
     ) -> [String] {
         var risks: [String] = []
-        if let defaultBranch, let run = latestRun, run.status == "completed",
-           let conclusion = run.conclusion, !["success", "skipped", "neutral"].contains(conclusion) {
+        if let defaultBranch, let run = latestRun, run.status == .completed,
+           let conclusion = run.conclusion, !conclusion.isPassing {
             let name = run.workflowName.map { " (\($0))" } ?? ""
-            risks.append("CI \(conclusion) on \(defaultBranch)\(name)" + (run.url.map { ": \($0)" } ?? ""))
+            risks.append("CI \(conclusion.rawValue) on \(defaultBranch)\(name)" + (run.url.map { ": \($0)" } ?? ""))
         }
         if let rateLimit, rateLimit.limit > 0,
            Double(rateLimit.remaining) < Double(rateLimit.limit) * rateLimitWarning {
@@ -251,11 +345,13 @@ extension StandupView {
         done = Standup.done(state, since: since, now: now)
         proposals = state.proposals.filter { $0.status == .pending }.sorted { $0.createdAt < $1.createdAt }
         needsHuman = Standup.needsHuman(state)
-        (plan, held) = Standup.plan(state, upcoming: upcoming, standup: standup)
+        let plan = Standup.plan(state, upcoming: upcoming, standup: standup)
+        self.plan = plan.queue
+        held = plan.held
         unblocked = standup.unblocked
     }
 
-    func rendered(sections: [Int] = Array(1...6)) -> String {
+    func rendered(sections: [StandupSection] = StandupSection.allCases) -> String {
         var lines = ["\(workspace) · since \(StatusTime.rendered(since, now: now))"]
         lines += warnings.map { "  warning: \($0)" }
         for section in sections {
@@ -265,29 +361,32 @@ extension StandupView {
         return lines.joined(separator: "\n")
     }
 
-    func rendered(section: Int) -> [String] {
+    func rendered(section: StandupSection) -> [String] {
+        let title = section.title
         switch section {
-        case 1:
-            return ["1. Done autonomously"] + (done.isEmpty ? ["   Nothing"] : done.map { "   " + $0 })
-        case 2:
-            guard let waitingOnYou else { return ["2. Waiting on you", "   Not checked"] }
-            return ["2. Waiting on you"] + (waitingOnYou.isEmpty ? ["   Nothing"] : waitingOnYou.flatMap(Self.describe))
-        case 3:
-            return ["3. Proposals"] + (proposals.isEmpty ? ["   None pending"] : proposals.flatMap { ProposalsCommand.describe($0, now: now) })
-        case 4:
-            return ["4. Needs human"] + (needsHuman.isEmpty ? ["   Nothing"] : needsHuman.map(Self.describe))
-        case 5:
-            var lines = ["5. Plan for today"]
+        case .done:
+            return [title] + (done.isEmpty ? ["   Nothing"] : done.map { "   " + $0 })
+        case .waitingOnYou:
+            guard let waitingOnYou else { return [title, "   Not checked"] }
+            return [title] + (waitingOnYou.isEmpty ? ["   Nothing"] : waitingOnYou.flatMap(Self.describe))
+        case .proposals:
+            return [title] + (proposals.isEmpty ? ["   None pending"] : proposals.flatMap { ProposalsCommand.describe($0, now: now) })
+        case .needsHuman:
+            return [title] + (needsHuman.isEmpty ? ["   Nothing"] : needsHuman.map(Self.describe))
+        case .plan:
+            var lines = [title]
             lines += plan.isEmpty ? ["   Nothing queued"] : Self.numbered(plan)
             if !held.isEmpty { lines += ["   Held"] + held.map { "     \(Self.line($0))" } }
-            if !unblocked.isEmpty { lines.append("   Unblocked at the last standup: \(unblocked.joined(separator: ", "))") }
+            if !unblocked.isEmpty { lines.append("   Unblocked at the last standup: \(Self.list(unblocked))") }
             return lines
-        case 6:
-            guard let risks else { return ["6. Risks", "   Not checked"] }
-            return ["6. Risks"] + (risks.isEmpty ? ["   None found"] : risks.map { "   " + $0 })
-        default:
-            return []
+        case .risks:
+            guard let risks else { return [title, "   Not checked"] }
+            return [title] + (risks.isEmpty ? ["   None found"] : risks.map { "   " + $0 })
         }
+    }
+
+    static func list(_ identifiers: [LinearIssue.Identifier]) -> String {
+        identifiers.map(\.rawValue).joined(separator: ", ")
     }
 
     static func describe(_ waiting: WaitingPullRequest) -> [String] {
@@ -295,7 +394,8 @@ extension StandupView {
         let indent = waiting.stackedOn == nil ? "   " : "     "
         var notes = [pullRequest.reviewState.rawValue, pullRequest.checkState.rawValue]
         if let below = waiting.stackedOn { notes.insert("stacked on #\(below)", at: 0) }
-        if waiting.blocking > 0 { notes.append("blocks \(waiting.blocking) issue\(waiting.blocking == 1 ? "" : "s")") }
+        let blocks = waiting.blockedIssues.count
+        if blocks > 0 { notes.append("blocks \(blocks) issue\(blocks == 1 ? "" : "s")") }
         return [
             "\(indent)#\(pullRequest.number) \(pullRequest.title)",
             "\(indent)  " + (notes + [pullRequest.url]).joined(separator: " · "),
@@ -303,12 +403,12 @@ extension StandupView {
     }
 
     static func describe(_ item: NeedsHumanItem) -> String {
-        let blocks = item.blocking > 0 ? " · blocks \(item.blocking)" : ""
+        let blocks = item.blockedIssues.isEmpty ? "" : " · blocks \(item.blockedIssues.count)"
         return "   \(item.issue.identifier)  \(item.issue.title)  [\(item.issue.labels.joined(separator: ", "))\(blocks)]"
     }
 
     static func line(_ item: PlanItem) -> String {
-        ([item.identifier, item.title].filter { !$0.isEmpty } + (item.queued ? ["(queued)"] : [])).joined(separator: "  ")
+        ([item.identifier.rawValue, item.title].filter { !$0.isEmpty } + (item.queued ? ["(queued)"] : [])).joined(separator: "  ")
     }
 
     static func numbered(_ items: [PlanItem], prefix: String = "") -> [String] {
@@ -317,13 +417,11 @@ extension StandupView {
 }
 
 enum StandupError: Error, CustomStringConvertible, Equatable {
-    case badDate(String)
     case badPayload(String)
     case noItem(String)
 
     var description: String {
         switch self {
-        case .badDate(let text): "\"\(text)\" is not a date like 2026-10-31"
         case .badPayload(let message): "The edited change could not be read: \(message)"
         case .noItem(let text): "No item \(text)"
         }
@@ -341,15 +439,20 @@ struct StandupSession: Sendable {
     var deferred: [Proposal.ID] = []
     /// Issues to move to Done.
     var done: [NeedsHumanItem] = []
-    var decisions: [(item: NeedsHumanItem, text: String)] = []
-    var dueDates: [(item: NeedsHumanItem, date: String)] = []
+    var decisions: [Decision] = []
     /// Identifiers of held issues, by issue ID.
-    var held: [String: String]
+    var held: [LinearIssue.ID: LinearIssue.Identifier]
     /// The plan in its current order.
     var plan: [PlanItem]
     /// Whether the owner moved anything, so the order is worth keeping.
     var reordered = false
     var promoted: [PlanItem] = []
+
+    /// A decision entered for an issue that needs a human.
+    struct Decision: Sendable, Equatable {
+        var item: NeedsHumanItem
+        var text: String
+    }
 
     init(view: StandupView, standup: WorkspaceStandup) {
         self.view = view
@@ -416,23 +519,13 @@ struct StandupSession: Sendable {
     mutating func addDecision(_ item: NeedsHumanItem, text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        decisions.append((item, text))
-    }
-
-    mutating func setDueDate(_ item: NeedsHumanItem, date: String) throws {
-        let date = date.trimmingCharacters(in: .whitespaces)
-        guard date.wholeMatch(of: /\d{4}-\d{2}-\d{2}/) != nil, Self.dayFormatter.date(from: date) != nil else {
-            throw StandupError.badDate(date)
-        }
-        dueDates.removeAll { $0.item == item }
-        dueDates.append((item, date))
+        decisions.append(Decision(item: item, text: text))
     }
 
     static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
-        formatter.isLenient = false
         return formatter
     }()
 

@@ -6,7 +6,7 @@ import Testing
 // a PR as merged when it is not would delete work still under review.
 @Suite("Pull request checks")
 struct PullRequestTests {
-    private func pr(_ number: Int, _ state: PullRequest.State) -> PullRequest {
+    private func pr(_ number: PullRequest.Number, _ state: PullRequest.State) -> PullRequest {
         PullRequest(number: number, url: "https://github.com/o/r/pull/\(number)", state: state)
     }
 

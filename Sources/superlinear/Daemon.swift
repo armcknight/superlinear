@@ -216,9 +216,9 @@ actor Daemon {
             }.filter { name, run in
                 // A standup's hold keeps an agent from starting on a new issue,
                 // but not from going on with one it started.
-                workspace(named: name) != nil && !(run.isFresh && standups[name].held[run.issueId] != nil)
+                workspace(named: name) != nil && !(run.isFresh && standups[name].held[LinearIssue.ID(rawValue: run.issueId)] != nil)
             }
-            guard let (name, run) = AgentRunner.nextQueued(queued, rank: { self.standups[$0].rank(of: $1.issueId) }),
+            guard let (name, run) = AgentRunner.nextQueued(queued, rank: { self.standups[$0].rank(of: LinearIssue.ID(rawValue: $1.issueId)) }),
                   let workspace = workspace(named: name)
             else { break }
             guard launch(run, workspace: workspace) else { break }
@@ -378,8 +378,7 @@ actor Daemon {
     /// Issues waiting on blockers, a human or a standup's hold, which each
     /// poll checks again.
     func waitingIssueIds(workspace: String) -> Set<LinearIssue.ID> {
-        let held = standups[workspace].held.keys.map(LinearIssue.ID.init(rawValue:))
-        return (state.workspaces[workspace]?.waitingIssueIds ?? []).union(held)
+        (state.workspaces[workspace]?.waitingIssueIds ?? []).union(standups[workspace].held.keys)
     }
 
     /// Records the issues the latest poll found waiting, logging those that

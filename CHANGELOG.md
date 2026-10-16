@@ -13,9 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   superlinear did since the last standup; pull requests waiting on you,
   those holding back the most work first, by stack; pending proposals to
   approve, edit in `$EDITOR`, reject with a reason, or defer; issues that
-  need a human, those blocking the most first, to mark done, record a
-  decision on, or give a due date; the plan for today, to hold, reorder, or
-  promote from the backlog; and risks: CI failing on the default branch
+  need a human, those blocking the most first, to mark done or record a
+  decision on; the plan for today, to hold, reorder, or promote from the
+  backlog; and risks: CI failing on the default branch
   and a low GitHub rate limit. Decisions are applied at the end and
   recorded in `~/.local/share/superlinear/standup.json`, which the daemon
   reads at each poll. `--print` shows the main sections without prompts. A

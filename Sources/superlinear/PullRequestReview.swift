@@ -3,7 +3,7 @@ import Foundation
 /// An open pull request as `superlinear status` lists it for review, with what
 /// GitHub knows about its reviews and checks.
 struct ReviewablePullRequest: Codable, Sendable, Equatable {
-    let number: Int
+    let number: PullRequest.Number
     let url: String
     let title: String
     let headRefName: String
@@ -80,10 +80,10 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
     /// Identifiers of Linear issues the branch or title names, such as SPL-5
     /// in `linear/spl-5-status-function` or "SPL-5: Status". Whether each
     /// exists is for Linear to say.
-    var issueIdentifiers: [String] {
-        var identifiers: [String] = []
+    var issueIdentifiers: [LinearIssue.Identifier] {
+        var identifiers: [LinearIssue.Identifier] = []
         func add(_ key: Substring, _ number: Substring) {
-            let identifier = "\(key.uppercased())-\(number)"
+            let identifier = LinearIssue.Identifier(rawValue: "\(key.uppercased())-\(number)")
             if !identifiers.contains(identifier) { identifiers.append(identifier) }
         }
         for match in headRefName.matches(of: /(?i)(?:^|[^a-z0-9])([a-z][a-z0-9]*)-(\d+)(?![0-9])/) {
@@ -119,7 +119,7 @@ struct ReviewEntry: Sendable, Equatable {
         }.sorted { a, b in
             a.issue.identifier == b.issue.identifier
                 ? a.pullRequest.number < b.pullRequest.number
-                : a.issue.identifier.localizedStandardCompare(b.issue.identifier) == .orderedAscending
+                : a.issue.identifier.sortsBefore(b.issue.identifier)
         }
     }
 }

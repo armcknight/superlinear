@@ -62,10 +62,6 @@ private actor FakeLinear: StandupWriting {
         writes.append("done \(id)")
         return true
     }
-
-    func setDueDate(id: LinearIssue.ID, dueDate: String) async throws -> JSONValue {
-        written("due \(id) \(dueDate)")
-    }
 }
 
 /// The owner, as a script of answers.
@@ -158,7 +154,7 @@ private func lastRecord() -> WorkspaceStandup {
     return standup
 }
 
-private func upcoming(_ identifier: String, id: String) -> LinearIssue {
+private func upcoming(_ identifier: LinearIssue.Identifier, id: String) -> LinearIssue {
     LinearIssue(
         id: LinearIssue.ID(rawValue: id), identifier: identifier, title: "Ready \(identifier)", branchName: id,
         createdAt: now, team: .init(id: "t", key: "SPL")
@@ -174,7 +170,7 @@ private func view(_ standup: WorkspaceStandup = lastRecord()) throws -> StandupV
     return view
 }
 
-private func pullRequest(_ number: Int, head: String, base: String = "main", draft: Bool = false) -> ReviewablePullRequest {
+private func pullRequest(_ number: PullRequest.Number, head: String, base: String = "main", draft: Bool = false) -> ReviewablePullRequest {
     ReviewablePullRequest(
         number: number, url: "https://github.com/o/r/pull/\(number)", title: "PR \(number)", headRefName: head,
         isDraft: draft, reviewDecision: nil, latestReviews: nil, statusCheckRollup: nil, baseRefName: base
@@ -200,7 +196,7 @@ private func applier(_ linear: FakeLinear, specDocument: LinearDocument.ID? = ni
 struct StandupSectionTests {
     @Test("Done autonomously lists the activity and automatic proposals since the last standup")
     func done() throws {
-        let lines = try view().rendered(section: 1).joined(separator: "\n")
+        let lines = try view().rendered(section: .done).joined(separator: "\n")
         #expect(!lines.contains("SPL-1"))
         #expect(lines.contains("agent finished SPL-2"))
         #expect(lines.contains("conflicts resolved on SPL-3: https://github.com/o/r/pull/3"))
@@ -215,7 +211,7 @@ struct StandupSectionTests {
     func firstStandup() throws {
         let view = try view(WorkspaceStandup())
         #expect(view.since == now.addingTimeInterval(-7 * 24 * 60 * 60))
-        #expect(view.rendered(section: 1).joined().contains("agent started on SPL-1"))
+        #expect(view.rendered(section: .done).joined().contains("agent started on SPL-1"))
     }
 
     @Test("Waiting on you orders stacks by the work they hold back, bottom first")
@@ -234,10 +230,10 @@ struct StandupSectionTests {
         // #4 is a draft and #20 has an agent on it.
         #expect(waiting.map(\.pullRequest.number) == [2, 3, 5, 1])
         #expect(waiting.map(\.stackedOn) == [nil, 2, nil, nil])
-        #expect(waiting.map(\.blocking) == [2, 0, 1, 0])
+        #expect(waiting.map(\.blockedIssues) == [["SPL-41", "SPL-42"], [], ["SPL-43"], []])
         var view = try view()
         view.waitingOnYou = waiting
-        let text = view.rendered(section: 2).joined(separator: "\n")
+        let text = view.rendered(section: .waitingOnYou).joined(separator: "\n")
         #expect(text.contains("#3 PR 3"))
         #expect(text.contains("stacked on #2"))
         #expect(text.contains("blocks 2 issues"))
@@ -245,7 +241,7 @@ struct StandupSectionTests {
 
     @Test("Proposals lists those pending, with reason, source and diff")
     func proposals() throws {
-        let text = try view().rendered(section: 3).joined(separator: "\n")
+        let text = try view().rendered(section: .proposals).joined(separator: "\n")
         #expect(text.contains("editIssue → issue SPL-7"))
         #expect(text.contains("reason: the plan changed"))
         #expect(text.contains("source: agent session abc"))
@@ -259,8 +255,8 @@ struct StandupSectionTests {
     func needsHuman() throws {
         let view = try view()
         #expect(view.needsHuman.map(\.issue.identifier) == ["SPL-5", "SPL-6", "SPL-7"])
-        #expect(view.needsHuman.map(\.blocking) == [2, 1, 0])
-        #expect(view.rendered(section: 4).joined(separator: "\n").contains("SPL-5  Choose a database  [Needs human · blocks 2]"))
+        #expect(view.needsHuman.map(\.blockedIssues) == [["SPL-41", "SPL-42"], ["SPL-43"], []])
+        #expect(view.rendered(section: .needsHuman).joined(separator: "\n").contains("SPL-5  Choose a database  [Needs human · blocks 2]"))
     }
 
     @Test("The plan lists the queue, then the ready issues, in the standup's order, holds apart")
@@ -271,7 +267,7 @@ struct StandupSectionTests {
         let view = try view(standup)
         #expect(view.plan.map(\.identifier) == ["SPL-34", "SPL-31", "SPL-33"])
         #expect(view.held.map(\.identifier) == ["SPL-32", "SPL-99"])
-        let text = view.rendered(section: 5).joined(separator: "\n")
+        let text = view.rendered(section: .plan).joined(separator: "\n")
         #expect(text.contains("1. SPL-34  Ready SPL-34"))
         #expect(text.contains("2. SPL-31  (queued)"))
         #expect(text.contains("Unblocked at the last standup: SPL-30"))
@@ -279,7 +275,7 @@ struct StandupSectionTests {
 
     @Test("Risks list CI failing on the default branch and a low rate limit")
     func risks() {
-        let failing = Standup.DefaultBranchRun(status: "completed", conclusion: "failure", url: "https://ci/1", workflowName: "ci")
+        let failing = Standup.DefaultBranchRun(status: .completed, conclusion: .failure, url: "https://ci/1", workflowName: "ci")
         let risks = Standup.risks(
             defaultBranch: "main", latestRun: failing,
             rateLimit: Standup.RateLimit(remaining: 100, limit: 5000, reset: now.addingTimeInterval(600)), now: now
@@ -287,11 +283,27 @@ struct StandupSectionTests {
         #expect(risks.count == 2)
         #expect(risks[0] == "CI failure on main (ci): https://ci/1")
         #expect(risks[1].hasPrefix("GitHub rate limit: 100 of 5000 left"))
-        let passing = Standup.DefaultBranchRun(status: "completed", conclusion: "success")
+        let passing = Standup.DefaultBranchRun(status: .completed, conclusion: .success)
         #expect(Standup.risks(
             defaultBranch: "main", latestRun: passing,
             rateLimit: Standup.RateLimit(remaining: 4000, limit: 5000, reset: now), now: now
         ).isEmpty)
+    }
+
+    @Test("A run is read from gh run list, values GitHub adds later included")
+    func defaultBranchRun() throws {
+        let data = Data(#"""
+            [{"status": "in_progress", "conclusion": "", "url": "u", "workflowName": "ci"},
+             {"status": "completed", "conclusion": "timed_out"},
+             {"status": "brand_new", "conclusion": "brand_new"}]
+            """#.utf8)
+        let runs = try JSONDecoder().decode([Standup.DefaultBranchRun].self, from: data)
+        #expect(runs == [
+            Standup.DefaultBranchRun(status: .inProgress, url: "u", workflowName: "ci"),
+            Standup.DefaultBranchRun(status: .completed, conclusion: .timedOut),
+            Standup.DefaultBranchRun(status: .unknown, conclusion: .unknown),
+        ])
+        #expect(Standup.risks(defaultBranch: "main", latestRun: runs[1], rateLimit: nil) == ["CI timed_out on main"])
     }
 
     @Test("The rate limit is read from gh api rate_limit")
@@ -330,9 +342,9 @@ struct StandupActionTests {
     ) async throws -> (WorkspaceStandup, [String], ScriptedIO) {
         let io = ScriptedIO(answers, edits: edits)
         let session = try StandupPrompter(io: io).run(try view(record), standup: record)
-        let (updated, summary) = await applier(linear, specDocument: specDocument)
+        let outcome = await applier(linear, specDocument: specDocument)
             .apply(session, state: try loadState(), standup: record, now: now)
-        return (updated, summary, io)
+        return (outcome.standup, outcome.summary, io)
     }
 
     private func linear() -> FakeLinear {
@@ -419,12 +431,13 @@ struct StandupActionTests {
         #expect(record.decisions.map(\.text) == ["Postgres"])
     }
 
-    @Test("A due date must be a day; a valid one is set")
-    func dueDate() async throws {
+    @Test("An unknown key asks again")
+    func unknownKey() async throws {
         let linear = linear()
-        let (_, _, io) = try await standup(["d", "d", "", "t", "soon", "t", "2027-02-01", "", ""], linear: linear)
-        #expect(io.text.contains("\"soon\" is not a date"))
-        #expect(await linear.writes == ["due i-h6 2027-02-01"])
+        let (_, _, io) = try await standup(["x", "d", "d", "t", "", "", ""], linear: linear)
+        #expect(io.text.contains("Type a, e, r, d or q"))
+        #expect(io.text.contains("Type d, e, s or q"))
+        #expect(await linear.writes.isEmpty)
     }
 
     @Test("Hold, move and promote change the plan as recorded")
@@ -483,7 +496,7 @@ struct StandupBookkeepingTests {
     @Test("A standup's order moves fresh runs ahead; others keep their turn")
     func queueOrder() {
         func run(_ id: String, queued: TimeInterval, review: Bool = false) -> (String, AgentRun) {
-            var run = AgentRun(issueId: id, identifier: id, branchName: id, sessionId: id, queuedAt: now.addingTimeInterval(queued))
+            var run = AgentRun(issueId: id, identifier: .init(rawValue: id), branchName: id, sessionId: id, queuedAt: now.addingTimeInterval(queued))
             if review { run.review = ReviewRequest(number: 1, url: "u") }
             return ("w", run)
         }

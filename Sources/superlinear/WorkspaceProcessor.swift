@@ -16,11 +16,11 @@ struct WorkspaceProcessor: Sendable {
         )
         await daemon.recordWaiting(plan, workspace: workspace.name)
         let standup = await daemon.standup(workspace: workspace.name)
-        let held = plan.start.filter { standup.held[$0.id.rawValue] != nil }
+        let held = plan.start.filter { standup.held[$0.id] != nil }
         if !held.isEmpty {
-            log("Holding \(held.map(\.identifier).joined(separator: ", ")) until a standup releases them")
+            log("Holding \(held.map(\.identifier.rawValue).joined(separator: ", ")) until a standup releases them")
         }
-        plan.start = standup.ordered(plan.start.filter { standup.held[$0.id.rawValue] == nil }, id: \.id.rawValue)
+        plan.start = standup.ordered(plan.start.filter { standup.held[$0.id] == nil }, id: \.id)
 
         if plan.start.isEmpty {
             log("No issues to start")
@@ -152,7 +152,7 @@ struct WorkspaceProcessor: Sendable {
     }
 
     /// Attaches each pull request not yet linked to the issue in Linear.
-    private func link(_ pullRequests: [PullRequest], issueId: String, identifier: String, client: LinearClient) async {
+    private func link(_ pullRequests: [PullRequest], issueId: String, identifier: LinearIssue.Identifier, client: LinearClient) async {
         let linked = await daemon.linkedPullRequests(issueId: issueId, workspace: workspace.name)
         for pullRequest in pullRequests where !linked.contains(pullRequest.url) {
             do {

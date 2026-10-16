@@ -41,7 +41,6 @@ enum LinearQuery: CaseIterable, Sendable {
     case changeProjectSpec
     case changeDocumentSpec
     case postProjectUpdate
-    case setDueDate
 
     var text: String {
         switch self {
@@ -246,11 +245,6 @@ enum LinearQuery: CaseIterable, Sendable {
         case .postProjectUpdate: """
             mutation PostProjectUpdate($projectId: String!, $body: String!) {
               projectUpdateCreate(input: { projectId: $projectId, body: $body }) { success projectUpdate { id url } }
-            }
-            """
-        case .setDueDate: """
-            mutation SetDueDate($id: String!, $dueDate: TimelessDate) {
-              issueUpdate(id: $id, input: { dueDate: $dueDate }) { success issue { id identifier dueDate } }
             }
             """
         }

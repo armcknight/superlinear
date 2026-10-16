@@ -23,7 +23,7 @@ struct ActivityEvent: Codable, Sendable, Equatable {
 
     var time: Date
     var kind: Kind
-    var identifier: String
+    var identifier: LinearIssue.Identifier
     /// A pull request URL, an exit status, or why the daemon gave up.
     var detail: String?
 

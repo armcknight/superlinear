@@ -50,16 +50,49 @@ struct StandupAborted: Error {}
 struct StandupPrompter {
     let io: any StandupIO
 
+    /// What the owner can do with a proposal. Enter defers it.
+    enum ProposalAction: String {
+        case approve = "a"
+        case edit = "e"
+        case reject = "r"
+        case `defer` = "d"
+
+        init?(answer: String?) {
+            guard let answer, !answer.isEmpty else { self = .defer; return }
+            self.init(rawValue: answer.lowercased())
+        }
+    }
+
+    /// What the owner can do with an issue that needs a human. Enter skips it.
+    enum NeedsHumanAction: String {
+        case markDone = "d"
+        case enterDecision = "e"
+        case skip = "s"
+
+        init?(answer: String?) {
+            guard let answer, !answer.isEmpty else { self = .skip; return }
+            self.init(rawValue: answer.lowercased())
+        }
+    }
+
+    /// The commands that change the plan, each taking an item's number.
+    enum PlanCommand: String {
+        case toggleHold = "h"
+        case moveUp = "u"
+        case moveDown = "d"
+        case togglePromotion = "p"
+    }
+
     func run(_ view: StandupView, standup: WorkspaceStandup) throws -> StandupSession {
         var session = StandupSession(view: view, standup: standup)
         io.say(view.rendered(sections: []))
-        for section in [1, 2] {
+        for section in [StandupSection.done, .waitingOnYou] {
             io.say("\n" + view.rendered(section: section).joined(separator: "\n"))
         }
         try proposals(&session)
         try needsHuman(&session)
         try plan(&session)
-        io.say("\n" + view.rendered(section: 6).joined(separator: "\n"))
+        io.say("\n" + view.rendered(section: .risks).joined(separator: "\n"))
         return session
     }
 
@@ -70,17 +103,17 @@ struct StandupPrompter {
     }
 
     private func proposals(_ session: inout StandupSession) throws {
-        io.say("\n" + session.view.rendered(section: 3).prefix(1).joined())
+        io.say("\n" + StandupSection.proposals.title)
         guard !session.view.proposals.isEmpty else { io.say("   None pending"); return }
         for original in session.view.proposals {
             var proposal = original
             io.say(ProposalsCommand.describe(proposal, now: session.view.now).joined(separator: "\n"))
             asking: while true {
-                switch try answer("   [a]pprove, [e]dit, [r]eject, [d]efer (default), [q]uit? ")?.lowercased() {
-                case "a":
+                switch ProposalAction(answer: try answer("   [a]pprove, [e]dit, [r]eject, [d]efer (default), [q]uit? ")) {
+                case .approve:
                     session.approve(proposal)
                     break asking
-                case "e":
+                case .edit:
                     guard let text = io.edit(try StandupSession.editable(proposal.payload)) else {
                         io.say("   Not edited")
                         continue
@@ -91,13 +124,13 @@ struct StandupPrompter {
                     } catch {
                         io.say("   \(error)")
                     }
-                case "r":
+                case .reject:
                     session.reject(original, reason: try answer("   Reason: "), now: session.view.now)
                     break asking
-                case "d", "", nil:
+                case .defer:
                     session.defer(original)
                     break asking
-                default:
+                case nil:
                     io.say("   Type a, e, r, d or q")
                 }
             }
@@ -105,36 +138,30 @@ struct StandupPrompter {
     }
 
     private func needsHuman(_ session: inout StandupSession) throws {
-        io.say("\n4. Needs human")
+        io.say("\n" + StandupSection.needsHuman.title)
         guard !session.view.needsHuman.isEmpty else { io.say("   Nothing"); return }
         for item in session.view.needsHuman {
             io.say(StandupView.describe(item))
             asking: while true {
-                switch try answer("   mark [d]one, [e]nter a decision, set a due da[t]e, [s]kip (default), [q]uit? ")?.lowercased() {
-                case "d":
+                switch NeedsHumanAction(answer: try answer("   mark [d]one, [e]nter a decision, [s]kip (default), [q]uit? ")) {
+                case .markDone:
                     session.markDone(item)
                     break asking
-                case "e":
+                case .enterDecision:
                     session.addDecision(item, text: try answer("   Decision: ") ?? "")
-                case "t":
-                    do {
-                        try session.setDueDate(item, date: try answer("   Due date (YYYY-MM-DD): ") ?? "")
-                    } catch let error as StandupError {
-                        io.say("   \(error)")
-                    }
-                case "s", "", nil:
+                case .skip:
                     break asking
-                default:
-                    io.say("   Type d, e, t, s or q")
+                case nil:
+                    io.say("   Type d, e, s or q")
                 }
             }
         }
     }
 
     private func plan(_ session: inout StandupSession) throws {
-        io.say("\n5. Plan for today")
+        io.say("\n" + StandupSection.plan.title)
         if !session.view.unblocked.isEmpty {
-            io.say("   Unblocked at the last standup: \(session.view.unblocked.joined(separator: ", "))")
+            io.say("   Unblocked at the last standup: \(StandupView.list(session.view.unblocked))")
         }
         io.say(session.renderedPlan().joined(separator: "\n"))
         guard !session.plan.isEmpty || !session.view.backlog.isEmpty else { return }
@@ -143,19 +170,20 @@ struct StandupPrompter {
             let parts = line.lowercased().split(separator: " ", maxSplits: 1).map(String.init)
             let argument = parts.count == 2 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
             let number = Int(argument.hasPrefix("b") ? String(argument.dropFirst()) : argument)
-            guard let command = parts.first, let number, number > 0 else {
+            guard let letter = parts.first, let number, number > 0 else {
                 io.say("   Type a letter and a number, as in u 2 or p b1")
+                continue
+            }
+            guard let command = PlanCommand(rawValue: letter) else {
+                io.say("   Type h, u, d or p and a number")
                 continue
             }
             do {
                 switch command {
-                case "h": try session.toggleHold(number - 1)
-                case "u": try session.moveUp(number - 1)
-                case "d": try session.moveDown(number - 1)
-                case "p": try session.togglePromotion(number - 1)
-                default:
-                    io.say("   Type h, u, d or p and a number")
-                    continue
+                case .toggleHold: try session.toggleHold(number - 1)
+                case .moveUp: try session.moveUp(number - 1)
+                case .moveDown: try session.moveDown(number - 1)
+                case .togglePromotion: try session.togglePromotion(number - 1)
                 }
             } catch {
                 io.say("   \(error)")
@@ -164,6 +192,14 @@ struct StandupPrompter {
             io.say(session.renderedPlan().joined(separator: "\n"))
         }
     }
+}
+
+/// What applying a standup came to.
+struct StandupOutcome: Sendable, Equatable {
+    /// The workspace's standup record, updated with the standup.
+    var standup: WorkspaceStandup
+    /// What was done, a line each, for the owner.
+    var summary: [String]
 }
 
 /// Applies what the owner decided at a standup, and records it.
@@ -177,10 +213,10 @@ struct StandupApplier {
     /// with it, and a summary.
     func apply(
         _ session: StandupSession, state: WorkspaceState, standup: WorkspaceStandup, now: Date = Date()
-    ) async -> (standup: WorkspaceStandup, summary: [String]) {
+    ) async -> StandupOutcome {
         var summary: [String] = []
         var outcomes: [Proposal] = []
-        var closed: Set<String> = []
+        var closed: Set<LinearIssue.Identifier> = []
 
         for proposal in session.approved {
             let result = await engine.apply(proposal, now: now)
@@ -189,7 +225,9 @@ struct StandupApplier {
             switch result.status {
             case .applied:
                 summary.append("Applied \(name)")
-                if result.kind == .closeIssue, let identifier = result.target.name { closed.insert(identifier) }
+                if result.kind == .closeIssue, let identifier = result.target.name {
+                    closed.insert(LinearIssue.Identifier(rawValue: identifier))
+                }
             case .rejected:
                 summary.append("Rejected \(name): \(result.rejectionReason ?? "no reason")")
             default:
@@ -217,7 +255,8 @@ struct StandupApplier {
 
         let day = StandupSession.dayFormatter.string(from: now)
         var recorded: [StandupDecision] = []
-        for (item, text) in session.decisions {
+        for decision in session.decisions {
+            let (item, text) = (decision.item, decision.text)
             let identifier = item.issue.identifier
             do {
                 let issue = try await linear.editableIssue(id: item.id)
@@ -243,18 +282,9 @@ struct StandupApplier {
             }
         }
 
-        for (item, date) in session.dueDates {
-            do {
-                _ = try await linear.setDueDate(id: item.id, dueDate: date)
-                summary.append("Set \(item.issue.identifier) due \(date)")
-            } catch {
-                summary.append("Could not set the due date of \(item.issue.identifier): \(error)")
-            }
-        }
-
         for item in session.promoted {
             do {
-                _ = try await linear.promoteIssue(id: LinearIssue.ID(rawValue: item.issueId))
+                _ = try await linear.promoteIssue(id: item.issueId)
                 summary.append("Promoted \(item.identifier) to Todo")
             } catch {
                 summary.append("Could not promote \(item.identifier): \(error)")
@@ -263,24 +293,24 @@ struct StandupApplier {
 
         var record = standup
         record.lastStandupAt = now
-        for proposal in session.view.proposals where record.proposalsShownAt[proposal.id.rawValue] == nil {
-            record.proposalsShownAt[proposal.id.rawValue] = now
+        for proposal in session.view.proposals where record.proposalsShownAt[proposal.id] == nil {
+            record.proposalsShownAt[proposal.id] = now
         }
         record.proposalOutcomes += outcomes
         record.decisions += recorded
         let newlyHeld = session.held.filter { standup.held[$0.key] == nil }.map(\.value).sorted()
         let released = standup.held.filter { session.held[$0.key] == nil }.map(\.value).sorted()
-        if !newlyHeld.isEmpty { summary.append("Holding \(newlyHeld.joined(separator: ", "))") }
-        if !released.isEmpty { summary.append("Released \(released.joined(separator: ", "))") }
+        if !newlyHeld.isEmpty { summary.append("Holding \(StandupView.list(newlyHeld))") }
+        if !released.isEmpty { summary.append("Released \(StandupView.list(released))") }
         record.held = session.held
         if session.reordered {
             record.order = session.plan.map(\.issueId)
-            summary.append("Agents start in the order " + session.plan.map(\.identifier).joined(separator: ", "))
+            summary.append("Agents start in the order " + StandupView.list(session.plan.map(\.identifier)))
         }
         record.unblocked = Standup.unblocked(state.blocked, closing: closed)
-        if !record.unblocked.isEmpty { summary.append("Unblocked \(record.unblocked.joined(separator: ", "))") }
+        if !record.unblocked.isEmpty { summary.append("Unblocked \(StandupView.list(record.unblocked))") }
         record.prune(now: now)
-        return (record, summary)
+        return StandupOutcome(standup: record, summary: summary)
     }
 }
 
@@ -338,8 +368,9 @@ enum StandupCommand {
                 linear: LinearClient(apiKey: workspace.apiKey),
                 specDocument: workspace.planning.specDocumentId
             )
-            let (updated, summary) = await applier.apply(session, state: workspaceState, standup: record[workspace.name])
-            record[workspace.name] = updated
+            let outcome = await applier.apply(session, state: workspaceState, standup: record[workspace.name])
+            let summary = outcome.summary
+            record[workspace.name] = outcome.standup
             do {
                 try record.save()
             } catch {
@@ -382,7 +413,7 @@ enum StandupCommand {
                 .filter { !handled.contains($0.id) }
                 .sorted(by: IssueSelection.readyOrder)
             view.backlog = backlog.prefix(backlogShown).map {
-                PlanItem(issueId: $0.id.rawValue, identifier: $0.identifier, title: $0.title)
+                PlanItem(issueId: $0.id, identifier: $0.identifier, title: $0.title)
             }
         } catch {
             view.warnings.append("Could not fetch the backlog from Linear: \(error)")

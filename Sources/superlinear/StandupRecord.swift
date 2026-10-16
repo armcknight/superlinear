@@ -3,7 +3,7 @@ import Foundation
 /// A decision the owner entered at a standup for an issue that needs a human.
 struct StandupDecision: Codable, Sendable, Equatable {
     var time: Date
-    var identifier: String
+    var identifier: LinearIssue.Identifier
     var text: String
 }
 
@@ -12,7 +12,7 @@ struct WorkspaceStandup: Codable, Sendable, Equatable {
     /// When the owner last finished a standup.
     var lastStandupAt: Date?
     /// When a standup first showed each proposal, by proposal ID.
-    var proposalsShownAt: [String: Date] = [:]
+    var proposalsShownAt: [Proposal.ID: Date] = [:]
     /// The proposals standups decided, as they ended up: applied, rejected,
     /// or pending still with the error that kept one from applying.
     var proposalOutcomes: [Proposal] = []
@@ -20,23 +20,23 @@ struct WorkspaceStandup: Codable, Sendable, Equatable {
     var decisions: [StandupDecision] = []
     /// Issues no agent starts on until a standup releases them: identifiers
     /// by issue ID.
-    var held: [String: String] = [:]
+    var held: [LinearIssue.ID: LinearIssue.Identifier] = [:]
     /// Issue IDs in the order agents are to start them, ahead of the rest.
-    var order: [String] = []
+    var order: [LinearIssue.ID] = []
     /// The identifiers of the issues the last standup unblocked.
-    var unblocked: [String] = []
+    var unblocked: [LinearIssue.Identifier] = []
 
     init() {}
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         lastStandupAt = try container.decodeIfPresent(Date.self, forKey: .lastStandupAt)
-        proposalsShownAt = try container.decodeIfPresent([String: Date].self, forKey: .proposalsShownAt) ?? [:]
+        proposalsShownAt = try container.decodeIfPresent([Proposal.ID: Date].self, forKey: .proposalsShownAt) ?? [:]
         proposalOutcomes = try container.decodeIfPresent([Proposal].self, forKey: .proposalOutcomes) ?? []
         decisions = try container.decodeIfPresent([StandupDecision].self, forKey: .decisions) ?? []
-        held = try container.decodeIfPresent([String: String].self, forKey: .held) ?? [:]
-        order = try container.decodeIfPresent([String].self, forKey: .order) ?? []
-        unblocked = try container.decodeIfPresent([String].self, forKey: .unblocked) ?? []
+        held = try container.decodeIfPresent([LinearIssue.ID: LinearIssue.Identifier].self, forKey: .held) ?? [:]
+        order = try container.decodeIfPresent([LinearIssue.ID].self, forKey: .order) ?? []
+        unblocked = try container.decodeIfPresent([LinearIssue.Identifier].self, forKey: .unblocked) ?? []
     }
 
     /// How long proposal outcomes and shown times stay, once the daemon has
@@ -51,12 +51,12 @@ struct WorkspaceStandup: Codable, Sendable, Equatable {
     }
 
     /// Where `issueId` comes in `order`, or nil when it was not moved.
-    func rank(of issueId: String) -> Int? {
+    func rank(of issueId: LinearIssue.ID) -> Int? {
         order.firstIndex(of: issueId)
     }
 
     /// `items` sorted by `order`, the ones in it first, the rest keeping their order.
-    func ordered<T>(_ items: [T], id: (T) -> String) -> [T] {
+    func ordered<T>(_ items: [T], id: (T) -> LinearIssue.ID) -> [T] {
         let ranked = items.enumerated().map { (rank(of: id($0.element)) ?? order.count + $0.offset, $0.element) }
         return ranked.sorted { $0.0 < $1.0 }.map(\.1)
     }

@@ -112,16 +112,10 @@ protocol StandupWriting: LinearWriting {
     /// Moves the issue to its team's first completed state. Returns false
     /// when it was completed or canceled already.
     func completeIssue(id: LinearIssue.ID) async throws -> Bool
-    /// Sets the issue's due date, a day such as `2026-10-31`.
-    func setDueDate(id: LinearIssue.ID, dueDate: String) async throws -> JSONValue
 }
 
 extension LinearClient: StandupWriting {
     func completeIssue(id: LinearIssue.ID) async throws -> Bool {
         try await completeIssue(id: id.rawValue)
-    }
-
-    func setDueDate(id: LinearIssue.ID, dueDate: String) async throws -> JSONValue {
-        try await mutate(.setDueDate, variables: ["id": id.rawValue, "dueDate": dueDate], field: "issueUpdate")
     }
 }
