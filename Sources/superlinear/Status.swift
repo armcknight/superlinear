@@ -1,7 +1,7 @@
 import Foundation
 
 extension PullRequest {
-    static let jsonFields = "number,url,state,headRefName,isDraft,additions,deletions,changedFiles,baseRefName"
+    static let jsonFields = "number,url,state,headRefName,isDraft,additions,deletions,changedFiles,baseRefName,headRefOid"
 
     /// The pull request that speaks for `branch`: an open one first, then a
     /// merged one, then a closed one, the newest of each.
@@ -38,6 +38,9 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
     case running
     /// An agent is addressing a review of its pull request, or is queued to.
     case addressingReview
+    /// An agent is merging the base branch into its pull request's branch to
+    /// resolve their conflicts, or is queued to.
+    case resolvingConflicts
     /// Its agent stopped without finishing, as at a reboot. The daemon resumes
     /// it when it next starts.
     case interrupted
@@ -61,6 +64,7 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
         switch self {
         case .running: "Running"
         case .addressingReview: "Addressing review"
+        case .resolvingConflicts: "Resolving conflicts"
         case .interrupted: "Interrupted"
         case .queued: "Queued"
         case .openPullRequest: "Open pull requests"
@@ -79,6 +83,7 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
         if let run {
             // Interrupted, it resumes like any other run.
             if run.review != nil && (running || run.isQueued) { return .addressingReview }
+            if run.conflict != nil && (running || run.isQueued) { return .resolvingConflicts }
             if run.isQueued { return .queued }
             return running ? .running : .interrupted
         }
@@ -116,9 +121,11 @@ struct WorkspaceReport: Sendable {
     var reviews: [ReviewEntry]? = nil
     /// The agents' open and merged pull requests, for the summary.
     var pullRequestStats: [PullRequestStats] = []
+    /// Local branches and worktrees no longer needed.
+    var stale: [StaleBranch] = []
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
-    let warnings: [String]
+    var warnings: [String]
 
     /// Puts each processed issue in a category. Issues Linear no longer
     /// returns, as when archived, are left out unless still in flight. When
@@ -171,13 +178,13 @@ struct WorkspaceReport: Sendable {
         case .running:
             guard let run else { return nil }
             return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run))"
-        case .addressingReview:
-            guard let run, let review = run.review else { return nil }
+        case .addressingReview, .resolvingConflicts:
+            guard let run, let url = run.review?.url ?? run.conflict?.url else { return nil }
             if run.isQueued {
                 let attempt = run.resumes > 0 ? ", to resume, attempt \(run.resumes + 1)" : ""
-                return "queued\(attempt), \(review.url)"
+                return "queued\(attempt), \(url)"
             }
-            return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run)), \(review.url)"
+            return "pid \(run.pid ?? 0), log \(runner.agentLog(for: run)), \(url)"
         case .interrupted:
             return "resumes when the daemon next starts"
         case .queued:
@@ -195,8 +202,10 @@ struct WorkspaceReport: Sendable {
         }
     }
 
+    static let staleHeading = "Stale branches and worktrees"
+
     /// The report as text, one section per category with entries in it.
-    func rendered() -> String {
+    func rendered(now: Date = Date()) -> String {
         var lines = [name]
         for warning in warnings {
             lines.append("  warning: \(warning)")
@@ -204,13 +213,20 @@ struct WorkspaceReport: Sendable {
         // Open pull requests are listed for review instead, when they could be.
         let tasks = reviews == nil ? entries : entries.filter { $0.category != .openPullRequest }
         let reviews = reviews ?? []
-        if tasks.isEmpty && reviews.isEmpty && warnings.isEmpty {
+        if tasks.isEmpty && reviews.isEmpty && stale.isEmpty && warnings.isEmpty {
             lines.append("  No tasks")
         }
         let width = (tasks.map(\.identifier.count) + reviews.map(\.issue.identifier.count)).max() ?? 0
         let indent = String(repeating: " ", count: 4 + width + 2)
         // Their pull requests wait on an agent, not on a reviewer.
-        let addressed = Set(entries.filter { $0.category == .addressingReview }.map(\.identifier))
+        var agentAt: [String: String] = [:]
+        for entry in entries {
+            switch entry.category {
+            case .addressingReview: agentAt[entry.identifier] = "agent addressing review"
+            case .resolvingConflicts: agentAt[entry.identifier] = "agent resolving conflicts"
+            default: break
+            }
+        }
 
         for (heading, drafts) in [("Awaiting review", false), ("Draft pull requests", true)] {
             let section = reviews.filter { $0.pullRequest.isDraft == drafts }
@@ -220,10 +236,11 @@ struct WorkspaceReport: Sendable {
                 let pullRequest = review.pullRequest
                 let padded = review.issue.identifier.padding(toLength: width, withPad: " ", startingAt: 0)
                 lines.append("    \(padded)  #\(pullRequest.number) \(pullRequest.title)".trimmingTrailingWhitespace())
-                let reviewState = addressed.contains(review.issue.identifier)
-                    ? "agent addressing review" : pullRequest.reviewState.rawValue
+                let reviewState = agentAt[review.issue.identifier] ?? pullRequest.reviewState.rawValue
                 let state = drafts ? [] : [reviewState]
-                lines.append(indent + (state + [pullRequest.checkState.rawValue, pullRequest.url]).joined(separator: " · "))
+                let conflicts = pullRequest.mergeable == "CONFLICTING" ? ["conflicts with \(pullRequest.baseRefName ?? "base")"] : []
+                lines.append(
+                    indent + (state + conflicts + [pullRequest.checkState.rawValue, pullRequest.url]).joined(separator: " · "))
             }
         }
 
@@ -237,6 +254,14 @@ struct WorkspaceReport: Sendable {
                 if let detail = entry.detail, !detail.isEmpty {
                     lines.append(indent + detail)
                 }
+            }
+        }
+
+        if !stale.isEmpty {
+            lines.append("  \(Self.staleHeading)")
+            for branch in stale {
+                lines.append("    \(branch.branch)")
+                lines.append("      \(branch.detail(now: now))")
             }
         }
         return lines.joined(separator: "\n")
@@ -274,9 +299,12 @@ struct WorkspaceReport: Sendable {
             }
         }
 
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let protected = StaleBranches.protectedBranches(repoPath: repoPath)
+        let branches = StaleBranches.localBranches(repoPath: repoPath).filter { !protected.contains($0.name) }
+
         var pullRequests: [PullRequest]?
-        if !ids.isEmpty && !issues.isEmpty {
-            let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        if (!ids.isEmpty && !issues.isEmpty) || !branches.isEmpty {
             do {
                 pullRequests = try PullRequest.list(in: repoPath)
             } catch {
@@ -286,7 +314,6 @@ struct WorkspaceReport: Sendable {
 
         var reviews: [ReviewEntry]?
         do {
-            let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
             let open = try ReviewablePullRequest.listOpen(in: repoPath)
             let identifiers = Array(Set(open.flatMap(\.issueIdentifiers)))
             let linked = try await LinearClient(apiKey: workspace.apiKey).fetchIssues(identifiers: identifiers)
@@ -299,8 +326,7 @@ struct WorkspaceReport: Sendable {
         var ciTimes: [String: TimeInterval]?
         if !tasks.isEmpty || reviews?.isEmpty == false {
             do {
-                let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
-                let runs = try WorkflowRun.list(in: repoPath)
+                    let runs = try WorkflowRun.list(in: repoPath)
                 // A repository without CI has no CI time, rather than none per task.
                 if !runs.isEmpty { ciTimes = WorkflowRun.time(byBranch: runs) }
             } catch {
@@ -312,7 +338,6 @@ struct WorkspaceReport: Sendable {
             if let ciTimes { tasks[index].ciTime = ciTimes[tasks[index].branch] ?? 0 }
         }
 
-        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
         var stats = PullRequestStats.of(tasks: tasks, reviews: reviews ?? []) { branch in
             (transcripts.usage(forBranch: branch), ciTimes.map { $0[branch] ?? 0 })
         }
@@ -334,17 +359,37 @@ struct WorkspaceReport: Sendable {
                     + "The summary measures them from the local fork point.")
         }
 
+        var stale: [StaleBranch] = []
+        if let pullRequests {
+            stale = StaleBranches.find(
+                branches: branches, pullRequests: pullRequests, protected: protected,
+                inFlight: Set(workspaceState.inFlight.values.map(\.branchName)),
+                worktreesRoot: "\(repoPath)/worktrees"
+            )
+            stale = StaleBranches.countUnpushed(stale, repoPath: repoPath)
+        }
+
         return WorkspaceReport(
             name: workspace.name,
             entries: tasks,
             reviews: reviews,
             pullRequestStats: stats,
+            stale: stale,
             warnings: warnings
         )
     }
 }
 
 enum StatusCommand {
+    /// A repository whose report hit a GitHub rate limit, to ask GitHub when
+    /// it resets; nil when none did.
+    static func rateLimitedRepoPath(_ reports: [WorkspaceReport], config: Config) -> String? {
+        let workspace = zip(reports, config.workspaces).first { report, _ in
+            report.warnings.contains { $0.localizedCaseInsensitiveContains("rate limit") }
+        }?.1
+        return workspace.map { NSString(string: $0.repoPath).expandingTildeInPath }
+    }
+
     /// Prints a report for every configured workspace, in config order, and
     /// returns the exit status.
     static func run(configPath: String?) async -> Int32 {
@@ -359,7 +404,7 @@ enum StatusCommand {
         let runner = AgentRunner()
         let transcripts = Transcripts()
 
-        let reports = await withTaskGroup(of: (Int, WorkspaceReport).self) { group in
+        var reports = await withTaskGroup(of: (Int, WorkspaceReport).self) { group in
             for (index, workspace) in config.workspaces.enumerated() {
                 group.addTask { (index, await WorkspaceReport.gather(
                     workspace: workspace, state: state, runner: runner, transcripts: transcripts)) }
@@ -371,9 +416,72 @@ enum StatusCommand {
             return reports.sorted { $0.0 < $1.0 }.map(\.1)
         }
 
+        var header: [String] = []
+        if let repoPath = rateLimitedRepoPath(reports, config: config) {
+            // One line, rather than one per GitHub call in every workspace.
+            for index in reports.indices {
+                reports[index].warnings.removeAll { $0.localizedCaseInsensitiveContains("rate limit") }
+            }
+            let reset = GitHubRateLimit.resetDate(repoPath: repoPath)
+            let time = reset.formatted(date: .omitted, time: .shortened)
+            header.append("warning: GitHub's rate limit is used up until \(time), so pull requests could not all be listed")
+        }
         let summary = StatusSummary(reports: reports).rendered()
-        print((reports.map { $0.rendered() } + [summary]).joined(separator: "\n\n"))
+        let footer = DaemonStatus.read().footer(polls: config.workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })
+        print((header + reports.map { $0.rendered() } + [summary, footer]).joined(separator: "\n\n"))
         return 0
+    }
+}
+
+/// What `superlinear status` says about the daemon: from the file it writes
+/// when it starts, or, for a daemon from before it wrote one, from its lock.
+struct DaemonStatus {
+    var info: DaemonInfo?
+    /// The pid in the lock file, for a daemon that wrote no info file.
+    var lockPid: Int32?
+    var running: Bool
+    var binaryReplaced = false
+
+    static func read(home: String = Paths.home) -> DaemonStatus {
+        if let info = DaemonInfo.read(from: DaemonInfo.fileURL(home: home)) {
+            let running = info.isRunning
+            let current = BinaryWatcher.identity(of: info.executablePath)
+            let replaced = running && info.binaryIdentity != nil && current != nil && current != info.binaryIdentity
+            return DaemonStatus(info: info, running: running, binaryReplaced: replaced)
+        }
+        let text = (try? String(contentsOfFile: "\(home)/.local/share/superlinear/daemon.lock", encoding: .utf8)) ?? ""
+        let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        let running = pid.map { kill($0, 0) == 0 || errno == EPERM } ?? false
+        return DaemonStatus(lockPid: pid, running: running)
+    }
+
+    func rendered(now: Date = Date()) -> String {
+        if let info { return info.rendered(running: running, binaryReplaced: binaryReplaced, now: now) }
+        if running, let lockPid {
+            return "Daemon: pid \(lockPid), started before daemons recorded their version; restart it to see more"
+        }
+        return "Daemon: not running"
+    }
+
+    /// The end of the report: this command's build, the daemon's, and each
+    /// workspace's polls, in config order. Each workspace polls on its own
+    /// loop, so each has its own times.
+    func footer(polls: [(name: String, poll: PollRecord?)], now: Date = Date()) -> String {
+        var lines = [Self.statusLine(), rendered(now: now)]
+        guard !polls.isEmpty else { return lines.joined(separator: "\n") }
+        lines.append("Polls")
+        let width = polls.map(\.name.count).max() ?? 0
+        for (name, poll) in polls {
+            let padded = name.padding(toLength: width, withPad: " ", startingAt: 0)
+            lines.append("  \(padded)  \(poll?.rendered(daemonRunning: running, now: now) ?? "not polled yet")")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The version and binary of this `superlinear status`.
+    static func statusLine() -> String {
+        let path = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        return "superlinear \(Superlinear.fullVersion) at \(path)"
     }
 }
 

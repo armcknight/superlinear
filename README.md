@@ -24,7 +24,7 @@ This is a personal tool, published as a reference. It is opinionated about how w
 6. The run — issue, branch, session ID, and the process running it — is kept in the state file until the agent exits.
 7. When the agent exits, the issue waits in the state file for its pull request. Each poll runs `gh pr list --head <branch> --state all` in the repository for every waiting issue:
    - **Merged:** the issue moves to its team's first completed state in Linear, unless it is already completed or canceled, and `work finish <branch>` removes the worktree and the local branch. If Linear cannot be updated, the next poll tries again.
-   - **Open:** the next poll checks again — unless you have reviewed it. See [Reviews](#reviews).
+   - **Open:** the next poll checks again — unless you have reviewed it, or it conflicts with its base branch. See [Reviews](#reviews) and [Conflicts](#conflicts).
    - **Closed without a merge**, or **no pull request:** the daemon logs it and stops watching. The worktree stays for you to inspect.
 
 ### GitHub issues
@@ -47,6 +47,14 @@ Review a pull request the daemon is watching, and an agent comes back to address
 The issue then goes back in the queue. Its agent runs in the same worktree, on the same branch, under a new Claude session, with a prompt to read every review and its inline comments, satisfy the points not yet addressed, commit, push and see CI through. It does not reply on GitHub. When it ends, the issue waits for its merge again, and only reviews submitted after that agent started bring it back. Reviews from other people and from bots, such as Seer, are left alone: the first agent already handles bots' reviews.
 
 Issues already awaiting their merge when you upgrade to a version that follows reviews take their pull request's newest commit as the starting point: a review submitted after the last push still starts an agent, and older reviews, which the agent may have addressed, do not.
+
+### Conflicts
+
+When the base branch moves on and an open pull request the daemon is watching no longer merges cleanly, an agent comes back to merge the base branch in. Each poll reads GitHub's mergeable state for those pull requests, in the listing that brings their reviews. For one that conflicts, the daemon fetches the base branch from `origin`, then queues the issue. Its agent runs in the same worktree, on the same branch, under a new Claude session, with a prompt to merge `origin/<base>` into the branch, resolve each conflict so that both sides' changes stay, build and test, commit the merge, push and see CI through. It does not rebase, force-push or comment on GitHub.
+
+Reviews come first: if a review also needs an agent, that agent goes first, and the conflict waits for the poll after it ends. The conflict also waits for a poll that can read the reviews, so the review baseline stays correct; a conflict run does not count reviews as addressed.
+
+Each conflict gets one agent. The daemon records the heads of the branch and of the base when it queues the agent. If the pull request still conflicts with the same heads after the agent ends, the daemon logs that once and starts no other agent until one of the two branches moves. GitHub works out the mergeable state in the background after a push, so a pull request it has not yet checked waits for a later poll.
 
 ### Disk space
 
@@ -115,9 +123,9 @@ make config   # write an example config, then open it in $EDITOR
 make load     # build, install into ~/.local/bin, then register the agent
 ```
 
-`superlinear install` writes `~/Library/LaunchAgents/com.armcknight.superlinear.plist` and loads it, pointing the agent at whichever binary you ran it from. Re-running it reloads. `superlinear uninstall` stops the agent and removes it. With the cask, the daemon follows Homebrew itself: within a minute of `brew upgrade` it exits and launchd restarts it on the new version, and a few minutes after `brew uninstall` it removes its own agent. Agents in flight carry on through the restart.
+`superlinear install` writes `~/Library/LaunchAgents/com.armcknight.superlinear.plist` and loads it, pointing the agent at whichever binary you ran it from. Re-running it reloads. `superlinear uninstall` stops the agent and removes it. With the cask, the daemon follows Homebrew itself: within a minute of `brew upgrade` it exits and launchd restarts it on the new version, and a few minutes after `brew uninstall` it removes its own agent. A daemon running a local build restarts the same way within a minute of `make install` replacing its binary. Agents in flight carry on through the restart.
 
-If both installs are present, the local build wins. `superlinear install` from the Homebrew binary leaves an agent that runs an existing local build in place; pass `--force` to replace it. `superlinear --version` tells them apart: a local build appends the commit, as in `1.1.0+d0a4bc2`, plus `.dirty` when the working tree had uncommitted or untracked changes.
+If both installs are present, the local build wins. `superlinear install` from the Homebrew binary leaves an agent that runs an existing local build in place; pass `--force` to replace it. The agent runs one binary, so a new build of the other kind does not restart the daemon: to switch, run `superlinear install` from the binary to switch to. `superlinear status` shows which binary the daemon runs. `superlinear --version` tells them apart: a local build appends the commit, as in `1.1.0+d0a4bc2`, plus `.dirty` when the working tree had uncommitted or untracked changes.
 
 The agent is generated rather than checked in because launchd expands neither `~` nor `$HOME` inside a plist — every path in it has to be absolute, so no single file can serve every machine. The cask cannot do this either: Homebrew has no launchd support for casks, and the `service` stanza installs to `~/Library/Services`, which is the Services menu, not an agent.
 
@@ -222,10 +230,11 @@ With no subcommand it runs the daemon in the foreground, which is how to test a 
 
 | Section | Meaning |
 | --- | --- |
-| Awaiting review | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, or agent addressing review — the CI state, and the URL. |
+| Awaiting review | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, agent addressing review, or agent resolving conflicts — whether it conflicts with its base branch, the CI state, and the URL. |
 | Draft pull requests | The same, for drafts, with the CI state. |
 | Running | An agent works on the issue now. Shows its pid and log. |
 | Addressing review | An agent addresses your review of the issue's pull request, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
+| Resolving conflicts | An agent merges the base branch into the branch of the issue's pull request, which conflicts with it, or is queued to. Shows the pull request, and the pid and log once it runs. |
 | Interrupted | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
 | Queued | Waiting for a free agent slot. |
 | Open pull requests | The agent finished and its pull request is open. Shown only when open pull requests could not be listed for review; otherwise they appear above. |
@@ -233,6 +242,7 @@ With no subcommand it runs the daemon in the foreground, which is how to test a 
 | Finished without a pull request | The agent ended, but no pull request is open or merged, and the issue is still open. |
 | Completed | The pull request is merged and the Linear issue is done. |
 | Closed without a merge | The issue was closed in Linear without a merged pull request. |
+| Stale branches and worktrees | Local branches no longer needed: their pull request merged, or closed without a merge, or, for a worktree under `worktrees/` with no agent running or queued, none was opened. The base branch, branches with an open pull request, and branches of your own without such a worktree are never listed. Each shows its worktree if it has one, its last commit's age, and the commits removing it would lose: for a merged or closed pull request, those made after its head, as a squash merge leaves the rest on no remote branch; otherwise those no remote branch has. `work finish <branch>` removes the branch and its worktree. |
 
 After the workspaces comes a summary:
 
@@ -241,6 +251,8 @@ After the workspaces comes a summary:
 - **Per pull request:** the total, median, minimum and maximum of each measure, and a histogram of its values in 16 equal ranges from minimum to maximum, over the agents' pull requests — those of finished tasks that are open or merged, and the open ones listed for review. The measures are lines added and removed and files changed; tokens, cache reads and agent time, from the Claude transcripts; and CI time.
 - **All tracked tasks:** the tokens, cache reads, agent time and CI time of every task, with or without a pull request.
 - **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
+
+The report ends with this command's version and binary, then the daemon's: its pid, version, binary and start time, or that it is not running. It warns when the daemon's binary has been replaced since the daemon started. Last, under **Polls**, each workspace shows when its last poll ended, whether it failed, and when the next one is due, or, once that time has passed, that it is polling now. Each workspace polls on its own loop, which waits its `pollIntervalSeconds` after each poll ends, so each has its own times.
 
 Lines and files of an open pull request come from `git diff --shortstat` in the local repository, measured from the later of two fork points: where the branch left the local base branch, and where it left `origin/<base>`. An agent forks off the local base, so when that is ahead of GitHub's, GitHub counts the unpushed commits as part of each pull request. The workspace then shows a warning to push the base branch. Merged pull requests, and branches found neither locally nor on `origin`, use GitHub's numbers.
 

@@ -25,6 +25,9 @@ actor Daemon {
     private var reported: Set<String> = []
     /// The GitHub login whose reviews agents address, once looked up.
     private var viewerLogin: String?
+    /// Until when a GitHub rate limit is used up. Polls skip their GitHub
+    /// work until then.
+    private var gitHubPausedUntil: Date?
 
     init(config: Config) {
         self.config = config
@@ -50,11 +53,22 @@ actor Daemon {
     private func runWorkspaceLoop(_ workspace: WorkspaceConfig) async {
         let processor = WorkspaceProcessor(workspace: workspace, daemon: self)
         while !Task.isCancelled {
+            var failure: String?
             do {
                 try await processor.poll()
             } catch {
                 log("Poll error: \(error)", workspace: workspace.name)
+                failure = "\(error)"
             }
+            let ended = Date()
+            state.recordPoll(
+                PollRecord(
+                    endedAt: ended, nextAt: ended.addingTimeInterval(TimeInterval(workspace.pollIntervalSeconds)),
+                    error: failure
+                ),
+                workspace: workspace.name
+            )
+            save()
             // Retries queued runs whose launch failed, once the pause is over.
             fillSlots()
             do {
@@ -118,6 +132,38 @@ actor Daemon {
         )
         state.startReview(run, workspace: workspace.name)
         log("Queued \(pending.identifier) to address the review on \(pullRequest.url)", workspace: workspace.name)
+        save()
+        fillSlots()
+    }
+
+    /// Queues an agent to merge the base branch into the branch of an issue
+    /// awaiting its merge whose pull request conflicts with it. Like a review
+    /// run, it works in the issue's existing worktree, under a new Claude
+    /// session, and the issue awaits its merge again once it ends.
+    func enqueueConflictResolution(
+        of pending: PendingMerge, pullRequest: PullRequest, baseBranch: String,
+        attempt: ConflictAttempt, workspace: WorkspaceConfig
+    ) {
+        // The watch may have ended, or have had its review baseline set,
+        // since the poll read it.
+        guard let current = state.workspaces[workspace.name]?.pendingMerges[pending.issueId] else { return }
+        let run = AgentRun(
+            issueId: pending.issueId,
+            identifier: pending.identifier,
+            branchName: pending.branchName,
+            sessionId: UUID().uuidString.lowercased(),
+            queuedAt: Date(),
+            conflict: ConflictRequest(
+                number: pullRequest.number, url: pullRequest.url, baseBranch: baseBranch,
+                attempt: attempt, reviewsHandledThrough: current.reviewsHandledThrough
+            ),
+            gitHubIssue: pending.gitHubIssue
+        )
+        state.startReview(run, workspace: workspace.name)
+        log(
+            "Queued \(pending.identifier) to resolve the conflicts of \(pullRequest.url) with \(baseBranch)",
+            workspace: workspace.name
+        )
         save()
         fillSlots()
     }
@@ -210,6 +256,9 @@ actor Daemon {
             log(mode == .resume ? "Resuming \(run.identifier)" : "Starting \(run.identifier)", workspace: workspace.name)
             if let review = run.review {
                 log("  Addressing the review on \(review.url)", workspace: workspace.name)
+            }
+            if let conflict = run.conflict {
+                log("  Resolving the conflicts of \(conflict.url) with \(conflict.baseBranch)", workspace: workspace.name)
             }
             log("  Branch: \(run.branchName)", workspace: workspace.name)
             log("  Session: \(run.sessionId)", workspace: workspace.name)
@@ -359,6 +408,25 @@ actor Daemon {
     func forgetLinkedPullRequests(issueId: String, workspace: String) {
         state.forgetLinkedPullRequests(issueId: issueId, workspace: workspace)
         save()
+    }
+
+    /// Whether polls may call GitHub now. Logs when a pause ends.
+    func gitHubAvailable(now: Date = Date()) -> Bool {
+        guard let until = gitHubPausedUntil else { return true }
+        guard now >= until else { return false }
+        gitHubPausedUntil = nil
+        print("[\(ISO8601DateFormatter().string(from: now))] GitHub's rate limit has reset; checking pull requests again")
+        return true
+    }
+
+    /// Skips GitHub work until `until`, logging once per pause.
+    func pauseGitHub(until: Date) {
+        if gitHubPausedUntil == nil {
+            let formatter = ISO8601DateFormatter()
+            print("[\(formatter.string(from: Date()))] GitHub's rate limit is used up until \(formatter.string(from: until)); "
+                + "skipping pull request checks until then")
+        }
+        gitHubPausedUntil = max(gitHubPausedUntil ?? until, until)
     }
 
     /// Whether `message` has not been reported before, so a problem that

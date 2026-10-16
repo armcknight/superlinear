@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `superlinear status` ends with its own version and binary, and the
+  daemon's pid, version, binary and start time, or that the daemon is not
+  running. It warns when the daemon's binary was replaced after the daemon
+  started. Then, under "Polls", each workspace shows when its last poll
+  ended, whether it failed, and when the next one is due. The daemon writes `daemon.json` when it starts,
+  and the poll times into the state file.
+
+- A daemon running a local build restarts within a minute of `make install`
+  replacing its binary, as one running the cask does after `brew upgrade`.
+
+- An open pull request that conflicts with its base branch brings an agent
+  back to merge the base branch in. Each poll reads GitHub's mergeable state
+  for the pull requests of issues awaiting their merge. For one that
+  conflicts, an agent in the same worktree merges `origin/<base>`, resolves
+  the conflicts, tests, commits the merge, pushes and sees CI through,
+  without rebasing or force-pushing. A review that needs an agent goes first.
+  Each pair of branch and base heads gets one agent, so a conflict that an
+  agent could not resolve waits until either branch moves. `superlinear
+  status` lists these agents under "Resolving conflicts", and marks
+  conflicting pull requests under "Awaiting review".
+
+- `superlinear status` lists stale branches and worktrees per workspace:
+  local branches whose pull request merged or closed, and worktrees under
+  `worktrees/` whose agent ended without opening one. Each shows whether it
+  has a worktree, its last commit's age, and the commits removing it would
+  lose. The summary counts them.
+
 - Your reviews on an agent's pull request bring an agent back to address
   them. Each poll reads the reviews on the open pull request of every issue
   awaiting its merge, and a review from the GitHub user `gh` is signed in as,
@@ -27,10 +54,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opened since the option went on, and any issue on which you comment
   `/superlinear-do`. Their agents read the issue with `gh`, open a pull
   request that closes it, and the daemon closes the issue on the merge if
-  GitHub has not. `superlinear status` lists them as `GH-<number>`.
+  GitHub has not. Review and conflict agents on their pull requests also
+  read the issue from GitHub. GitHub issue polls pause with the rest of the
+  GitHub work during a rate limit. `superlinear status` lists them as
+  `GH-<number>`.
 
 ### Fixed
 
+- A pull request already attached to its Linear issue, as by hand or before
+  the daemon kept records of its links, is recorded as linked. Linear refuses
+  to attach it again, so the daemon tried and failed every poll.
+- While a GitHub rate limit is used up, polls skip their GitHub work until it
+  resets, logging once when the pause starts and once when it ends, instead
+  of failing and logging at every step of every poll. Linear work goes on.
+  `superlinear status` shows one line saying until when, instead of a warning
+  per workspace.
 - Each poll lists a repository's pull requests once, and its open ones with
   their reviews and head commits once more when a watched pull request is
   open.

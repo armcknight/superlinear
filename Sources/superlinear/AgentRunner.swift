@@ -67,6 +67,42 @@ func reviewPrompt(for review: ReviewRequest, gitHubIssue: Int? = nil) -> String 
     """
 }
 
+/// The prompt for a run that merges the base branch into the branch of a pull
+/// request that conflicts with it, so the pull request can merge again.
+/// `gitHubIssue` is the GitHub issue's number, when the run comes from GitHub.
+func conflictPrompt(for conflict: ConflictRequest, gitHubIssue: Int? = nil) -> String {
+    let base = conflict.baseBranch
+    let source = gitHubIssue.map { "GitHub issue #\($0)" } ?? "a Linear issue"
+    let readIssue = gitHubIssue.map { "Read the GitHub issue with `gh issue view \($0) --comments`" }
+        ?? "Read the Linear issue for this branch with `direnv exec . linctl issue get`"
+    return """
+    You are working autonomously on \(source) whose pull request no longer merges cleanly. Do \
+    not ask for confirmation at any step — proceed through the entire workflow without pausing.
+
+    An earlier agent already implemented the issue on this branch and opened pull request \
+    #\(conflict.number): \(conflict.url)
+
+    Its base branch, `\(base)`, has since moved on, and GitHub reports that the pull request \
+    conflicts with it. Your task:
+    1. \(readIssue), and the branch's \
+    commits against the base branch, to learn what the branch does.
+    2. Run `git fetch origin \(base)`, then `git merge origin/\(base)`. Do not rebase and do not \
+    force-push: the pull request's history must stay as it is.
+    3. Resolve every conflict so that the result keeps both the branch's changes and the changes on \
+    `\(base)`. Read the commits on `\(base)` that touch the conflicting files to learn what they \
+    intend. Where the two cannot both be kept, keep the behavior of `\(base)` and adapt the \
+    branch's changes to it.
+    4. Build and run the tests, and fix what the merge broke. Commit the merge, and any fixes after it.
+    5. Push the branch.
+    6. Update the pull request description with `gh pr edit` if the merge makes it out of date.
+    7. Monitor CI until all checks pass, fixing breakages as they come.
+
+    Do not post comments on GitHub. If the branch already merges cleanly with `origin/\(base)`, \
+    stop. If you encounter ambiguity, make a reasonable decision and document it in the pull \
+    request description.
+    """
+}
+
 private let resumePrompt = """
 You were interrupted partway through the task above. Work out where you stopped — check the \
 worktree's git status and log, the issue's state in Linear or GitHub, and whether a pull request exists and \
@@ -211,6 +247,7 @@ struct AgentRunner: Sendable {
     /// The prompt that starts the run's session.
     static func prompt(for run: AgentRun) -> String {
         if let review = run.review { return reviewPrompt(for: review, gitHubIssue: run.gitHubIssue) }
+        if let conflict = run.conflict { return conflictPrompt(for: conflict, gitHubIssue: run.gitHubIssue) }
         return run.gitHubIssue.map { gitHubIssuePrompt(number: $0) } ?? autonomousPrompt
     }
 

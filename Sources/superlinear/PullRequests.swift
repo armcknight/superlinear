@@ -10,27 +10,35 @@ struct PendingMerge: Codable, Sendable, Equatable {
     /// last agent on the issue was already running when they came in. Absent
     /// in state files written before reviews were followed.
     var reviewsHandledThrough: Date?
+    /// The last agent set to resolve the pull request's conflicts with its
+    /// base branch, if that was the last agent on the issue.
+    var conflictAttempt: ConflictAttempt?
     /// The GitHub issue's number, when the issue comes from GitHub.
     var gitHubIssue: Int? = nil
 
     init(
-        issueId: String, identifier: String, branchName: String, reviewsHandledThrough: Date? = nil,
-        gitHubIssue: Int? = nil
+        issueId: String, identifier: String, branchName: String,
+        reviewsHandledThrough: Date? = nil, conflictAttempt: ConflictAttempt? = nil, gitHubIssue: Int? = nil
     ) {
         self.issueId = issueId
         self.identifier = identifier
         self.branchName = branchName
         self.reviewsHandledThrough = reviewsHandledThrough
+        self.conflictAttempt = conflictAttempt
         self.gitHubIssue = gitHubIssue
     }
 
     /// The watch that follows a run once its agent ends. Reviews from after
     /// the agent started are left to the next one; it may have read some of
-    /// them, but a review it missed would otherwise go unanswered.
+    /// them, but a review it missed would otherwise go unanswered. A run that
+    /// resolved conflicts read no reviews, so the baseline from before it
+    /// stays.
     init(_ run: AgentRun) {
+        let started = run.launchedAt ?? run.processStartedAt
         self.init(
             issueId: run.issueId, identifier: run.identifier, branchName: run.branchName,
-            reviewsHandledThrough: run.launchedAt ?? run.processStartedAt, gitHubIssue: run.gitHubIssue
+            reviewsHandledThrough: run.conflict.map { $0.reviewsHandledThrough ?? started } ?? started,
+            conflictAttempt: run.conflict?.attempt, gitHubIssue: run.gitHubIssue
         )
     }
 }
@@ -100,6 +108,13 @@ struct PullRequest: Codable, Sendable, Equatable {
     var changedFiles: Int? = nil
     /// The branch it would merge into, when the listing asked.
     var baseRefName: String? = nil
+    /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN`, when the listing asked. GitHub
+    /// works it out in the background after the base or branch moves, and
+    /// says `UNKNOWN` until it has.
+    var mergeable: String? = nil
+
+    /// Whether GitHub found that it conflicts with its base branch.
+    var conflicts: Bool { mergeable == "CONFLICTING" }
 }
 
 /// What a poll found for an issue awaiting its merge.
@@ -146,7 +161,7 @@ struct PullRequestChecker: Sendable {
     }
 
     static let listOpenArguments = [
-        "gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", "number,url,state,headRefName,headRefOid,reviews",
+        "gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", "number,url,state,headRefName,headRefOid,reviews,mergeable,baseRefName",
     ]
 
     static let viewerArguments = ["gh", "api", "user", "--jq", ".login"]
@@ -193,8 +208,8 @@ struct PullRequestChecker: Sendable {
     }
 
     /// The repository's open pull requests, newest 1,000, with their
-    /// reviews, which cost GitHub more to list than the rest, and head
-    /// commits. Not their commit lists: those cost so much that GitHub
+    /// reviews, which cost GitHub more to list than the rest, head commits,
+    /// base branches and whether they conflict with them. Not their commit lists: those cost so much that GitHub
     /// refuses a page of 100 pull requests as over the rate limit.
     func openPullRequestsWithReviews(repoPath: String) async throws -> [PullRequest] {
         try Self.decodePullRequests(try await run(Self.listOpenArguments, in: repoPath))
@@ -256,6 +271,8 @@ actor PullRequestListing {
     // again for every branch.
     private var all: Result<[PullRequest], Error>?
     private var open: Result<[PullRequest], Error>?
+    /// The heads of base branches on the remote, fetched once each.
+    private var remoteHeads: [String: String?] = [:]
 
     init(repoPath: String, checker: PullRequestChecker = PullRequestChecker()) {
         self.repoPath = repoPath
@@ -274,6 +291,17 @@ actor PullRequestListing {
     func allPullRequests() async throws -> [PullRequest] {
         if all == nil { all = await Self.result { try await checker.allPullRequests(repoPath: repoPath) } }
         return try all!.get()
+    }
+
+    /// The head of `branch` on `origin`, fetched first, so it is as new as
+    /// the pull requests. Nil when git fails. Git asks no GitHub API, so the
+    /// rate limits do not apply.
+    func remoteHead(of branch: String) -> String? {
+        if let head = remoteHeads[branch] { return head }
+        let head = Git.run(["fetch", "--quiet", "origin", branch], in: repoPath)
+            .flatMap { _ in Git.run(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/\(branch)^{commit}"], in: repoPath) }
+        remoteHeads[branch] = head
+        return head
     }
 
     private static func result(_ body: @Sendable () async throws -> [PullRequest]) async -> Result<[PullRequest], Error> {

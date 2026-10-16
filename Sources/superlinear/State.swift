@@ -29,6 +29,9 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// The pull request whose review the run answers, for a run started by a
     /// review rather than by a new issue.
     var review: ReviewRequest?
+    /// The pull request whose conflicts with its base branch the run
+    /// resolves, for a run started by such a conflict.
+    var conflict: ConflictRequest?
     /// The number of the GitHub issue the agent works on, when the run comes
     /// from GitHub rather than Linear.
     var gitHubIssue: Int? = nil
@@ -44,6 +47,28 @@ struct ReviewRequest: Codable, Sendable, Equatable {
     var url: String
 }
 
+/// A pull request that conflicts with its base branch, for an agent to merge
+/// the base branch into.
+struct ConflictRequest: Codable, Sendable, Equatable {
+    var number: Int
+    var url: String
+    var baseBranch: String
+    /// The branch and base heads the conflict was found on.
+    var attempt: ConflictAttempt
+    /// The issue's review baseline from before the run, which the watch
+    /// after it keeps: the run answers no reviews.
+    var reviewsHandledThrough: Date?
+}
+
+/// The heads of a pull request's branch and of its base branch on the remote
+/// when an agent was set to resolve their conflicts. Should they conflict
+/// still with the same heads after it ends, the agent could not resolve them,
+/// and another agent waits until one of the two moves.
+struct ConflictAttempt: Codable, Sendable, Equatable {
+    var head: String
+    var base: String
+}
+
 struct WorkspaceState: Codable, Sendable {
     var processedIssueIds: Set<String>
     var lastPollTimestamp: Date
@@ -55,6 +80,9 @@ struct WorkspaceState: Codable, Sendable {
     /// Pull request URLs already linked to each issue in Linear, keyed by
     /// issue ID, so each is linked once.
     var linkedPullRequests: [String: [String]]
+    /// The last poll, and when the next is due. Absent in state files written
+    /// before polls were recorded, and until the first poll ends.
+    var poll: PollRecord?
     /// When the daemon first polled the repository's GitHub issues. Issues you
     /// opened before then are left alone unless you comment `/superlinear-do`.
     var gitHubIssuesSince: Date?
@@ -77,7 +105,36 @@ struct WorkspaceState: Codable, Sendable {
         inFlight = try container.decodeIfPresent([String: AgentRun].self, forKey: .inFlight) ?? [:]
         pendingMerges = try container.decodeIfPresent([String: PendingMerge].self, forKey: .pendingMerges) ?? [:]
         linkedPullRequests = try container.decodeIfPresent([String: [String]].self, forKey: .linkedPullRequests) ?? [:]
+        poll = try container.decodeIfPresent(PollRecord.self, forKey: .poll)
         gitHubIssuesSince = try container.decodeIfPresent(Date.self, forKey: .gitHubIssuesSince)
+    }
+}
+
+/// When a workspace's last poll ended, how, and when the next is due.
+struct PollRecord: Codable, Sendable, Equatable {
+    var endedAt: Date
+    var nextAt: Date
+    /// Why the poll failed, if it did.
+    var error: String?
+
+    /// How long a poll runs before the status calls it slow.
+    static let slowPoll: TimeInterval = 10 * 60
+
+    /// The line `superlinear status` prints about it. Once the next poll is
+    /// due, it is running.
+    func rendered(daemonRunning: Bool, now: Date = Date()) -> String {
+        var parts = ["last poll ended \(StatusTime.rendered(endedAt, now: now))"]
+        if let error { parts[0] += ", failed: \(error)" }
+        if !daemonRunning {
+            parts.append("no next poll: the daemon is not running")
+        } else if nextAt <= now {
+            // The next poll started when due, and records itself when it ends.
+            let since = "polling since \(StatusTime.rendered(nextAt, now: now))"
+            parts.append(nextAt < now.addingTimeInterval(-Self.slowPoll) ? since + ", which is slow" : since)
+        } else {
+            parts.append("next poll \(StatusTime.rendered(nextAt, now: now))")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -128,6 +185,10 @@ struct State: Codable, Sendable {
         workspaces[workspace, default: WorkspaceState()].processedIssueIds.insert(issueId)
     }
 
+    mutating func recordPoll(_ poll: PollRecord, workspace: String) {
+        workspaces[workspace, default: WorkspaceState()].poll = poll
+    }
+
     mutating func updateLastPoll(_ date: Date, workspace: String) {
         workspaces[workspace, default: WorkspaceState()].lastPollTimestamp = date
     }
@@ -164,8 +225,9 @@ struct State: Codable, Sendable {
         workspaces[workspace, default: WorkspaceState()].pendingMerges[pending.issueId] = pending
     }
 
-    /// Hands an issue awaiting its merge to a run that addresses a review. The
-    /// linked pull requests stay recorded, as the run goes on following them.
+    /// Hands an issue awaiting its merge to a run that addresses a review or
+    /// resolves conflicts. The linked pull requests stay recorded, as the run
+    /// goes on following them.
     mutating func startReview(_ run: AgentRun, workspace: String) {
         workspaces[workspace]?.pendingMerges[run.issueId] = nil
         recordRun(run, workspace: workspace)

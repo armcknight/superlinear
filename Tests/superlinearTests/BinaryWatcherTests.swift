@@ -33,15 +33,39 @@ struct BinaryWatcherTests {
         #expect(BinaryWatcher.action(started: started, current: nil, missingSince: since, now: now) == .removeAgent)
     }
 
-    @Test("Only the launchd agent watches")
+    @Test("A missing local build is left alone")
+    func missingLocalBuildWaits() {
+        let since = now.addingTimeInterval(-BinaryWatcher.uninstallGrace)
+        #expect(BinaryWatcher.action(
+            started: started, current: nil, missingSince: since, now: now, homebrew: false
+        ) == .none)
+    }
+
+    @Test("Only the launchd agent watches, whether its binary is Homebrew's or a local build")
     func onlyTheAgentWatches() {
         let agentEnvironment = ["XPC_SERVICE_NAME": LaunchAgent.label]
         // A shell or another service runs it: no watching.
         #expect(BinaryWatcher.watchedPath(arguments: ["/usr/bin/true"], environment: [:]) == nil)
         #expect(BinaryWatcher.watchedPath(arguments: ["superlinear"], environment: agentEnvironment) == nil)
-        // The agent, but not from Homebrew: a local build reloads with make.
         #expect(BinaryWatcher.watchedPath(
             arguments: ["/Users/example/.local/bin/superlinear"], environment: agentEnvironment
-        ) == nil)
+        ) == "/Users/example/.local/bin/superlinear")
+    }
+
+    // `make install` moves a new file over the old one, at the same path.
+    @Test("A file moved over the binary changes its identity; one left in place does not")
+    func replacedFileChangesIdentity() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = "\(directory)/superlinear"
+        try Data("one".utf8).write(to: URL(fileURLWithPath: path))
+        let first = try #require(BinaryWatcher.identity(of: path))
+        #expect(BinaryWatcher.identity(of: path) == first)
+
+        try Data("two".utf8).write(to: URL(fileURLWithPath: "\(path).new"))
+        _ = try FileManager.default.replaceItemAt(URL(fileURLWithPath: path), withItemAt: URL(fileURLWithPath: "\(path).new"))
+        #expect(BinaryWatcher.identity(of: path) != first)
+        #expect(BinaryWatcher.identity(of: "\(directory)/missing") == nil)
     }
 }
