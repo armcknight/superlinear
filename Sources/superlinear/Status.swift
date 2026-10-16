@@ -103,7 +103,7 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
 
 /// One line of the status report.
 struct TaskEntry: Sendable, Equatable {
-    let identifier: String
+    let identifier: LinearIssue.Identifier
     let title: String
     let category: TaskCategory
     /// A pull request URL, log path, or Linear state, as suits the category.
@@ -158,7 +158,7 @@ struct WorkspaceReport: Sendable {
             let category = TaskCategory.of(run: run, running: running, issue: issue, pullRequest: pullRequest)
 
             return TaskEntry(
-                identifier: issue?.identifier ?? run?.identifier ?? id,
+                identifier: issue?.identifier ?? run?.identifier ?? LinearIssue.Identifier(rawValue: id),
                 title: issue?.title ?? "",
                 category: category,
                 detail: detail(for: category, run: run, issue: issue, pullRequest: pullRequest, runner: runner),
@@ -170,7 +170,7 @@ struct WorkspaceReport: Sendable {
         let blocked = state.blocked.values.map { waiting in
             TaskEntry(
                 identifier: waiting.identifier, title: waiting.title, category: .blocked,
-                detail: "blocked by " + waiting.blockers.joined(separator: ", ")
+                detail: "blocked by " + waiting.blockers.map(\.rawValue).joined(separator: ", ")
             )
         }
         let needsHuman = state.needsHuman.values.map { waiting in
@@ -181,7 +181,7 @@ struct WorkspaceReport: Sendable {
         }
         return (entries + blocked + needsHuman).sorted { a, b in
             a.category == b.category
-                ? a.identifier.localizedStandardCompare(b.identifier) == .orderedAscending
+                ? a.identifier.sortsBefore(b.identifier)
                 : a.category < b.category
         }
     }
@@ -236,10 +236,10 @@ struct WorkspaceReport: Sendable {
         if tasks.isEmpty && reviews.isEmpty && stale.isEmpty && warnings.isEmpty {
             lines.append("  No tasks")
         }
-        let width = (tasks.map(\.identifier.count) + reviews.map(\.issue.identifier.count)).max() ?? 0
+        let width = (tasks.map(\.identifier.rawValue.count) + reviews.map(\.issue.identifier.rawValue.count)).max() ?? 0
         let indent = String(repeating: " ", count: 4 + width + 2)
         // Their pull requests wait on an agent, not on a reviewer.
-        var agentAt: [String: String] = [:]
+        var agentAt: [LinearIssue.Identifier: String] = [:]
         for entry in entries {
             switch entry.category {
             case .addressingReview: agentAt[entry.identifier] = "agent addressing review"
@@ -254,7 +254,7 @@ struct WorkspaceReport: Sendable {
             lines.append("  \(heading)")
             for review in section {
                 let pullRequest = review.pullRequest
-                let padded = review.issue.identifier.padding(toLength: width, withPad: " ", startingAt: 0)
+                let padded = review.issue.identifier.rawValue.padding(toLength: width, withPad: " ", startingAt: 0)
                 lines.append("    \(padded)  #\(pullRequest.number) \(pullRequest.title)".trimmingTrailingWhitespace())
                 let reviewState = agentAt[review.issue.identifier] ?? pullRequest.reviewState.rawValue
                 let state = drafts ? [] : [reviewState]
@@ -269,7 +269,7 @@ struct WorkspaceReport: Sendable {
             guard !section.isEmpty else { continue }
             lines.append("  \(category.heading)")
             for entry in section {
-                let padded = entry.identifier.padding(toLength: width, withPad: " ", startingAt: 0)
+                let padded = entry.identifier.rawValue.padding(toLength: width, withPad: " ", startingAt: 0)
                 lines.append("    \(padded)  \(entry.title)".trimmingTrailingWhitespace())
                 if let detail = entry.detail, !detail.isEmpty {
                     lines.append(indent + detail)
@@ -406,7 +406,8 @@ enum StatusCommand {
             print("[superlinear] Failed to load config: \(error)")
             return 1
         }
-        let state = State.load()
+        let standups = StandupRecord.load()
+        let state = State.loadWithStandups(standups: standups)
         let runner = AgentRunner()
         let transcripts = Transcripts()
 
@@ -433,6 +434,7 @@ enum StatusCommand {
             header.append("warning: GitHub's rate limit is used up until \(time), so pull requests could not all be listed")
         }
         let summary = StatusSummary(reports: reports).rendered()
+            + "\n\n" + Standup.statusLine(state: state, standups: standups, workspaces: config.workspaces.map(\.name))
         let footer = DaemonStatus.read().footer(polls: config.workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })
         print((header + reports.map { $0.rendered() } + [summary, footer]).joined(separator: "\n\n"))
         return 0

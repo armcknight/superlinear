@@ -81,7 +81,7 @@ struct ConflictResolutionTests {
 
     @Test("A conflicting pull request says so under Awaiting review, and so does an agent resolving it")
     func rendered() {
-        func pullRequest(_ number: Int, branch: String) -> ReviewablePullRequest {
+        func pullRequest(_ number: PullRequest.Number, branch: String) -> ReviewablePullRequest {
             ReviewablePullRequest(
                 number: number, url: "https://github.com/o/r/pull/\(number)", title: "PR \(number)",
                 headRefName: branch, isDraft: false, reviewDecision: "", latestReviews: nil, statusCheckRollup: nil,
@@ -89,7 +89,7 @@ struct ConflictResolutionTests {
             )
         }
         func issue(_ id: String) -> LinearIssueStatus {
-            LinearIssueStatus(id: id, identifier: id, title: id, branchName: "b", state: .init(name: "In Progress", type: "started"))
+            LinearIssueStatus(id: id, identifier: .init(rawValue: id), title: id, branchName: "b", state: .init(name: "In Progress", type: "started"))
         }
         let report = WorkspaceReport(
             name: "w",

@@ -95,15 +95,15 @@ struct StatusSummaryTests {
 
     // MARK: Pull requests
 
-    private func task(_ identifier: String, _ category: TaskCategory, pr: PullRequest? = nil) -> TaskEntry {
-        TaskEntry(identifier: identifier, title: "", category: category, detail: nil, branch: identifier, pullRequest: pr)
+    private func task(_ identifier: LinearIssue.Identifier, _ category: TaskCategory, pr: PullRequest? = nil) -> TaskEntry {
+        TaskEntry(identifier: identifier, title: "", category: category, detail: nil, branch: identifier.rawValue, pullRequest: pr)
     }
 
-    private func pullRequest(_ number: Int, _ state: PullRequest.State, additions: Int = 0) -> PullRequest {
+    private func pullRequest(_ number: PullRequest.Number, _ state: PullRequest.State, additions: Int = 0) -> PullRequest {
         PullRequest(number: number, url: "u/\(number)", state: state, additions: additions, deletions: 1, changedFiles: 1)
     }
 
-    private func review(_ number: Int, draft: Bool = false) -> ReviewEntry {
+    private func review(_ number: PullRequest.Number, draft: Bool = false) -> ReviewEntry {
         ReviewEntry(
             issue: LinearIssueStatus(id: "i", identifier: "A-\(number)", title: "", branchName: "b", state: .init(name: "s", type: "started")),
             pullRequest: ReviewablePullRequest(

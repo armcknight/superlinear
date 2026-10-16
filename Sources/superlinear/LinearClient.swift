@@ -10,9 +10,12 @@ enum LinearStateType: String, Codable, Sendable, CaseIterable {
 /// one does, and in what order; each is absent when the query did not ask.
 struct LinearIssue: Codable, Sendable, Equatable {
     typealias ID = Tagged<LinearIssue, String>
+    /// The key a person reads, such as SPL-5, as opposed to the `ID`.
+    typealias Identifier = Tagged<IdentifierTag, String>
+    enum IdentifierTag {}
 
     let id: ID
-    let identifier: String
+    let identifier: Identifier
     let title: String
     let branchName: String
     let createdAt: Date
@@ -56,7 +59,7 @@ struct LinearIssue: Codable, Sendable, Equatable {
 
         struct Related: Codable, Sendable, Equatable {
             let id: LinearIssue.ID
-            let identifier: String
+            let identifier: LinearIssue.Identifier
             let state: Kind
 
             struct Kind: Codable, Sendable, Equatable {
@@ -69,10 +72,17 @@ struct LinearIssue: Codable, Sendable, Equatable {
 
     /// The identifiers of the issues blocking this one that are neither
     /// completed nor canceled.
-    var openBlockers: [String] {
+    var openBlockers: [LinearIssue.Identifier] {
         (inverseRelations?.nodes ?? [])
             .filter { $0.type == "blocks" && !["completed", "canceled"].contains($0.issue.state.type) }
             .map(\.issue.identifier)
+    }
+}
+
+extension Tagged where Tag == LinearIssue.IdentifierTag, RawValue == String {
+    /// Whether it sorts before `other` as a person would: SPL-9 before SPL-10.
+    func sortsBefore(_ other: Self) -> Bool {
+        rawValue.localizedStandardCompare(other.rawValue) == .orderedAscending
     }
 }
 
@@ -87,7 +97,7 @@ enum LinearLabel { typealias ID = Tagged<LinearLabel, String> }
 /// it: where it stands in Linear, and the branch its pull request comes from.
 struct LinearIssueStatus: Codable, Sendable, Equatable {
     let id: String
-    let identifier: String
+    let identifier: LinearIssue.Identifier
     let title: String
     let branchName: String
     let state: State
@@ -139,8 +149,8 @@ struct LinearClient: Sendable {
     /// Linear filters by number and team key separately, so the result can
     /// hold other pairings of the two; only exact identifiers are kept.
     /// Identifiers Linear does not have are simply absent.
-    func fetchIssues(identifiers: [String]) async throws -> [LinearIssueStatus] {
-        let pairs = identifiers.compactMap { identifier -> (String, Int)? in
+    func fetchIssues(identifiers: [LinearIssue.Identifier]) async throws -> [LinearIssueStatus] {
+        let pairs = identifiers.map(\.rawValue).compactMap { identifier -> (String, Int)? in
             guard let dash = identifier.lastIndex(of: "-"), let number = Int(identifier[identifier.index(after: dash)...])
             else { return nil }
             return (String(identifier[..<dash]), number)

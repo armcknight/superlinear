@@ -50,7 +50,7 @@ struct AgentRunnerTests {
     func queueOrder() {
         func queued(_ id: String, at seconds: TimeInterval, pid: Int32? = nil) -> (String, AgentRun) {
             ("w", AgentRun(
-                issueId: id, identifier: id, branchName: "b", sessionId: id, pid: pid,
+                issueId: id, identifier: .init(rawValue: id), branchName: "b", sessionId: id, pid: pid,
                 queuedAt: Date(timeIntervalSince1970: seconds)
             ))
         }

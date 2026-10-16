@@ -5,8 +5,8 @@ import Foundation
 /// without opening one. `work finish <branch>` removes both.
 struct StaleBranch: Sendable, Equatable {
     enum Reason: Sendable, Equatable {
-        case merged(Int)
-        case closed(Int)
+        case merged(PullRequest.Number)
+        case closed(PullRequest.Number)
         case noPullRequest
     }
 

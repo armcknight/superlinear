@@ -59,7 +59,7 @@ extension IssueSelection {
             ]
         }
         let (rankA, rankB) = (rank(a), rank(b))
-        guard rankA != rankB else { return a.identifier.localizedStandardCompare(b.identifier) == .orderedAscending }
+        guard rankA != rankB else { return a.identifier.sortsBefore(b.identifier) }
         return rankA.lexicographicallyPrecedes(rankB)
     }
 }

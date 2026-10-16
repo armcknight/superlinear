@@ -237,20 +237,24 @@ struct ProposalDuplicateTests {
 
 @Suite("Proposal expiry")
 struct ProposalExpiryTests {
-    @Test("Pending proposals older than the expiry expire; others stay")
+    @Test("Pending proposals a standup showed longer ago than the expiry expire; others stay")
     func expiry() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let day: TimeInterval = 24 * 60 * 60
         var state = State()
-        let old = Proposal(newIssue("Old"), trust: .standup, id: "old", now: now.addingTimeInterval(-8 * day))
-        let fresh = Proposal(newIssue("Fresh"), trust: .standup, id: "fresh", now: now.addingTimeInterval(-6 * day))
+        var old = Proposal(newIssue("Old"), trust: .standup, id: "old", now: now.addingTimeInterval(-20 * day))
+        old.firstShownAt = now.addingTimeInterval(-8 * day)
+        var fresh = Proposal(newIssue("Fresh"), trust: .standup, id: "fresh", now: now.addingTimeInterval(-20 * day))
+        fresh.firstShownAt = now.addingTimeInterval(-6 * day)
+        // No standup has shown it, so it waits however old it is.
+        let unseen = Proposal(newIssue("Unseen"), trust: .standup, id: "unseen", now: now.addingTimeInterval(-60 * day))
         var rejected = Proposal(newIssue("Rejected"), trust: .standup, id: "rejected", now: now.addingTimeInterval(-90 * day))
         rejected.status = .rejected
         rejected.decidedAt = now.addingTimeInterval(-89 * day)
         var applied = Proposal(newIssue("Applied"), trust: .auto, id: "applied", now: now.addingTimeInterval(-40 * day))
         applied.status = .applied
         applied.decidedAt = now.addingTimeInterval(-40 * day)
-        for proposal in [old, fresh, rejected, applied] { state.recordProposal(proposal, workspace: "w") }
+        for proposal in [old, fresh, unseen, rejected, applied] { state.recordProposal(proposal, workspace: "w") }
 
         let expired = state.expireProposals(olderThanDays: 7, workspace: "w", now: now).map(\.id)
 
@@ -259,6 +263,7 @@ struct ProposalExpiryTests {
         #expect(byId["old"]?.status == .expired)
         #expect(byId["old"]?.decidedAt == now)
         #expect(byId["fresh"]?.status == .pending)
+        #expect(byId["unseen"]?.status == .pending)
         // Rejections stay to keep the change from coming back; old applied ones go.
         #expect(byId["rejected"]?.status == .rejected)
         #expect(byId["applied"] == nil)

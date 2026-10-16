@@ -5,7 +5,7 @@ import Testing
 @Suite("Pull requests for review")
 struct PullRequestReviewTests {
     private func pr(
-        _ number: Int, branch: String = "linear/spl-5-status", title: String = "t", draft: Bool = false,
+        _ number: PullRequest.Number, branch: String = "linear/spl-5-status", title: String = "t", draft: Bool = false,
         decision: String? = "", reviews: [String] = [], checks: [ReviewablePullRequest.Check] = []
     ) -> ReviewablePullRequest {
         ReviewablePullRequest(
@@ -15,7 +15,7 @@ struct PullRequestReviewTests {
         )
     }
 
-    private func issue(_ identifier: String) -> LinearIssueStatus {
+    private func issue(_ identifier: LinearIssue.Identifier) -> LinearIssueStatus {
         LinearIssueStatus(
             id: "id-\(identifier)", identifier: identifier, title: "Issue \(identifier)", branchName: "b",
             state: .init(name: "In Review", type: "started")

@@ -27,12 +27,15 @@ struct WorkspaceConfig: Decodable, Sendable {
     let humanLabels: [String]
     /// The trust level of each kind of proposal.
     let autonomy: Autonomy
-    /// Days after which a pending proposal expires.
+    /// Days after which a pending proposal expires, counted from the first
+    /// standup that showed it.
     let proposalExpiryDays: Int
+    /// Planning settings.
+    let planning: PlanningConfig
 
     enum CodingKeys: String, CodingKey {
         case name, apiKey, repoPath, teamIds, pollIntervalSeconds, selection, readyStates, humanLabels
-        case autonomy, proposalExpiryDays
+        case autonomy, proposalExpiryDays, planning
     }
 
     init(from decoder: Decoder) throws {
@@ -60,6 +63,7 @@ struct WorkspaceConfig: Decodable, Sendable {
         autonomy = Autonomy(overrides: overrides)
         let expiry = try container.decodeIfPresent(Int.self, forKey: .proposalExpiryDays) ?? Self.defaultProposalExpiryDays
         proposalExpiryDays = max(1, expiry)
+        planning = try container.decodeIfPresent(PlanningConfig.self, forKey: .planning) ?? PlanningConfig()
     }
 
     /// The Linear state types an issue may be in for an agent to start on it.
@@ -68,6 +72,22 @@ struct WorkspaceConfig: Decodable, Sendable {
         case .new: [.backlog, .unstarted]
         case .ready: Set(readyStates)
         }
+    }
+}
+
+/// A workspace's `planning` settings.
+struct PlanningConfig: Decodable, Sendable, Equatable {
+    /// The Linear document holding the project's spec. Decisions entered at
+    /// standup are added to it as well as to their issues.
+    var specDocumentURL: String?
+
+    /// The document's ID as Linear's API takes it: the slug at the end of its
+    /// URL, as in `https://linear.app/team/document/spec-0123abcd`.
+    var specDocumentId: LinearDocument.ID? {
+        guard let url = specDocumentURL.flatMap(URL.init(string:)) else { return nil }
+        let last = url.lastPathComponent
+        guard let slug = last.split(separator: "-").last, !slug.isEmpty, last != "/" else { return nil }
+        return LinearDocument.ID(rawValue: String(slug))
     }
 }
 

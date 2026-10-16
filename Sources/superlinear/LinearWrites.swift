@@ -105,3 +105,17 @@ extension LinearClient: LinearWriting {
         )
     }
 }
+
+/// The writes in Linear that a standup makes for the owner, besides applying
+/// proposals.
+protocol StandupWriting: LinearWriting {
+    /// Moves the issue to its team's first completed state. Returns false
+    /// when it was completed or canceled already.
+    func completeIssue(id: LinearIssue.ID) async throws -> Bool
+}
+
+extension LinearClient: StandupWriting {
+    func completeIssue(id: LinearIssue.ID) async throws -> Bool {
+        try await completeIssue(id: id.rawValue)
+    }
+}
