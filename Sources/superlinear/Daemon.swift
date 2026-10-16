@@ -420,6 +420,66 @@ actor Daemon {
         save()
     }
 
+    // MARK: - Proposals
+
+    /// Stores a proposed change to Linear, unless the same change is pending
+    /// or was rejected, or its kind is set to never. One whose kind is `auto`
+    /// is applied at once. Returns the proposal as stored, or nil when none was.
+    @discardableResult
+    func propose(_ draft: ProposalDraft, workspace: WorkspaceConfig) async -> Proposal? {
+        let engine = proposalEngine(workspace)
+        let screening: ProposalEngine.Screening
+        do {
+            screening = try await engine.screen(draft, existing: state.proposals(workspace: workspace.name))
+        } catch {
+            log("Could not check a \(draft.payload.kind.rawValue) proposal for duplicates: \(error)", workspace: workspace.name)
+            return nil
+        }
+        guard case .store(let proposal, let applyNow) = screening else {
+            if case .skip(let reason) = screening {
+                log("Not proposing \(draft.payload.kind.rawValue): \(reason)", workspace: workspace.name)
+            }
+            return nil
+        }
+        // Another proposal may have been stored while the screening waited on Linear.
+        let sameness = proposal.sameness
+        guard !state.proposals(workspace: workspace.name).contains(where: {
+            $0.sameness == sameness && [.pending, .rejected].contains($0.status)
+        }) else { return nil }
+        state.recordProposal(proposal, workspace: workspace.name)
+        save()
+        log("Proposed \(proposal.kind.rawValue) \(proposal.id): \(proposal.reason)", workspace: workspace.name)
+        return applyNow ? await applyProposal(proposal, workspace: workspace) : proposal
+    }
+
+    /// Applies a pending proposal and records what became of it.
+    func applyProposal(_ proposal: Proposal, workspace: WorkspaceConfig) async -> Proposal {
+        let result = await proposalEngine(workspace).apply(proposal)
+        state.recordProposal(result, workspace: workspace.name)
+        save()
+        let outcome = switch result.status {
+        case .applied: "Applied"
+        case .rejected: "Rejected (\(result.rejectionReason ?? "no reason"))"
+        default: "Left pending (\(result.lastError ?? result.reviewNote ?? "for review"))"
+        }
+        log("\(outcome) \(result.kind.rawValue) \(result.id)", workspace: workspace.name)
+        return result
+    }
+
+    func expireProposals(workspace: WorkspaceConfig) {
+        let expired = state.expireProposals(olderThanDays: workspace.proposalExpiryDays, workspace: workspace.name)
+        guard !expired.isEmpty else { return }
+        log("Expired \(expired.count) proposal(s) pending over \(workspace.proposalExpiryDays) days", workspace: workspace.name)
+        save()
+    }
+
+    private func proposalEngine(_ workspace: WorkspaceConfig) -> ProposalEngine {
+        ProposalEngine(
+            workspace: workspace.name, autonomy: workspace.autonomy,
+            linear: LinearClient(apiKey: workspace.apiKey), audit: AuditLog()
+        )
+    }
+
     func updateLastPoll(_ date: Date, workspace: String) {
         state.updateLastPoll(date, workspace: workspace)
         save()

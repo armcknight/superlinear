@@ -1,14 +1,20 @@
 import Foundation
 
-struct WorkspaceConfig: Codable, Sendable {
+struct WorkspaceConfig: Decodable, Sendable {
     let name: String
     let apiKey: String
     let repoPath: String
     let teamIds: [String]
     let pollIntervalSeconds: Int
+    /// The trust level of each kind of proposal.
+    let autonomy: Autonomy
+    /// Days after which a pending proposal expires.
+    let proposalExpiryDays: Int
+
+    static let defaultProposalExpiryDays = 7
 
     enum CodingKeys: String, CodingKey {
-        case name, apiKey, repoPath, teamIds, pollIntervalSeconds
+        case name, apiKey, repoPath, teamIds, pollIntervalSeconds, autonomy, proposalExpiryDays
     }
 
     init(from decoder: Decoder) throws {
@@ -18,10 +24,25 @@ struct WorkspaceConfig: Codable, Sendable {
         repoPath = try container.decode(String.self, forKey: .repoPath)
         teamIds = try container.decodeIfPresent([String].self, forKey: .teamIds) ?? []
         pollIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .pollIntervalSeconds) ?? 60
+        // A misspelt kind would otherwise leave its default in force unseen.
+        var overrides: [ProposalKind: TrustLevel] = [:]
+        for (key, level) in try container.decodeIfPresent([String: TrustLevel].self, forKey: .autonomy) ?? [:] {
+            guard let kind = ProposalKind(rawValue: key) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .autonomy, in: container,
+                    debugDescription: "Unknown proposal kind \"\(key)\". Known kinds: "
+                        + ProposalKind.allCases.map(\.rawValue).joined(separator: ", ")
+                )
+            }
+            overrides[kind] = level
+        }
+        autonomy = Autonomy(overrides: overrides)
+        let expiry = try container.decodeIfPresent(Int.self, forKey: .proposalExpiryDays) ?? Self.defaultProposalExpiryDays
+        proposalExpiryDays = max(1, expiry)
     }
 }
 
-struct Config: Codable, Sendable {
+struct Config: Decodable, Sendable {
     static let defaultMaxConcurrentAgents = 3
 
     let workspaces: [WorkspaceConfig]

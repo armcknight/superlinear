@@ -380,7 +380,41 @@ struct LinearClient: Sendable {
         let message: String
     }
 
-    private func execute<T: Decodable>(_ query: String, variables: [String: Any], as type: T.Type) async throws -> T {
+    func execute<T: Decodable>(_ query: String, variables: [String: Any], as type: T.Type) async throws -> T {
+        try await send(query, variables: variables).decoded(as: T.self)
+    }
+
+    /// Runs a mutation, and returns both its decoded result and the whole of
+    /// Linear's answer, for the audit log.
+    func executeKeepingResponse<T: Decodable>(
+        _ query: String, variables: [String: Any], as type: T.Type
+    ) async throws -> (T, JSONValue) {
+        let response = try await send(query, variables: variables)
+        return (try response.decoded(as: T.self), try response.decoded(as: JSONValue.self))
+    }
+
+    private struct Response {
+        let data: Data
+
+        func decoded<T: Decodable>(as type: T.Type) throws -> T {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+
+            let response = try decoder.decode(GraphQLResponse<T>.self, from: data)
+
+            if let errors = response.errors, !errors.isEmpty {
+                throw LinearClientError.apiError(errors.map(\.message))
+            }
+
+            guard let result = response.data else {
+                throw LinearClientError.invalidResponse
+            }
+
+            return result
+        }
+    }
+
+    private func send(_ query: String, variables: [String: Any]) async throws -> Response {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -390,20 +424,6 @@ struct LinearClient: Sendable {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, _) = try await URLSession.shared.data(for: request)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        let response = try decoder.decode(GraphQLResponse<T>.self, from: data)
-
-        if let errors = response.errors, !errors.isEmpty {
-            throw LinearClientError.apiError(errors.map(\.message))
-        }
-
-        guard let result = response.data else {
-            throw LinearClientError.invalidResponse
-        }
-
-        return result
+        return Response(data: data)
     }
 }

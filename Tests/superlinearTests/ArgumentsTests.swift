@@ -19,13 +19,16 @@ struct ArgumentsTests {
         #expect(Command.parse(["uninstall"]) == .uninstall)
         #expect(Command.parse(["status"]) == .status(configPath: nil))
         #expect(Command.parse(["status", "--config", "/c.json"]) == .status(configPath: "/c.json"))
+        #expect(Command.parse(["proposals"]) == .proposals(configPath: nil, workspace: nil))
+        #expect(Command.parse(["proposals", "--workspace", "w", "--config", "/c.json"])
+            == .proposals(configPath: "/c.json", workspace: "w"))
         #expect(Command.parse(["--version"]) == .version)
         #expect(Command.parse(["-h"]) == .help)
     }
 
     @Test("Anything unknown is an error, not a daemon")
     func unknownIsInvalid() {
-        for arguments in [["stats"], ["status", "--json"], ["--verbose"], ["--config"], ["install", "--now"], ["uninstall", "x"]] {
+        for arguments in [["stats"], ["status", "--json"], ["--verbose"], ["--config"], ["install", "--now"], ["uninstall", "x"], ["proposals", "--all"], ["proposals", "--workspace"]] {
             guard case .invalid = Command.parse(arguments) else {
                 Issue.record("\(arguments) should be invalid")
                 continue
