@@ -112,6 +112,7 @@ When a session — an agent for a new issue, a review or a conflict — ends wit
 When the limit is used up, or a payment fails, GitHub starts no jobs in private repositories: their check runs fail at once with an annotation saying the job was not started because of the spending limit or a billing problem. Public repositories' standard runners are free, so this applies only to private ones. At each poll, for a private repository, the daemon reads the annotations of the failed runs of open pull requests' branches and of the default branch, once per run attempt, and, for runs stopped this way:
 
 - Shows the pull request's CI state as "CI not started: GitHub spending limit", not "CI failing", in [`superlinear status`](operations.md#status) and the standup.
+- Proposes no issue for such a run on the default branch, as it does for [failing CI](planning.md#follow-ups).
 - Tells agents, in their prompts, that such CI is not a failure to fix. Agents go on working: the limit stops CI, not Claude, and agents run the tests locally before they push.
 - Once an hour, reruns the failed jobs of the newest stopped run (`gh run rerun <id> --failed`). When its jobs start, you have raised the limit or the month has changed: it reruns the failed jobs of the other stopped runs, newest first, at most one for each branch.
 

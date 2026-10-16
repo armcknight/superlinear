@@ -301,7 +301,7 @@ struct StandupSectionTests {
         #expect(runs == [
             Standup.DefaultBranchRun(status: .inProgress, url: "u", workflowName: "ci"),
             Standup.DefaultBranchRun(status: .completed, conclusion: .timedOut),
-            Standup.DefaultBranchRun(status: .unknown, conclusion: .unknown),
+            Standup.DefaultBranchRun(status: .unknown),
         ])
         #expect(Standup.risks(defaultBranch: "main", latestRun: runs[1], rateLimit: nil) == ["CI timed_out on main"])
     }

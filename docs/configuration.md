@@ -78,5 +78,6 @@ Edits take effect on their own. The daemon checks the file every five seconds; w
 | `~/.local/share/superlinear/daemon.log` | Daemon output. |
 | `~/.local/share/superlinear/logs/<ISSUE-ID>.log` | Agent output for one issue. A resumed run appends to it. |
 | `~/.local/share/superlinear/logs/<ISSUE-ID>.work.log` | Output of `work` itself for one issue, such as worktree setup, teardown after the merge, and errors. |
+| `<worktree>/.superlinear/followups.json` | Work an agent found outside its issue, read when it exits. See [Follow-ups from agents](planning.md#follow-ups). |
 
 Per-issue logs are written only when the agent exits. `claude -p` buffers its output, so following the file during a run shows nothing.

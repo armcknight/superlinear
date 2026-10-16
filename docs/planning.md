@@ -5,7 +5,7 @@ How superlinear keeps the plan in Linear up to date: it proposes changes, and yo
 <a id="proposals"></a>
 ## Proposals and trust levels
 
-superlinear can propose changes to the Linear workspace: new issues, edits, closures, relations, promotions from Backlog to Todo, spec changes, and project updates. Each proposal is kept in the state file with its kind, its target (an issue, a project, a document, or for a new issue its team), the change itself (for an edit, the old and the new text, so a diff can be shown), the reason, its source (a pull request, a commit range, or an agent session), when it was made, and its status: `pending`, `applied`, `rejected` or `expired`, with the reason for a rejection. Nothing makes proposals yet; the [daily planning job](#daily-planning) and [agents' follow-ups](#follow-ups) will.
+superlinear can propose changes to the Linear workspace: new issues, edits, closures, relations, promotions from Backlog to Todo, spec changes, and project updates. Each proposal is kept in the state file with its kind, its target (an issue, a project, a document, or for a new issue its team), the change itself (for an edit, the old and the new text, so a diff can be shown), the reason, its source (a pull request, a commit range, an agent session with its issue and pull request, or a workflow run), when it was made, and its status: `pending`, `applied`, `rejected` or `expired`, with the reason for a rejection. [Agents' follow-ups](#follow-ups), failing CI on the default branch, and TODOs in merged pull requests make proposals today; the [daily planning job](#daily-planning) will too.
 
 <a id="trust-levels"></a>
 ### Trust levels
@@ -56,7 +56,28 @@ Not built yet: [SPL-11](https://linear.app/superlinear-linear/issue/SPL-11) adds
 <a id="follow-ups"></a>
 ## Follow-ups from agents
 
-Not built yet: [SPL-12](https://linear.app/superlinear-linear/issue/SPL-12) adds it, and fills in this section.
+Agents find bugs and missing work outside their issue. Every agent's prompt — for a new issue, a review or a conflict — tells it not to fix such work and not to create Linear issues, but to add an entry to the JSON array in `.superlinear/followups.json` at the root of its worktree:
+
+```json
+[
+  {
+    "title": "Status crashes on an empty state file",
+    "description": "It force-unwraps the last poll, which a new state file does not have.",
+    "kind": "bug",
+    "evidence": "Sources/superlinear/Status.swift:42",
+    "relatedIssue": "SPL-4"
+  }
+]
+```
+
+`kind` is `bug`, `task`, `test` or `spec`. `evidence` is the file and line, the failing command, or a log excerpt. `relatedIssue` is optional: the issue the work blocks or relates to. Before each launch, the daemon adds `/.superlinear/` to the repository's `info/exclude`, which every worktree shares, so git ignores the file.
+
+When an agent exits, the daemon reads the file and stores each entry as a `createIssue` proposal in the team of the agent's issue. Its description has the entry's description, kind, evidence and related issue, and its source is the agent's session, issue and pull request. The new issue follows from `relatedIssue`, or else from the agent's issue, so an open issue with a close title becomes an `addRelation` proposal between the two instead. Entries that could not be proposed, as when Linear is down, stay in the file for the next agent on the issue; the rest are removed with it. A malformed file — not a JSON array of entries, an unknown `kind`, or a blank title, description or evidence — is logged, nothing in it is proposed, and it stays where it is for inspection.
+
+Two more sources make `createIssue` proposals:
+
+- **Failing CI on the default branch.** Each poll lists the workflow runs on the branch `origin/HEAD` names (`main` when it names none). For each workflow whose latest completed run failed, timed out or could not start, it proposes "CI fails on `<branch>`: `<workflow>`", with the run as its source, in the workspace's first `teamIds` entry or else Linear's first team. The title is the same for each run of a workflow, so while that proposal is pending, or the issue it made is open, later failures propose nothing. The daemon screens each failed run once until it restarts. A run the [GitHub Actions spending limit](lifecycle.md#spending-limit) stopped is not a failure: it proposes nothing, and the daemon reruns it when the limit is raised.
+- **TODOs in merged pull requests.** When an agent's pull request merges, the daemon reads its diff, and proposes an issue for each added line with `TODO` or `FIXME` that names no issue (a line like `TODO: SPL-24` is already tracked). The title is the words after the marker; the description gives the file and line. Its source is the pull request and the agent's issue, which the new issue follows from. Pull requests merged outside the daemon's merge watch are not read.
 
 <a id="standup"></a>
 ## The standup

@@ -448,8 +448,7 @@ enum StandupCommand {
     }
 
     private static func risks(repoPath: String, pauses: Standup.Pauses, now: Date, warnings: inout [String]) -> [String] {
-        let branch = Git.run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: repoPath)
-            .map { String($0.dropFirst("origin/".count)) }
+        let branch = Git.defaultBranch(in: repoPath)
         var latest: Standup.DefaultBranchRun?
         if let branch {
             do {

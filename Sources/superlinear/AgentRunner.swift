@@ -1,6 +1,21 @@
 import Darwin
 import Foundation
 
+/// What every agent does with work it finds outside its issue. The daemon
+/// reads the file when the agent exits and proposes each entry.
+let followUpInstructions = """
+When you find a bug or missing work outside this issue, do not fix it and do not create Linear \
+issues. Instead, add an entry to the JSON array in `\(FollowUpFile.directory)/\(FollowUpFile.name)` at \
+the root of the worktree, and create the file and its directory if they do not exist. Git ignores \
+the file; do not commit it. Each entry is an object with these keys:
+- `title`: a short title for a new issue.
+- `description`: what is wrong or missing, and why it matters.
+- `kind`: one of \(FollowUp.Kind.allCases.map { "`\($0.rawValue)`" }.joined(separator: ", ")).
+- `evidence`: the file and line, the failing command, or a log excerpt that shows it.
+- `relatedIssue`: optional; the identifier, such as `ABC-12`, of an issue it blocks or relates to.
+When you exit, superlinear proposes a Linear issue for each entry.
+"""
+
 private let autonomousPrompt = """
 You are working autonomously on a Linear issue. Do not ask for confirmation at any step — \
 proceed through the entire workflow without pausing.
@@ -16,6 +31,8 @@ decision and document it in the PR description.
 
 If CI jobs did not start because of GitHub's spending limit or a billing problem, that is not a \
 failure to fix: do not change code for it, stop monitoring CI, and say so in the pull request description.
+
+\(followUpInstructions)
 """
 
 /// The prompt for a run that answers a review on the pull request an earlier
@@ -47,6 +64,8 @@ func reviewPrompt(for review: ReviewRequest) -> String {
     Do not reply to the review or post comments on GitHub. If every point is already addressed, \
     stop. If you encounter ambiguity, make a reasonable decision and document it in the pull \
     request description.
+
+    \(followUpInstructions)
     """
 }
 
@@ -82,6 +101,8 @@ func conflictPrompt(for conflict: ConflictRequest) -> String {
     Do not post comments on GitHub. If the branch already merges cleanly with `origin/\(base)`, \
     stop. If you encounter ambiguity, make a reasonable decision and document it in the pull \
     request description.
+
+    \(followUpInstructions)
     """
 }
 

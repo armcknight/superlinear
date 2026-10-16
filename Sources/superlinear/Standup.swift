@@ -254,22 +254,7 @@ enum Standup {
             }
         }
 
-        /// How a completed run ended, as `gh run list` reports it.
-        enum Conclusion: String, Decodable, Sendable {
-            case success, failure, neutral, cancelled, skipped, stale
-            case timedOut = "timed_out"
-            case actionRequired = "action_required"
-            case startupFailure = "startup_failure"
-            /// A conclusion GitHub added since.
-            case unknown
-
-            init(from decoder: Decoder) throws {
-                self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
-            }
-
-            /// Whether the run passed, or did nothing to fail.
-            var isPassing: Bool { [.success, .skipped, .neutral].contains(self) }
-        }
+        typealias Conclusion = WorkflowRun.Conclusion
 
         var status: Status
         var conclusion: Conclusion?
@@ -286,9 +271,7 @@ enum Standup {
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             status = try container.decode(Status.self, forKey: .status)
-            // `gh` reports an empty conclusion for a run still going.
-            let conclusion = try container.decodeIfPresent(String.self, forKey: .conclusion) ?? ""
-            self.conclusion = conclusion.isEmpty ? nil : Conclusion(rawValue: conclusion) ?? .unknown
+            conclusion = .parse(try container.decodeIfPresent(String.self, forKey: .conclusion))
             url = try container.decodeIfPresent(String.self, forKey: .url)
             workflowName = try container.decodeIfPresent(String.self, forKey: .workflowName)
         }
