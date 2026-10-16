@@ -170,6 +170,8 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
 | `repoPath` | yes | Repository the agent works in. `~` is expanded. |
 | `teamIds` | no | Linear team IDs to watch. Empty or absent means all teams. Defaults to `[]`. |
 | `pollIntervalSeconds` | no | Seconds between polls. Defaults to `60`. |
+| `autonomy` | no | The trust level of each kind of proposal: a map from kind to `"auto"`, `"standup"` or `"never"`. Kinds left out keep their defaults. See [Proposals and trust levels](#proposals-and-trust-levels). |
+| `proposalExpiryDays` | no | Days after which a pending proposal expires. Defaults to `7`. |
 | `selection` | no | `"new"` to start issues created since the last poll, or `"ready"` to start every issue in `readyStates`. See [Selection](#selection). Defaults to `"new"`. |
 | `readyStates` | no | Linear state types that mean "build this" in `ready` mode: any of `triage`, `backlog`, `unstarted`, `started`, `completed` and `canceled`, usually the first three. Any other value, such as a state name like `"Todo"`, is an error. Defaults to `["unstarted"]`, which is Todo. |
 | `humanLabels` | no | Names of labels that keep an issue for a person: no agent starts on it. Matched in any case. Defaults to `["Needs human", "Spike"]`. |
@@ -179,6 +181,47 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
 Each workspace entry is one Linear-account-to-repository pairing. List several to watch more than one repository.
 
 Edits take effect on their own. The daemon checks the file every five seconds; when it changes to a config that loads, the daemon exits and launchd restarts it on the new one, with agents in flight carrying on. An edit that does not load — invalid JSON, a missing key, no workspaces — is logged once and ignored until fixed. A daemon run in the foreground only logs that a restart is needed.
+
+## Proposals and trust levels
+
+superlinear can propose changes to the Linear workspace: new issues, edits, closures, relations, promotions from Backlog to Todo, spec changes, and project updates. Each proposal is kept in the state file with its kind, its target (an issue, a project, a document, or for a new issue its team), the change itself (for an edit, the old and the new text, so a diff can be shown), the reason, its source (a pull request, a commit range, or an agent session), when it was made, and its status: `pending`, `applied`, `rejected` or `expired`, with the reason for a rejection. Nothing makes proposals yet; the daily planning job and agents' follow-ups will.
+
+The workspace's `autonomy` config sets what happens to each kind:
+
+| Level | Effect |
+| --- | --- |
+| `auto` | Applied at once, and still listed for review. |
+| `standup` | Kept pending for you to approve or reject. |
+| `never` | Not proposed at all. |
+
+| Kind | Change | Default |
+| --- | --- | --- |
+| `createIssue` | A new issue. | `standup` |
+| `editIssue` | A new description, or managed block, for an issue. | `standup` |
+| `closeIssue` | Moves an issue to its team's first canceled state. | `standup` |
+| `addRelation` | Relates two issues: `blocks`, `duplicate`, `related` or `similar`. | `auto` |
+| `promoteIssue` | Moves an issue from Backlog to its team's first unstarted state, such as Todo, as when its blockers are done. | `standup` |
+| `changeSpec` | A new description for a project, or new content for a document. | `standup` |
+| `postProjectUpdate` | Posts a project update. | `standup` |
+
+```json
+"autonomy": { "createIssue": "auto", "postProjectUpdate": "never" }
+```
+
+An unknown kind or level in `autonomy` is a config error, so a misspelt kind does not leave its default in force unseen.
+
+Applying a proposal follows these rules:
+
+- **Its own issues are labelled.** Each issue superlinear creates gets the label `superlinear`, which it creates in the team when neither the team nor the workspace has it, and ends with a "Source" line linking to where it came from. Project updates end with the same line.
+- **Your text is yours.** In an issue without the `superlinear` label, an edit changes only the managed block between `<!-- superlinear -->` and `<!-- /superlinear -->`, which Linear does not show; it adds the block at the end when there is none. The rest of the description is left exactly as it was. In an issue with the label, an edit replaces the description.
+- **Hands off.** An issue with the label `superlinear: hands off` is never edited, closed, promoted or related. A proposal to change one is rejected.
+- **No lost updates.** A proposal records the target's `updatedAt` when it was worked out. Before an edit, closure, promotion or spec change, superlinear reads the target again. If it changed after that time, the proposal is not applied but stays pending, sent back for review with a note, even when its kind is `auto`. A proposal without the time is checked against the old text instead. Times within a second count as the same, as the state file keeps dates to the second.
+- **No duplicates.** Before a new issue is proposed, Linear's search looks for open issues in its team with the same title or a close one, by the [Sørensen–Dice coefficient](https://en.wikipedia.org/wiki/Dice-S%C3%B8rensen_coefficient) of their letter pairs, at 0.8 or more, once case and punctuation are set aside. When one is found, nothing is proposed, or, for an issue that follows from another, a `related` relation between that one and the open one. A change already pending, or rejected before, is not proposed again: the same kind and target, and for a new issue the same title, for a relation the same other issue and type.
+- **Proposals expire.** A proposal still pending after `proposalExpiryDays` days expires. Applied and expired proposals drop out of the state file 30 days after; rejected ones stay, to keep the change from coming back.
+
+Each change applied is appended to `~/.local/share/superlinear/audit/<workspace>.jsonl`: the time, the proposal, and Linear's response, one JSON object a line. A failed write leaves the proposal pending, with the error, and writes nothing to the log.
+
+`superlinear proposals [--workspace <name>]` lists each workspace's pending proposals, oldest first, then those applied, rejected or expired in the last 7 days, newest first. Each shows its ID's first 8 characters, kind, target, status, when it was made, reason and source, any rejection reason, note or error, and the change: a new issue's title and description, or a line diff for an edit.
 
 ## Releasing
 
@@ -216,7 +259,8 @@ Signing is on because launchd starts this binary, not your shell. An unsigned CL
 | Path | Contents |
 | --- | --- |
 | `~/.config/superlinear/config.json` | Configuration, including API keys. |
-| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, and blocked and human-labeled issues, per workspace. |
+| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, blocked and human-labeled issues, and proposals, per workspace. |
+| `~/.local/share/superlinear/audit/<workspace>.jsonl` | Each change superlinear applied in Linear, with the proposal and Linear's response. |
 | `~/.local/share/superlinear/daemon.lock` | Held by the running daemon, so a second one exits. |
 | `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. |
 | `~/.local/share/superlinear/daemon.log` | Daemon output. |
@@ -232,6 +276,7 @@ superlinear [--config <path>]
 superlinear install
 superlinear uninstall
 superlinear status [--config <path>]
+superlinear proposals [--workspace <name>] [--config <path>]
 ```
 
 With no subcommand it runs the daemon in the foreground, which is how to test a configuration without registering a launch agent. `--config` overrides the default path, `--version` prints the version, and `--help` prints this.
