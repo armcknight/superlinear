@@ -12,9 +12,9 @@ struct IssueSelectionTests {
     }
 
     private func issue(
-        _ identifier: String, created: TimeInterval = 0, stateType: String = "unstarted",
+        _ identifier: LinearIssue.Identifier, created: TimeInterval = 0, stateType: String = "unstarted",
         priority: Double? = nil, project: Double? = nil, milestone: Double? = nil, sortOrder: Double? = nil,
-        labels: [String] = [], blockers: [(String, String)] = []
+        labels: [String] = [], blockers: [(LinearIssue.Identifier, String)] = []
     ) -> LinearIssue {
         LinearIssue(
             id: "id-\(identifier)", identifier: identifier, title: "Title \(identifier)", branchName: "b-\(identifier)",

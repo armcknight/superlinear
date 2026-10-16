@@ -1,10 +1,11 @@
 import Foundation
+import Tagged
 
 /// An issue whose agent has ended, watched until the pull request it opened is
 /// merged or closed. Kept in the state file, so a restart keeps watching.
 struct PendingMerge: Codable, Sendable, Equatable {
     var issueId: String
-    var identifier: String
+    var identifier: LinearIssue.Identifier
     var branchName: String
     /// Reviews submitted at or before this time are taken as addressed: the
     /// last agent on the issue was already running when they came in. Absent
@@ -17,7 +18,7 @@ struct PendingMerge: Codable, Sendable, Equatable {
     var gitHubIssue: Int? = nil
 
     init(
-        issueId: String, identifier: String, branchName: String,
+        issueId: String, identifier: LinearIssue.Identifier, branchName: String,
         reviewsHandledThrough: Date? = nil, conflictAttempt: ConflictAttempt? = nil, gitHubIssue: Int? = nil
     ) {
         self.issueId = issueId
@@ -83,13 +84,15 @@ struct PullRequestReview: Codable, Sendable, Equatable {
 /// and head commits once more; `superlinear status` lists a
 /// whole repository and asks for the branch, draft flag and size as well.
 struct PullRequest: Codable, Sendable, Equatable {
+    typealias Number = Tagged<PullRequest, Int>
+
     enum State: String, Codable, Sendable {
         case open = "OPEN"
         case closed = "CLOSED"
         case merged = "MERGED"
     }
 
-    let number: Int
+    let number: Number
     let url: String
     let state: State
     /// The branch it was opened from, when the listing asked for it.

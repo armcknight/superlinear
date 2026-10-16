@@ -28,10 +28,13 @@ actor Daemon {
     /// Until when a GitHub rate limit is used up. Polls skip their GitHub
     /// work until then.
     private var gitHubPausedUntil: Date?
+    /// What standups decided, read again at each poll.
+    private var standups: StandupRecord
 
     init(config: Config) {
         self.config = config
         self.state = State.load()
+        self.standups = StandupRecord.load()
     }
 
     func run() async throws {
@@ -227,8 +230,12 @@ actor Daemon {
         while processes.count + watchers.count < config.maxConcurrentAgents {
             let queued = state.workspaces.flatMap { name, workspaceState in
                 workspaceState.inFlight.values.map { (name, $0) }
-            }.filter { workspace(named: $0.0) != nil }
-            guard let (name, run) = AgentRunner.nextQueued(queued),
+            }.filter { name, run in
+                // A standup's hold keeps an agent from starting on a new issue,
+                // but not from going on with one it started.
+                workspace(named: name) != nil && !(run.isFresh && standups[name].held[LinearIssue.ID(rawValue: run.issueId)] != nil)
+            }
+            guard let (name, run) = AgentRunner.nextQueued(queued, rank: { self.standups[$0].rank(of: LinearIssue.ID(rawValue: $1.issueId)) }),
                   let workspace = workspace(named: name)
             else { break }
             guard launch(run, workspace: workspace) else { break }
@@ -255,9 +262,10 @@ actor Daemon {
             processes[run.issueId] = process
             state.recordRun(launched, workspace: workspace.name)
             log(mode == .resume ? "Resuming \(run.identifier)" : "Starting \(run.identifier)", workspace: workspace.name)
-            if workspace.selection == .ready, run.gitHubIssue == nil, run.review == nil, run.conflict == nil, mode == .start,
-                run.resumes == 0 {
-                markStarted(run, workspace: workspace)
+            if run.review == nil, run.conflict == nil, mode == .start, run.resumes == 0 {
+                state.recordActivity(
+                    ActivityEvent(time: Date(), kind: .agentStarted, identifier: run.identifier), workspace: workspace.name)
+                if workspace.selection == .ready, run.gitHubIssue == nil { markStarted(run, workspace: workspace) }
             }
             if let review = run.review {
                 log("  Addressing the review on \(review.url)", workspace: workspace.name)
@@ -281,6 +289,11 @@ actor Daemon {
                     workspace: workspace.name
                 )
                 state.removeRun(issueId: run.issueId, workspace: workspace.name)
+                state.recordActivity(
+                    ActivityEvent(time: Date(), kind: .agentStopped, identifier: run.identifier,
+                                  detail: "\(Self.maxLaunchFailures) failed launches"),
+                    workspace: workspace.name
+                )
             } else {
                 log(
                     "Could not start the agent for \(run.identifier); requeued at the back, "
@@ -327,6 +340,7 @@ actor Daemon {
         case nil: log("Agent for \(run.identifier) ended without a status", workspace: workspace)
         }
         state.removeRun(issueId: run.issueId, workspace: workspace)
+        state.recordActivity(.finished(run, status: status), workspace: workspace)
         // Even an agent that failed may have opened a pull request first.
         state.awaitMerge(PendingMerge(run), workspace: workspace)
         runner.cleanUp(run)
@@ -378,9 +392,10 @@ actor Daemon {
         state.handledIssueIds(workspace: workspace)
     }
 
-    /// Issues waiting on blockers or a human, which each poll checks again.
+    /// Issues waiting on blockers, a human or a standup's hold, which each
+    /// poll checks again.
     func waitingIssueIds(workspace: String) -> Set<LinearIssue.ID> {
-        state.workspaces[workspace]?.waitingIssueIds ?? []
+        (state.workspaces[workspace]?.waitingIssueIds ?? []).union(standups[workspace].held.keys)
     }
 
     /// Records the issues the latest poll found waiting, logging those that
@@ -446,6 +461,27 @@ actor Daemon {
         let login = try await PullRequestChecker().viewerLogin(repoPath: repoPath)
         viewerLogin = login
         return login
+    }
+
+    func recordActivity(_ event: ActivityEvent, workspace: String) {
+        state.recordActivity(event, workspace: workspace)
+        save()
+    }
+
+    // MARK: - Standups
+
+    /// Reads the standup file again and takes in what standups decided about
+    /// the workspace's proposals.
+    func takeInStandups(workspace: String) {
+        standups = StandupRecord.load()
+        let before = state.proposals(workspace: workspace)
+        state.takeIn(standups[workspace], workspace: workspace)
+        if state.proposals(workspace: workspace) != before { save() }
+    }
+
+    /// The workspace's latest standup decisions.
+    func standup(workspace: String) -> WorkspaceStandup {
+        standups[workspace]
     }
 
     func forgetLinkedPullRequests(issueId: String, workspace: String) {

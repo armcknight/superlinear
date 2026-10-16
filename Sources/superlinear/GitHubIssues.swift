@@ -33,7 +33,7 @@ struct GitHubIssue: Codable, Sendable, Equatable {
     var issueId: String { Self.issueId(number: number) }
     /// The identifier used in logs and `superlinear status`. Its shape is a
     /// Linear identifier's, so the review list finds the issue from its branch.
-    var identifier: String { "GH-\(number)" }
+    var identifier: LinearIssue.Identifier { LinearIssue.Identifier("GH-\(number)") }
     /// Named by number alone, so a later edit to the title cannot lose it.
     var branchName: String { Self.branchName(number: number) }
 

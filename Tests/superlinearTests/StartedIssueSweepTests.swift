@@ -9,13 +9,13 @@ import Testing
 struct StartedIssueSweepTests {
     private func issue(_ id: String, startedAt: TimeInterval? = 100) -> LinearIssueStatus {
         LinearIssueStatus(
-            id: id, identifier: id, title: "t", branchName: "linear/\(id)",
+            id: id, identifier: .init(rawValue: id), title: "t", branchName: "linear/\(id)",
             state: .init(name: "In Review", type: "started"),
             startedAt: startedAt.map { Date(timeIntervalSince1970: $0) }
         )
     }
 
-    private func pr(_ number: Int, _ branch: String, _ state: PullRequest.State, mergedAt: TimeInterval? = nil) -> PullRequest {
+    private func pr(_ number: PullRequest.Number, _ branch: String, _ state: PullRequest.State, mergedAt: TimeInterval? = nil) -> PullRequest {
         PullRequest(
             number: number, url: "https://github.com/o/r/pull/\(number)", state: state, headRefName: branch,
             mergedAt: mergedAt.map { Date(timeIntervalSince1970: $0) }

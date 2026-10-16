@@ -5,7 +5,7 @@ import Foundation
 /// the daemon was down, or interrupted and in need of resuming.
 struct AgentRun: Codable, Sendable, Equatable {
     var issueId: String
-    var identifier: String
+    var identifier: LinearIssue.Identifier
     var branchName: String
     /// The Claude session the agent runs in, chosen by the daemon so it can be
     /// resumed by ID. Lowercase, as Claude names its transcripts.
@@ -39,18 +39,22 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// Waiting for a free slot: recorded, but not launched, or launched and
     /// since requeued after an interruption.
     var isQueued: Bool { pid == nil }
+
+    /// Queued for a new issue and never launched, so a standup may hold it
+    /// back or move it in the queue.
+    var isFresh: Bool { isQueued && launchedAt == nil && resumes == 0 && review == nil && conflict == nil }
 }
 
 /// A pull request with reviews for an agent to address.
 struct ReviewRequest: Codable, Sendable, Equatable {
-    var number: Int
+    var number: PullRequest.Number
     var url: String
 }
 
 /// A pull request that conflicts with its base branch, for an agent to merge
 /// the base branch into.
 struct ConflictRequest: Codable, Sendable, Equatable {
-    var number: Int
+    var number: PullRequest.Number
     var url: String
     var baseBranch: String
     /// The branch and base heads the conflict was found on.
@@ -72,21 +76,21 @@ struct ConflictAttempt: Codable, Sendable, Equatable {
 /// An issue no agent starts on yet: one with open blockers, or one with a
 /// human label. Each poll checks it again.
 struct WaitingIssue: Codable, Sendable, Equatable {
-    var identifier: String
+    var identifier: LinearIssue.Identifier
     var title: String
     /// The identifiers of the open issues blocking it.
-    var blockers: [String] = []
+    var blockers: [LinearIssue.Identifier] = []
     /// Its human labels.
     var labels: [String] = []
 
-    init(identifier: String, title: String, blockers: [String] = [], labels: [String] = []) {
+    init(identifier: LinearIssue.Identifier, title: String, blockers: [LinearIssue.Identifier] = [], labels: [String] = []) {
         self.identifier = identifier
         self.title = title
         self.blockers = blockers
         self.labels = labels
     }
 
-    init(_ issue: LinearIssue, blockers: [String] = [], labels: [String] = []) {
+    init(_ issue: LinearIssue, blockers: [LinearIssue.Identifier] = [], labels: [String] = []) {
         self.init(identifier: issue.identifier, title: issue.title, blockers: blockers, labels: labels)
     }
 }
@@ -114,6 +118,8 @@ struct WorkspaceState: Codable, Sendable {
     var gitHubIssuesSince: Date?
     /// Proposed changes to Linear, pending and decided, oldest first.
     var proposals: [Proposal]
+    /// What the daemon did on its own, oldest first, for the standup.
+    var activity: [ActivityEvent]
 
     init() {
         processedIssueIds = []
@@ -124,13 +130,14 @@ struct WorkspaceState: Codable, Sendable {
         blocked = [:]
         needsHuman = [:]
         proposals = []
+        activity = []
     }
 
     // State files written before runs were tracked have no `inFlight`, those
     // written before pull requests were watched have no `pendingMerges` or
     // `linkedPullRequests`, and those written before blockers and human labels
     // were followed have no `blocked` or `needsHuman`. Those from before
-    // proposals have none.
+    // proposals have none, and those from before the standup no activity.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         processedIssueIds = try container.decode(Set<String>.self, forKey: .processedIssueIds)
@@ -143,6 +150,7 @@ struct WorkspaceState: Codable, Sendable {
         needsHuman = try container.decodeIfPresent([LinearIssue.ID: WaitingIssue].self, forKey: .needsHuman) ?? [:]
         gitHubIssuesSince = try container.decodeIfPresent(Date.self, forKey: .gitHubIssuesSince)
         proposals = try container.decodeIfPresent([Proposal].self, forKey: .proposals) ?? []
+        activity = try container.decodeIfPresent([ActivityEvent].self, forKey: .activity) ?? []
     }
 
     /// Issues an agent may not start on yet.
@@ -347,15 +355,17 @@ struct State: Codable, Sendable {
     /// for good, as they keep the same change from being proposed again.
     static let decidedProposalRetention: TimeInterval = 30 * 24 * 60 * 60
 
-    /// Expires pending proposals older than `days` days, and drops applied and
-    /// expired ones decided more than `decidedProposalRetention` ago. Returns
-    /// the proposals it expired.
+    /// Expires pending proposals that a standup first showed more than `days`
+    /// days ago, and drops applied and expired ones decided more than
+    /// `decidedProposalRetention` ago. A proposal no standup has shown never
+    /// expires. Returns the proposals it expired.
     @discardableResult
     mutating func expireProposals(olderThanDays days: Int, workspace: String, now: Date = Date()) -> [Proposal] {
         guard var proposals = workspaces[workspace]?.proposals, !proposals.isEmpty else { return [] }
         let cutoff = now.addingTimeInterval(-TimeInterval(days) * 24 * 60 * 60)
         var expired: [Proposal] = []
-        for index in proposals.indices where proposals[index].status == .pending && proposals[index].createdAt < cutoff {
+        for index in proposals.indices where proposals[index].status == .pending {
+            guard let shown = proposals[index].firstShownAt, shown < cutoff else { continue }
             proposals[index].status = .expired
             proposals[index].decidedAt = now
             expired.append(proposals[index])
@@ -366,6 +376,44 @@ struct State: Codable, Sendable {
         }
         workspaces[workspace]?.proposals = proposals
         return expired
+    }
+
+    /// Records something the daemon did on its own, and drops events older
+    /// than `ActivityEvent.retention`.
+    mutating func recordActivity(_ event: ActivityEvent, workspace: String) {
+        var activity = workspaces[workspace, default: WorkspaceState()].activity
+        activity.append(event)
+        activity.removeAll { $0.time < event.time.addingTimeInterval(-ActivityEvent.retention) }
+        workspaces[workspace, default: WorkspaceState()].activity = activity
+    }
+
+    /// The state file with what standups decided taken in, as the daemon
+    /// takes it in at each poll, so a reader sees the decisions at once.
+    static func loadWithStandups(from url: URL = stateFileURL(), standups: StandupRecord = .load()) -> State {
+        var state = load(from: url)
+        for (name, standup) in standups.workspaces {
+            state.takeIn(standup, workspace: name)
+        }
+        return state
+    }
+
+    /// Takes in what standups decided about the workspace's proposals: the
+    /// time each was first shown, and the outcome of each one decided. A
+    /// proposal no longer pending keeps what became of it.
+    mutating func takeIn(_ standup: WorkspaceStandup, workspace: String) {
+        guard var proposals = workspaces[workspace]?.proposals else { return }
+        let outcomes = Dictionary(standup.proposalOutcomes.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        for index in proposals.indices {
+            let id = proposals[index].id
+            if proposals[index].firstShownAt == nil, let shown = standup.proposalsShownAt[id] {
+                proposals[index].firstShownAt = shown
+            }
+            if proposals[index].status == .pending, var outcome = outcomes[id] {
+                outcome.firstShownAt = proposals[index].firstShownAt
+                proposals[index] = outcome
+            }
+        }
+        workspaces[workspace]?.proposals = proposals
     }
 
     static func stateFileURL() -> URL {
