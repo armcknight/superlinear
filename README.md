@@ -87,6 +87,27 @@ Branch names come from Linear's own `branchName` field, so the branch matches wh
 
 The same goes for started issues the daemon is not following — work done by hand, or by agents from before a state reset. Each poll matches issues In Progress or In Review to pull requests by branch, links them, and marks an issue done once its pull request has merged, unless a pull request on its branch is still open or the issue was moved back into progress after the merge. Their worktrees are left alone. This needs an API key with write access; with a read-only key it logs the refusal once.
 
+### Usage and spending limits
+
+superlinear sets no budgets of its own. The limits are the ones you set with the providers: your Claude plan's usage limit, and the GitHub Actions spending limit in your GitHub settings. When one of them stops work, superlinear sees it, stops the work that cannot succeed, loses none, and continues when the limit is lifted. There is no config key for this.
+
+**Claude usage limit.** When a session — an agent for a new issue, a review or a conflict — ends with Claude's usage limit message, such as `You've hit your session limit · resets 2:30am (America/Anchorage)` or `Claude AI usage limit reached|<time>`, the daemon:
+
+- Pauses every Claude session, in all workspaces, as they share one Claude login: until the reset time in the message, or for one hour when it gives none.
+- Records the stopped session as interrupted, not failed. It keeps its session ID, and counts neither as a resume nor as a failed launch.
+- Starts no session while paused. Queued, blocked and held issues keep their places and their order. GitHub work that needs no Claude — linking and checking pull requests, reviews, moving issues to Done — goes on.
+- Every 15 minutes while paused, runs one very small session (`claude -p` with a one-word prompt and no tools), at a cost of a few tokens. When it answers, the limit was lifted, as when you bought more usage: the pause ends at once. When it gives the limit message again, the pause goes on, until its new reset time.
+- Ends the pause at once on `superlinear resume`, which the standup also offers while a pause is active.
+- When the pause ends — at the reset time, after a check, or on `superlinear resume` — resumes the interrupted sessions first, with their session IDs, then the queue in its usual order. A resumed session that hits the limit again at once pauses everything again, until the new reset time; nothing retries in a loop.
+
+**GitHub Actions spending limit.** When the limit is used up, or a payment fails, GitHub starts no jobs in private repositories: their check runs fail at once with an annotation saying the job was not started because of the spending limit or a billing problem. Public repositories' standard runners are free, so this applies only to private ones. At each poll, for a private repository, the daemon reads the annotations of the failed runs of open pull requests' branches and of the default branch, once per run attempt, and, for runs stopped this way:
+
+- Shows the pull request's CI state as "CI not started: GitHub spending limit", not "CI failing", in `superlinear status` and the standup.
+- Tells agents, in their prompts, that such CI is not a failure to fix. Agents go on working: the limit stops CI, not Claude, and agents run the tests locally before they push.
+- Once an hour, reruns the failed jobs of the newest stopped run (`gh run rerun <id> --failed`). When its jobs start, you have raised the limit or the month has changed: it reruns the failed jobs of the other stopped runs, newest first, at most one for each branch.
+
+**Shown.** `superlinear status` begins with one line for each active pause, such as `Claude usage limit: paused until 15:00 (next check 14:15), 3 sessions waiting` and `GitHub Actions spending limit: CI not started in 2 repositories since 10:12`. A macOS notification is posted when a pause starts, and one when it ends. The standup's Risks section lists the active pauses and the work they hold back. Both pauses are kept in the state file, so a restarted daemon keeps them.
+
 ## Requirements
 
 `make init` installs everything Homebrew can provide — tmux, Claude Code, workr, and the `linctl`, `direnv` and `gh` that the agent's slash commands need. The daemon uses `gh` itself too, to find merged pull requests, so it must be signed in to GitHub. See the [Brewfile](Brewfile).
@@ -237,7 +258,7 @@ An interactive review in the terminal, run when you want: there is no schedule. 
 3. **Proposals:** each pending proposal with its reason, source and change, with a diff for edits. Keys: `a` approves it, `e` opens the change in `$EDITOR` as JSON and shows it again, `r` rejects it and asks why, `d` or Enter defers it.
 4. **Needs human:** issues with a `humanLabels` label, those blocking the most open issues, directly and indirectly, first. Keys: `d` marks it done, so the issues it blocks become ready; `e` enters a decision, added to the issue's managed block and, when `planning.specDocumentURL` is set, to the end of that document; `s` or Enter skips it.
 5. **Plan for today:** the issues agents start next, in the order they will: those queued, then, in `ready` mode, the ready issues not yet queued. Then the issues held, and those the last standup unblocked. Commands: `h N` holds item N, so no agent starts on it until a standup releases it with `h N` again; `u N` and `d N` move it up or down; `p bN` promotes backlog item N to Todo, or takes the promotion back. The 10 backlog issues listed are the first in Linear's order. Enter ends the section.
-6. **Risks:** CI failing on the default branch, and GitHub's rate limit when less than a fifth of it is left.
+6. **Risks:** CI failing on the default branch, GitHub's rate limit when less than a fifth of it is left, and the active [pauses](#usage-and-spending-limits) with the work they hold back: Claude sessions waiting out the usage limit, and branches whose CI the GitHub Actions spending limit stopped. While Claude sessions are paused, the standup ends by offering to resume them now, as `superlinear resume` does.
 
 `q` at any prompt quits, applying and recording nothing for that workspace. At the end of each workspace's standup, the approved proposals are applied and the other decisions written to Linear. Then the standup's time, the proposals shown and decided, the decisions, the holds and the order are recorded in `~/.local/share/superlinear/standup.json`, and a summary is printed. The daemon reads that file at each poll: it takes in the proposals' outcomes, holds issues back, and starts the queue in your order. A hold or a new order applies only to issues no agent has started on.
 
@@ -245,7 +266,7 @@ An interactive review in the terminal, run when you want: there is no schedule. 
 
 `--print` prints sections 1, 3, 4 and 5 without prompts and records nothing, for a quick look or a script. Without `--print`, the standup needs a terminal.
 
-The standup does not yet offer to run the daily planning job first, which is still to come, nor show budgets or late milestones.
+The standup does not yet offer to run the daily planning job first, which is still to come, nor show late milestones.
 
 ## Releasing
 
@@ -303,9 +324,12 @@ superlinear uninstall
 superlinear status [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear standup [--print] [--workspace <name>] [--config <path>]
+superlinear resume
 ```
 
 With no subcommand it runs the daemon in the foreground, which is how to test a configuration without registering a launch agent. `--config` overrides the default path, `--version` prints the version, and `--help` prints this.
+
+`superlinear resume` ends a pause of Claude sessions at the usage limit at once, as after you buy more usage or change plans before the reset time. It signals a running daemon, which starts the waiting sessions at once; with no daemon running, it lifts the pause in the state file. See [Usage and spending limits](#usage-and-spending-limits).
 
 ### Status
 
@@ -319,7 +343,7 @@ With no subcommand it runs the daemon in the foreground, which is how to test a 
 | Addressing review | An agent addresses your review of the issue's pull request, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
 | Resolving conflicts | An agent merges the base branch into the branch of the issue's pull request, which conflicts with it, or is queued to. Shows the pull request, and the pid and log once it runs. |
 | Interrupted | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
-| Queued | Waiting for a free agent slot. |
+| Queued | Waiting for a free agent slot, or for a pause at the Claude usage limit to end. A session the limit stopped says so; it resumes first. |
 | Open pull requests | The agent finished and its pull request is open. Shown only when open pull requests could not be listed for review; otherwise they appear above. |
 | Merged, issue not done | The pull request is merged, but the Linear issue is not in a completed state. |
 | Finished without a pull request | The agent ended, but no pull request is open or merged, and the issue is still open. |
@@ -336,6 +360,8 @@ After the workspaces comes a summary:
 - **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
 
 After the summary, a line gives the time of the last [standup](#standup), and the numbers of pending proposals and of issues that need a human.
+
+When a [pause](#usage-and-spending-limits) is active, the report begins with one line for it.
 
 The report ends with this command's version and binary, then the daemon's: its pid, version, binary and start time, or that it is not running. It warns when the daemon's binary has been replaced since the daemon started. Last, under **Polls**, each workspace shows when its last poll ended, whether it failed, and when the next one is due, or, once that time has passed, that it is polling now. Each workspace polls on its own loop, which waits its `pollIntervalSeconds` after each poll ends, so each has its own times.
 

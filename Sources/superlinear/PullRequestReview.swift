@@ -61,6 +61,16 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
         case pending = "CI running"
         case failing = "CI failing"
         case passing = "CI passing"
+        /// Failing, but only because the GitHub Actions spending limit kept
+        /// its jobs from starting: nothing to fix in the code.
+        case notStarted = "CI not started: GitHub spending limit"
+    }
+
+    /// `checkState`, with failing checks on a branch whose CI the spending
+    /// limit stopped told apart from real failures.
+    func checkState(stoppedBranches: Set<String>) -> CheckState {
+        let state = checkState
+        return state == .failing && stoppedBranches.contains(headRefName) ? .notStarted : state
     }
 
     var checkState: CheckState {

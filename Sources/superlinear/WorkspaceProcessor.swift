@@ -42,6 +42,76 @@ struct WorkspaceProcessor: Sendable {
         if await daemon.gitHubAvailable() { await linkRunningAgentsPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await checkPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await sweepStartedIssues(client: client, listing: listing) }
+        if await daemon.gitHubAvailable() { await checkSpendingLimit(listing: listing) }
+    }
+
+    /// Finds the CI runs of open pull requests and of the default branch that
+    /// the GitHub Actions spending limit stopped, in a private repository. While
+    /// there are any, reruns the failed jobs of one each hour; once its jobs
+    /// start, the limit was raised, and the others are rerun too.
+    private func checkSpendingLimit(listing: PullRequestListing) async {
+        let repoPath = listing.repoPath
+        do {
+            guard try await daemon.repositoryIsPrivate(workspace: workspace.name, repoPath: repoPath) else { return }
+            var stop = await daemon.spendingLimitStop(workspace: workspace.name)
+            let runs = try SpendingLimit.listRuns(in: repoPath)
+
+            if let probe = stop?.probe {
+                let current = runs.first { $0.databaseId == probe.id }
+                let result = await SpendingLimit.probeResult(current, rerunFrom: probe.attempt) {
+                    guard let current else { return nil }
+                    return try? await wasStopped(current, repoPath: repoPath)
+                }
+                switch result {
+                case .pending:
+                    return
+                case .started:
+                    log("The rerun of CI run \(probe.id) on \(probe.branch) started its jobs, so the spending limit was raised")
+                    for other in stop?.othersToRerun() ?? [] {
+                        do {
+                            try SpendingLimit.rerunFailedJobs(runId: other.id, in: repoPath)
+                            log("  Reran the failed jobs of CI run \(other.id) on \(other.branch)")
+                        } catch {
+                            log("  Could not rerun CI run \(other.id) on \(other.branch): \(error)")
+                        }
+                    }
+                    await daemon.recordSpendingLimitStop(nil, workspace: workspace.name)
+                    return
+                case .stillStopped:
+                    stop?.probe = nil
+                }
+            }
+
+            let openBranches = try await listing.allPullRequests().filter { $0.state == .open }.compactMap(\.headRefName)
+            let defaultBranch = Git.run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: repoPath)
+                .map { String($0.dropFirst("origin/".count)) }
+            var stopped: [StoppedRun] = []
+            for run in SpendingLimit.failingRuns(runs, branches: Set(openBranches + [defaultBranch].compactMap { $0 })) {
+                if try await wasStopped(run, repoPath: repoPath) { stopped.append(StoppedRun(run)) }
+            }
+            stop = SpendingLimitStop.updated(stop, stopped: stopped)
+            if var current = stop, let probe = current.runToProbe() {
+                try SpendingLimit.rerunFailedJobs(runId: probe.id, in: repoPath)
+                log("Reran the failed jobs of CI run \(probe.id) on \(probe.branch) to see whether the spending limit was raised")
+                current.probe = probe
+                current.lastRerunAt = Date()
+                stop = current
+            }
+            await daemon.recordSpendingLimitStop(stop, workspace: workspace.name)
+        } catch {
+            if await pausedForRateLimit(error, repoPath: repoPath) { return }
+            await logOnce("Could not check CI for the GitHub Actions spending limit: \(error)")
+        }
+    }
+
+    /// Whether the spending limit stopped the run's latest attempt, from its
+    /// annotations, read once per attempt.
+    private func wasStopped(_ run: WorkflowRunSummary, repoPath: String) async throws -> Bool {
+        let key = "\(repoPath)#\(run.databaseId):\(run.attempt ?? 1)"
+        if let known = await daemon.stopClassification(key) { return known }
+        let stopped = try SpendingLimit.wasStopped(runId: run.databaseId, in: repoPath)
+        await daemon.recordStopClassification(stopped, key: key)
+        return stopped
     }
 
     /// The issues an agent might start on this poll: in `new` mode, those

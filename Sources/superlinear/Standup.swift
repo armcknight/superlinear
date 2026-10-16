@@ -25,6 +25,9 @@ struct WaitingPullRequest: Sendable, Equatable {
     var stackedOn: PullRequest.Number?
     /// The open issues its issues block, directly and indirectly.
     var blockedIssues: Set<LinearIssue.Identifier> = []
+    /// Whether its CI failed only because the GitHub Actions spending limit
+    /// kept the jobs from starting.
+    var ciNotStarted = false
 }
 
 /// The sections of a standup, in the order it goes through them.
@@ -161,7 +164,9 @@ enum Standup {
         }
         func waiting(_ pullRequest: ReviewablePullRequest, stackedOn: PullRequest.Number?) -> WaitingPullRequest {
             let blockedIssues = pullRequest.issueIdentifiers.reduce(into: Set()) { $0.formUnion(blocked[$1] ?? []) }
-            return WaitingPullRequest(pullRequest: pullRequest, stackedOn: stackedOn, blockedIssues: blockedIssues)
+            return WaitingPullRequest(
+                pullRequest: pullRequest, stackedOn: stackedOn, blockedIssues: blockedIssues,
+                ciNotStarted: pullRequest.checkState(stoppedBranches: state.spendingLimit?.branches ?? []) == .notStarted)
         }
 
         /// A stack of pull requests, bottom first.
@@ -304,10 +309,13 @@ enum Standup {
 
     /// Section 6.
     static func risks(
-        defaultBranch: String?, latestRun: DefaultBranchRun?, rateLimit: RateLimit?, now: Date = Date()
+        defaultBranch: String?, latestRun: DefaultBranchRun?, rateLimit: RateLimit?,
+        pauses: Pauses = Pauses(), now: Date = Date()
     ) -> [String] {
-        var risks: [String] = []
-        if let defaultBranch, let run = latestRun, run.status == .completed,
+        var risks = pauses.risks(now: now)
+        // A run the spending limit stopped is listed with the pause.
+        let stopped = pauses.spendingLimit?.branches ?? []
+        if let defaultBranch, !stopped.contains(defaultBranch), let run = latestRun, run.status == .completed,
            let conclusion = run.conclusion, !conclusion.isPassing {
             let name = run.workflowName.map { " (\($0))" } ?? ""
             risks.append("CI \(conclusion.rawValue) on \(defaultBranch)\(name)" + (run.url.map { ": \($0)" } ?? ""))
@@ -317,9 +325,48 @@ enum Standup {
             risks.append("GitHub rate limit: \(rateLimit.remaining) of \(rateLimit.limit) left, "
                 + "resets \(StatusTime.rendered(rateLimit.reset, now: now))")
         }
-        // TODO: SPL-26 adds budgets, and SPL-13 milestone forecasts; list
-        // budgets used and milestones forecast to be late here.
+        // TODO: SPL-13 adds milestone forecasts; list milestones forecast to
+        // be late here.
         return risks
+    }
+
+    /// The pauses active for a workspace, which the risks list with the work
+    /// they hold back.
+    struct Pauses: Sendable, Equatable {
+        /// The pause of every Claude session at the usage limit.
+        var claude: ClaudePause?
+        /// The issues whose sessions it holds back, in the workspace.
+        var waiting: [LinearIssue.Identifier] = []
+        /// The workspace's CI runs the GitHub Actions spending limit stopped.
+        var spendingLimit: SpendingLimitStop?
+
+        init(claude: ClaudePause? = nil, waiting: [LinearIssue.Identifier] = [], spendingLimit: SpendingLimitStop? = nil) {
+            self.claude = claude
+            self.waiting = waiting
+            self.spendingLimit = spendingLimit
+        }
+
+        /// The pauses in the state file for `workspace`.
+        init(state: State, workspace: String, now: Date = Date()) {
+            claude = state.claudePause.flatMap { $0.isOver(now: now) ? nil : $0 }
+            let queued = state.workspaces[workspace]?.inFlight.values.filter(\.isQueued) ?? []
+            waiting = queued.map(\.identifier).sorted { $0.sortsBefore($1) }
+            spendingLimit = state.workspaces[workspace]?.spendingLimit
+        }
+
+        func risks(now: Date = Date()) -> [String] {
+            var risks: [String] = []
+            if let claude {
+                let held = waiting.isEmpty ? "holds back no session here" : "holds back \(StandupView.list(waiting))"
+                risks.append("Claude usage limit: sessions paused until \(StatusTime.clock(claude.until, now: now)), "
+                    + "next check \(StatusTime.clock(claude.nextCheckAt, now: now)); \(held)")
+            }
+            if let stop = spendingLimit {
+                risks.append("GitHub Actions spending limit: CI not started since \(StatusTime.clock(stop.since, now: now)) "
+                    + "on \(stop.branches.sorted().joined(separator: ", ")); one stopped run is rerun each hour")
+            }
+            return risks
+        }
     }
 
     /// The line `superlinear status` prints about standups.
@@ -392,7 +439,8 @@ extension StandupView {
     static func describe(_ waiting: WaitingPullRequest) -> [String] {
         let pullRequest = waiting.pullRequest
         let indent = waiting.stackedOn == nil ? "   " : "     "
-        var notes = [pullRequest.reviewState.rawValue, pullRequest.checkState.rawValue]
+        let checks = waiting.ciNotStarted ? ReviewablePullRequest.CheckState.notStarted : pullRequest.checkState
+        var notes = [pullRequest.reviewState.rawValue, checks.rawValue]
         if let below = waiting.stackedOn { notes.insert("stacked on #\(below)", at: 0) }
         let blocks = waiting.blockedIssues.count
         if blocks > 0 { notes.append("blocks \(blocks) issue\(blocks == 1 ? "" : "s")") }

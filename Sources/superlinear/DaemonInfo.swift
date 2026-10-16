@@ -67,6 +67,11 @@ enum StatusTime {
         return "\(clock) (\(relative(seconds)))"
     }
 
+    /// The time of day, to the minute, with the date when it is not today.
+    static func clock(_ date: Date, now: Date = Date()) -> String {
+        date.formatted(date: Calendar.current.isDate(date, inSameDayAs: now) ? .omitted : .abbreviated, time: .shortened)
+    }
+
     static func relative(_ seconds: Int) -> String {
         let magnitude = abs(seconds)
         let amount: String

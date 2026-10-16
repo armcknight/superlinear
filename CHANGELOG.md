@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Pause and resume at the provider limits. When a Claude session ends at
+  the Claude plan's usage limit, every Claude session pauses, in all
+  workspaces, until the reset time in the message, or for an hour when it
+  gives none. The stopped session is recorded as interrupted, keeping its
+  session ID and using no retry, and resumes first when the pause ends.
+  Queued issues keep their places, and GitHub work goes on. Every 15
+  minutes a one-word session with no tools checks whether the limit was
+  lifted early; `superlinear resume`, which the standup offers too, ends
+  the pause at once. In private repositories, CI runs that the GitHub
+  Actions spending limit kept from starting are told apart from failures by
+  their annotations, shown as "CI not started: GitHub spending limit", and
+  not given to agents to fix; one is rerun each hour, and once its jobs
+  start the others are rerun, newest first, one per branch. `superlinear
+  status` shows a line for each active pause, the standup lists them under
+  Risks, and a macOS notification marks when each starts and ends.
+
 - `superlinear standup`, an interactive review in the terminal: what
   superlinear did since the last standup; pull requests waiting on you,
   those holding back the most work first, by stack; pending proposals to

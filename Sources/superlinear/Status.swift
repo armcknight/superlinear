@@ -129,6 +129,9 @@ struct WorkspaceReport: Sendable {
     var pullRequestStats: [PullRequestStats] = []
     /// Local branches and worktrees no longer needed.
     var stale: [StaleBranch] = []
+    /// Branches whose CI the GitHub Actions spending limit stopped, as of
+    /// the daemon's last poll.
+    var ciStoppedBranches: Set<String> = []
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
     var warnings: [String]
@@ -205,6 +208,7 @@ struct WorkspaceReport: Sendable {
         case .interrupted:
             return "resumes when the daemon next starts"
         case .queued:
+            if run?.usageLimited == true { return "stopped at the Claude usage limit; resumes first when the pause ends" }
             guard let run, run.resumes > 0 else { return nil }
             return "to resume, attempt \(run.resumes + 1)"
         case .blocked, .needsHuman:
@@ -259,8 +263,8 @@ struct WorkspaceReport: Sendable {
                 let reviewState = agentAt[review.issue.identifier] ?? pullRequest.reviewState.rawValue
                 let state = drafts ? [] : [reviewState]
                 let conflicts = pullRequest.mergeable == "CONFLICTING" ? ["conflicts with \(pullRequest.baseRefName ?? "base")"] : []
-                lines.append(
-                    indent + (state + conflicts + [pullRequest.checkState.rawValue, pullRequest.url]).joined(separator: " · "))
+                let checks = pullRequest.checkState(stoppedBranches: ciStoppedBranches).rawValue
+                lines.append(indent + (state + conflicts + [checks, pullRequest.url]).joined(separator: " · "))
             }
         }
 
@@ -381,6 +385,7 @@ struct WorkspaceReport: Sendable {
             reviews: reviews,
             pullRequestStats: stats,
             stale: stale,
+            ciStoppedBranches: workspaceState.spendingLimit?.branches ?? [],
             warnings: warnings
         )
     }
@@ -394,6 +399,19 @@ enum StatusCommand {
             report.warnings.contains { $0.localizedCaseInsensitiveContains("rate limit") }
         }?.1
         return workspace.map { NSString(string: $0.repoPath).expandingTildeInPath }
+    }
+
+    /// One line for each active pause: of Claude sessions at the usage limit,
+    /// and of CI at the GitHub Actions spending limit.
+    static func pauseLines(state: State, workspaces: [String], now: Date = Date()) -> [String] {
+        var lines: [String] = []
+        if let pause = state.claudePause, !pause.isOver(now: now) {
+            lines.append(pause.rendered(waiting: state.queuedRuns.count, now: now))
+        }
+        if let line = SpendingLimitStop.rendered(workspaces.compactMap { state.workspaces[$0]?.spendingLimit }, now: now) {
+            lines.append(line)
+        }
+        return lines
     }
 
     /// Prints a report for every configured workspace, in config order, and
@@ -433,6 +451,7 @@ enum StatusCommand {
             let time = reset.formatted(date: .omitted, time: .shortened)
             header.append("warning: GitHub's rate limit is used up until \(time), so pull requests could not all be listed")
         }
+        header += pauseLines(state: state, workspaces: config.workspaces.map(\.name))
         let summary = StatusSummary(reports: reports).rendered()
             + "\n\n" + Standup.statusLine(state: state, standups: standups, workspaces: config.workspaces.map(\.name))
         let footer = DaemonStatus.read().footer(polls: config.workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })
