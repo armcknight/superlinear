@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `superlinear standup`, an interactive review in the terminal: what
+  superlinear did since the last standup; pull requests waiting on you,
+  those holding back the most work first, by stack; pending proposals to
+  approve, edit in `$EDITOR`, reject with a reason, or defer; issues that
+  need a human, those blocking the most first, to mark done, record a
+  decision on, or give a due date; the plan for today, to hold, reorder, or
+  promote from the backlog; and risks: CI failing on the default branch
+  and a low GitHub rate limit. Decisions are applied at the end and
+  recorded in `~/.local/share/superlinear/standup.json`, which the daemon
+  reads at each poll. `--print` shows the main sections without prompts. A
+  workspace's `planning.specDocumentURL` names a document that decisions
+  are added to. `superlinear status` shows the last standup and what waits
+  for one.
+
 - A store for proposed changes to Linear, with trust levels, provenance and
   an audit log. Each proposal — a new issue, an edit, a closure, a relation,
   a promotion from Backlog to Todo, a spec change or a project update — is
@@ -84,6 +98,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A pending proposal expires `proposalExpiryDays` after the first standup
+  that showed it, not after it was made.
 - The first poll of a workspace with no state, in `new` mode, starts nothing
   created before it, rather than an agent for every open issue in the
   workspace. The same goes after `make reset`.

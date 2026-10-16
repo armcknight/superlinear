@@ -22,7 +22,7 @@ enum ProposalsCommand {
             }
             names = [workspace]
         }
-        let state = State.load()
+        let state = State.loadWithStandups()
         print(names.map { rendered(state.proposals(workspace: $0), workspace: $0) }.joined(separator: "\n\n"))
         return 0
     }

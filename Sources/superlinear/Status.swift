@@ -406,7 +406,8 @@ enum StatusCommand {
             print("[superlinear] Failed to load config: \(error)")
             return 1
         }
-        let state = State.load()
+        let standups = StandupRecord.load()
+        let state = State.loadWithStandups(standups: standups)
         let runner = AgentRunner()
         let transcripts = Transcripts()
 
@@ -433,6 +434,7 @@ enum StatusCommand {
             header.append("warning: GitHub's rate limit is used up until \(time), so pull requests could not all be listed")
         }
         let summary = StatusSummary(reports: reports).rendered()
+            + "\n\n" + Standup.statusLine(state: state, standups: standups, workspaces: config.workspaces.map(\.name))
         let footer = DaemonStatus.read().footer(polls: config.workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })
         print((header + reports.map { $0.rendered() } + [summary, footer]).joined(separator: "\n\n"))
         return 0

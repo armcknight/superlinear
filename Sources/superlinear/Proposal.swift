@@ -209,6 +209,8 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
     var reviewNote: String?
     /// The last failure to apply it. It stays pending.
     var lastError: String?
+    /// When a standup first showed it. Expiry counts from then.
+    var firstShownAt: Date?
 
     var kind: ProposalKind { payload.kind }
 

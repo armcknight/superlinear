@@ -246,9 +246,15 @@ struct AgentRunner: Sendable {
         claudeSessionExists(run.sessionId) ? .resume : .start
     }
 
-    /// The waiting run to launch next: the one queued longest ago.
-    static func nextQueued<Key>(_ runs: [(Key, AgentRun)]) -> (Key, AgentRun)? {
+    /// The waiting run to launch next: the new issue a standup moved
+    /// furthest up, by `rank`, then the run queued longest ago.
+    static func nextQueued<Key>(
+        _ runs: [(Key, AgentRun)], rank: (Key, AgentRun) -> Int? = { _, _ in nil }
+    ) -> (Key, AgentRun)? {
         runs.filter { $0.1.isQueued }.min { a, b in
+            let rankA = (a.1.isFresh ? rank(a.0, a.1) : nil) ?? .max
+            let rankB = (b.1.isFresh ? rank(b.0, b.1) : nil) ?? .max
+            if rankA != rankB { return rankA < rankB }
             let (dateA, dateB) = (a.1.queuedAt ?? .distantPast, b.1.queuedAt ?? .distantPast)
             return dateA == dateB ? a.1.identifier < b.1.identifier : dateA < dateB
         }

@@ -9,11 +9,18 @@ struct WorkspaceProcessor: Sendable {
         // Before the query, so an issue created while it runs is not missed.
         let pollTime = Date()
 
+        await daemon.takeInStandups(workspace: workspace.name)
         let candidates = try await fetchCandidates(client: client)
-        let plan = IssueSelection.plan(
+        var plan = IssueSelection.plan(
             candidates, workspace: workspace, handled: await daemon.handledIssueIds(workspace: workspace.name)
         )
         await daemon.recordWaiting(plan, workspace: workspace.name)
+        let standup = await daemon.standup(workspace: workspace.name)
+        let held = plan.start.filter { standup.held[$0.id.rawValue] != nil }
+        if !held.isEmpty {
+            log("Holding \(held.map(\.identifier).joined(separator: ", ")) until a standup releases them")
+        }
+        plan.start = standup.ordered(plan.start.filter { standup.held[$0.id.rawValue] == nil }, id: \.id.rawValue)
 
         if plan.start.isEmpty {
             log("No issues to start")
@@ -106,6 +113,9 @@ struct WorkspaceProcessor: Sendable {
             do {
                 if try await client.completeIssue(id: item.issue.id) {
                     log("Marked \(item.issue.identifier) done in Linear; its pull request merged: \(merged.url)")
+                    await daemon.recordActivity(
+                        ActivityEvent(time: Date(), kind: .issueCompleted, identifier: item.issue.identifier, detail: merged.url),
+                        workspace: workspace.name)
                 }
                 await daemon.forgetLinkedPullRequests(issueId: item.issue.id, workspace: workspace.name)
             } catch {
@@ -201,6 +211,9 @@ struct WorkspaceProcessor: Sendable {
                 do {
                     if try await client.completeIssue(id: pending.issueId) {
                         log("  Marked \(pending.identifier) done in Linear")
+                        await daemon.recordActivity(
+                            ActivityEvent(time: Date(), kind: .issueCompleted, identifier: pending.identifier, detail: pr.url),
+                            workspace: workspace.name)
                     }
                 } catch {
                     // Leave it pending so the next poll tries again.

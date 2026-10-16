@@ -8,6 +8,7 @@ enum Command: Equatable {
     case uninstall
     case status(configPath: String?)
     case proposals(configPath: String?, workspace: String?)
+    case standup(configPath: String?, workspace: String?, printOnly: Bool)
     case version
     case help
     case invalid(String)
@@ -53,6 +54,27 @@ enum Command: Equatable {
                 rest = rest.dropFirst()
             }
             return .proposals(configPath: configPath, workspace: workspace)
+        case "standup":
+            rest = rest.dropFirst()
+            var configPath: String?
+            var workspace: String?
+            var printOnly = false
+            while let argument = rest.first {
+                rest = rest.dropFirst()
+                if argument == "--print" {
+                    printOnly = true
+                    continue
+                }
+                guard ["--config", "--workspace"].contains(argument) else {
+                    return .invalid("unknown option for standup: \(argument)")
+                }
+                guard let value = rest.first else {
+                    return .invalid(argument == "--config" ? "--config needs a path" : "--workspace needs a name")
+                }
+                if argument == "--config" { configPath = value } else { workspace = value }
+                rest = rest.dropFirst()
+            }
+            return .standup(configPath: configPath, workspace: workspace, printOnly: printOnly)
         default:
             break
         }
