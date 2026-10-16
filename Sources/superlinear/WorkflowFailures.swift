@@ -4,7 +4,7 @@ import Foundation
 /// however many of its runs fail: the title is the same for each, so a
 /// pending proposal or the open issue it made stops the next.
 enum WorkflowFailures {
-    static let failedConclusions: Set<String> = ["failure", "timed_out", "startup_failure"]
+    static let failedConclusions: Set<WorkflowRun.Conclusion> = [.failure, .timedOut, .startupFailure]
 
     static func listArguments(branch: String) -> [String] {
         [
@@ -26,7 +26,7 @@ enum WorkflowFailures {
         let latest = Dictionary(grouping: completed) { $0.workflowName ?? "" }
             .compactMap { $0.value.max { ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast) } }
         return latest
-            .filter { failedConclusions.contains($0.conclusion ?? "") }
+            .filter { $0.conclusion.map(failedConclusions.contains) ?? false }
             .sorted { ($0.workflowName ?? "") < ($1.workflowName ?? "") }
     }
 
@@ -40,7 +40,7 @@ enum WorkflowFailures {
         let url = run.url ?? ""
         let description = """
             The latest run of the \(workflow) workflow on `\(branch)` ended in \
-            `\(run.conclusion ?? "failure")` at commit \(run.headSha?.prefix(12) ?? "unknown"): \(url)
+            `\(run.conclusion?.rawValue ?? "failure")` at commit \(run.headSha?.prefix(12) ?? "unknown"): \(url)
             """
         return ProposalDraft(
             payload: .createIssue(

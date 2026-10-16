@@ -110,7 +110,7 @@ struct WorkspaceProcessor: Sendable {
             do {
                 try await daemon.propose(draft, workspace: workspace)
             } catch {
-                log("  Could not propose an issue for the \(todo.marker) at \(todo.file):\(todo.line): \(error)")
+                log("  Could not propose an issue for the \(todo.marker.rawValue) at \(todo.file):\(todo.line): \(error)")
             }
         }
     }

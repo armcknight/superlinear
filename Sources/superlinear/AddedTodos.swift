@@ -3,11 +3,16 @@ import Foundation
 /// `TODO` and `FIXME` lines a pull request added, from its diff, each
 /// proposed as a new issue once it merges.
 enum AddedTodos {
+    /// The word that marks the line.
+    enum Marker: String, CaseIterable, Sendable {
+        case todo = "TODO"
+        case fixme = "FIXME"
+    }
+
     struct Todo: Equatable {
         var file: String
         var line: Int
-        /// `TODO` or `FIXME`.
-        var marker: String
+        var marker: Marker
         /// The added line, trimmed.
         var text: String
     }
@@ -38,8 +43,9 @@ enum AddedTodos {
                 line = start.flatMap { Int($0) } ?? 0
             } else if raw.hasPrefix("+") {
                 let text = raw.dropFirst().trimmingCharacters(in: .whitespaces)
-                if let file, let match = text.firstMatch(of: marker), text.firstMatch(of: identifier) == nil {
-                    todos.append(Todo(file: file, line: line, marker: String(match.output.1), text: text))
+                if let file, let match = text.firstMatch(of: marker), let found = Marker(rawValue: String(match.output.1)),
+                   text.firstMatch(of: identifier) == nil {
+                    todos.append(Todo(file: file, line: line, marker: found, text: text))
                 }
                 line += 1
             } else if raw.hasPrefix(" ") {
@@ -54,10 +60,10 @@ enum AddedTodos {
     /// The words after the marker, as the new issue's title, or a title
     /// naming the file when there are none.
     static func title(_ todo: Todo) -> String {
-        let rest = todo.text.components(separatedBy: todo.marker).dropFirst().joined(separator: todo.marker)
+        let rest = todo.text.components(separatedBy: todo.marker.rawValue).dropFirst().joined(separator: todo.marker.rawValue)
             .trimmingCharacters(in: CharacterSet(charactersIn: ":-–—()*/#").union(.whitespaces))
         let name = URL(fileURLWithPath: todo.file).lastPathComponent
-        let title = rest.isEmpty ? "Resolve the \(todo.marker) in \(name)" : "\(todo.marker) in \(name): \(rest)"
+        let title = rest.isEmpty ? "Resolve the \(todo.marker.rawValue) in \(name)" : "\(todo.marker.rawValue) in \(name): \(rest)"
         return title.count > maxTitleLength ? String(title.prefix(maxTitleLength - 1)) + "…" : title
     }
 
@@ -65,7 +71,7 @@ enum AddedTodos {
         _ todo: Todo, pullRequest: PullRequest, agentIssue: LinearIssue.Identifier, issueId: LinearIssue.ID, teamId: LinearTeam.ID
     ) -> ProposalDraft {
         let description = """
-            Pull request #\(pullRequest.number) for \(agentIssue) added this \(todo.marker) at \
+            Pull request #\(pullRequest.number) for \(agentIssue) added this \(todo.marker.rawValue) at \
             `\(todo.file):\(todo.line)`:
 
             ```
@@ -77,7 +83,7 @@ enum AddedTodos {
                 teamId: teamId, projectId: nil, title: title(todo), description: description, relatedIssueId: issueId
             ),
             target: .team(teamId),
-            reason: "A merged pull request for \(agentIssue) left a \(todo.marker)",
+            reason: "A merged pull request for \(agentIssue) left a \(todo.marker.rawValue)",
             source: ProposalSource(kind: .pullRequest, value: pullRequest.url, issue: agentIssue)
         )
     }

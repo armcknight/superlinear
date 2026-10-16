@@ -159,7 +159,7 @@ struct FollowUpProposalTests {
 @Suite("Failing workflows")
 struct WorkflowFailureTests {
     private func run(
-        _ workflow: String, _ conclusion: String?, at seconds: TimeInterval, status: String = "completed"
+        _ workflow: String, _ conclusion: WorkflowRun.Conclusion?, at seconds: TimeInterval, status: String = "completed"
     ) -> WorkflowRun {
         WorkflowRun(
             headBranch: "main", status: status, startedAt: nil, updatedAt: nil, workflowName: workflow,
@@ -171,10 +171,10 @@ struct WorkflowFailureTests {
     @Test("Each workflow counts by its latest completed run")
     func failing() {
         let runs = [
-            run("CI", "failure", at: 1), run("CI", "failure", at: 3), run("CI", "success", at: 2),
+            run("CI", .failure, at: 1), run("CI", .failure, at: 3), run("CI", .success, at: 2),
             run("CI", nil, at: 4, status: "in_progress"),
-            run("Lint", "failure", at: 1), run("Lint", "success", at: 2),
-            run("Release", "timed_out", at: 5),
+            run("Lint", .failure, at: 1), run("Lint", .success, at: 2),
+            run("Release", .timedOut, at: 5),
         ]
         #expect(WorkflowFailures.failing(runs).map(\.url) == [
             "https://github.com/o/r/actions/runs/3", "https://github.com/o/r/actions/runs/5",
@@ -187,7 +187,7 @@ struct WorkflowFailureTests {
             workspace: "w", autonomy: Autonomy(), linear: EmptyLinear(),
             audit: AuditLog(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         )
-        let first = WorkflowFailures.draft(run("CI", "failure", at: 1), branch: "main", teamId: "team")
+        let first = WorkflowFailures.draft(run("CI", .failure, at: 1), branch: "main", teamId: "team")
         guard case .store(let proposal, _) = try await engine.screen(first, existing: []) else {
             Issue.record("Expected the first failure to be proposed")
             return
@@ -201,9 +201,9 @@ struct WorkflowFailureTests {
         #expect(title == "CI fails on main: CI")
         #expect(description.contains("abcdef012345"))
 
-        let second = WorkflowFailures.draft(run("CI", "failure", at: 2), branch: "main", teamId: "team")
+        let second = WorkflowFailures.draft(run("CI", .failure, at: 2), branch: "main", teamId: "team")
         #expect(try await engine.screen(second, existing: [proposal]) == .skip(reason: "The same createIssue is pending already"))
-        let other = WorkflowFailures.draft(run("Lint", "failure", at: 2), branch: "main", teamId: "team")
+        let other = WorkflowFailures.draft(run("Lint", .failure, at: 2), branch: "main", teamId: "team")
         guard case .store = try await engine.screen(other, existing: [proposal]) else {
             Issue.record("Expected another workflow to be proposed")
             return
@@ -214,8 +214,11 @@ struct WorkflowFailureTests {
     func decode() throws {
         let runs = try WorkflowFailures.decodeRuns(data("""
             [{"headBranch": "main", "workflowName": "CI", "status": "completed", "conclusion": "failure",
-              "url": "https://github.com/o/r/actions/runs/1", "headSha": "abc", "createdAt": "2026-10-16T12:00:00Z"}]
+              "url": "https://github.com/o/r/actions/runs/1", "headSha": "abc", "createdAt": "2026-10-16T12:00:00Z"},
+             {"headBranch": "main", "workflowName": "CI", "status": "in_progress", "conclusion": ""},
+             {"headBranch": "main", "workflowName": "CI", "status": "completed", "conclusion": "brand_new"}]
             """))
+        #expect(runs.map(\.conclusion) == [.failure, nil, .unknown])
         #expect(runs.first?.workflowName == "CI")
         #expect(runs.first?.createdAt == ISO8601DateFormatter().date(from: "2026-10-16T12:00:00Z"))
     }
@@ -248,9 +251,9 @@ struct AddedTodoTests {
     @Test("Added lines with a marker are found at their new line numbers")
     func parse() {
         #expect(AddedTodos.parse(diff: diff) == [
-            .init(file: "Sources/A.swift", line: 11, marker: "TODO", text: "// TODO: handle the empty case"),
-            .init(file: "Sources/A.swift", line: 15, marker: "FIXME", text: "// FIXME"),
-            .init(file: "Sources/B.swift", line: 2, marker: "TODO", text: "/* TODO - split this file */"),
+            .init(file: "Sources/A.swift", line: 11, marker: .todo, text: "// TODO: handle the empty case"),
+            .init(file: "Sources/A.swift", line: 15, marker: .fixme, text: "// FIXME"),
+            .init(file: "Sources/B.swift", line: 2, marker: .todo, text: "/* TODO - split this file */"),
         ])
     }
 
@@ -275,7 +278,7 @@ struct AddedTodoTests {
 
     @Test("A long title is cut short")
     func longTitle() {
-        let todo = AddedTodos.Todo(file: "A.swift", line: 1, marker: "TODO", text: "// TODO: " + String(repeating: "x", count: 200))
+        let todo = AddedTodos.Todo(file: "A.swift", line: 1, marker: .todo, text: "// TODO: " + String(repeating: "x", count: 200))
         #expect(AddedTodos.title(todo).count == AddedTodos.maxTitleLength)
     }
 }
