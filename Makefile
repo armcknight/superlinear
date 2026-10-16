@@ -11,7 +11,7 @@ VRSN_KEY      = version
 METADATA_FILE = Sources/superlinear/BuildMetadata.generated.swift
 
 .DEFAULT_GOAL = help
-.PHONY: help init build test install load unload reload logs config status reset patch minor major deploy deploy-beta
+.PHONY: help init build test check-docs install load unload reload logs config status reset patch minor major deploy deploy-beta
 
 # Targets document themselves with a `## name: description` line above them,
 # which is the only thing this prints. Only the first colon separates the two,
@@ -40,6 +40,10 @@ build:
 ## test: run the unit tests
 test:
 	swift test
+
+## check-docs: check that relative links and anchors in the README and docs/ resolve
+check-docs:
+	python3 scripts/check-docs.py
 
 # A local build carries semver build metadata — the commit, plus `.dirty` when
 # the working tree has uncommitted or untracked changes — so `--version` tells it

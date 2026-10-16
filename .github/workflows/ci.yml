@@ -8,3 +8,9 @@ on:
 jobs:
   ci:
     uses: armcknight/workflows/.github/workflows/swift-package-ci.yml@2
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make check-docs
