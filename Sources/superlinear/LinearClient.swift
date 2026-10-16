@@ -270,6 +270,15 @@ struct LinearClient: Sendable {
         let message: String
     }
 
+    /// The team for proposals that belong to no issue: the workspace's first
+    /// configured team, or else the first Linear lists.
+    func proposalTeamId(teamIds: [String]) async throws -> LinearTeam.ID {
+        if let first = teamIds.first { return LinearTeam.ID(rawValue: first) }
+        let teams = try await execute(.firstTeam, variables: [:], as: LinearQuery.TeamsData.self).teams.nodes
+        guard let team = teams.first else { throw LinearClientError.invalidResponse }
+        return team.id
+    }
+
     func execute<T: Decodable>(_ query: LinearQuery, variables: [String: Any], as type: T.Type) async throws -> T {
         try await send(query, variables: variables).decoded(as: T.self)
     }

@@ -146,7 +146,7 @@ extension LinearClient: PlanningReading {
     }
 
     func planningTeams(ids: [String]) async throws -> [PlanningTeam] {
-        let teams = try await execute(.teams, variables: [:], as: LinearQuery.TeamsData.self).teams.nodes
+        let teams = try await execute(.teams, variables: [:], as: LinearQuery.PlanningTeamsData.self).teams.nodes
         let wanted = Set(ids)
         return teams
             .filter { wanted.isEmpty || wanted.contains($0.id.rawValue) }

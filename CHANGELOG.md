@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [--workspace W]` runs one now, and the standup offers to when the last
   is over 12 hours old, with its token use.
 
+- The superlinear guide, in `docs/`: the life of an issue, planning,
+  bootstrap, builds, configuration and operations. The README is now an
+  overview that links to it. Each section that other repositories link to
+  has a stable anchor, listed in `docs/anchors.md`. `make check-docs`, which
+  CI runs, checks that the relative links and anchors resolve.
+
 - `superlinear standup`, an interactive review in the terminal: what
   superlinear did since the last standup; pull requests waiting on you,
   those holding back the most work first, by stack; pending proposals to
@@ -51,8 +57,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   issue like an open one, or a change rejected before, is not proposed
   again. Each applied change goes in
   `~/.local/share/superlinear/audit/<workspace>.jsonl`, and `superlinear
-  proposals [--workspace W]` lists pending and recent proposals. Nothing
-  makes proposals yet.
+  proposals [--workspace W]` lists pending and recent proposals.
+- Agents' follow-ups become proposals. Every agent prompt tells the agent
+  to leave bugs and missing work outside its issue in
+  `.superlinear/followups.json` in its worktree, which git ignores, rather
+  than fix them or create Linear issues. When the agent exits, each entry
+  becomes a `createIssue` proposal, or an `addRelation` one when an open
+  issue matches, with the agent's session, issue and pull request as its
+  source. A malformed file is logged and kept. Failing CI on the default
+  branch makes one proposal per failing workflow, and `TODO` or `FIXME`
+  lines added by a merged pull request make one each.
 - A `selection` key per workspace: `"new"`, the default, starts agents for
   issues created since the last poll, as before; `"ready"` starts them for
   every open issue in one of the workspace's `readyStates` (default

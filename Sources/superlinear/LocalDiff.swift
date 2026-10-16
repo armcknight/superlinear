@@ -93,4 +93,11 @@ enum Git {
         guard process.terminationStatus == 0 else { return nil }
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// The branch `origin/HEAD` names, or nil when it names none.
+    static func defaultBranch(in repoPath: String) -> String? {
+        guard let ref = run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: repoPath), ref.hasPrefix("origin/")
+        else { return nil }
+        return String(ref.dropFirst("origin/".count))
+    }
 }

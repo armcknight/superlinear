@@ -48,6 +48,8 @@ enum LinearQuery: CaseIterable, Sendable {
     /// The projects with some IDs, with their descriptions and milestones.
     case planningProjects
     case teams
+    /// The workspace's first team, for proposals that belong to no issue.
+    case firstTeam
 
     var text: String {
         switch self {
@@ -289,6 +291,9 @@ enum LinearQuery: CaseIterable, Sendable {
             query Teams {
               teams(first: 100) { nodes { id key name } }
             }
+            """
+        case .firstTeam: """
+            query FirstTeam { teams(first: 1) { nodes { id } } }
             """
         }
     }
@@ -573,13 +578,25 @@ extension LinearQuery {
         }
     }
 
-    struct TeamsData: Decodable {
+    struct PlanningTeamsData: Decodable {
         let teams: Nodes<Team>
 
         struct Team: Decodable {
             let id: LinearTeam.ID
             let key: String
             let name: String
+        }
+    }
+
+    struct TeamsData: Decodable {
+        let teams: Teams
+
+        struct Teams: Decodable {
+            let nodes: [Team]
+        }
+
+        struct Team: Decodable {
+            let id: LinearTeam.ID
         }
     }
 
