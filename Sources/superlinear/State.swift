@@ -69,6 +69,28 @@ struct ConflictAttempt: Codable, Sendable, Equatable {
     var base: String
 }
 
+/// An issue no agent starts on yet: one with open blockers, or one with a
+/// human label. Each poll checks it again.
+struct WaitingIssue: Codable, Sendable, Equatable {
+    var identifier: String
+    var title: String
+    /// The identifiers of the open issues blocking it.
+    var blockers: [String] = []
+    /// Its human labels.
+    var labels: [String] = []
+
+    init(identifier: String, title: String, blockers: [String] = [], labels: [String] = []) {
+        self.identifier = identifier
+        self.title = title
+        self.blockers = blockers
+        self.labels = labels
+    }
+
+    init(_ issue: LinearIssue, blockers: [String] = [], labels: [String] = []) {
+        self.init(identifier: issue.identifier, title: issue.title, blockers: blockers, labels: labels)
+    }
+}
+
 struct WorkspaceState: Codable, Sendable {
     var processedIssueIds: Set<String>
     var lastPollTimestamp: Date
@@ -83,6 +105,10 @@ struct WorkspaceState: Codable, Sendable {
     /// The last poll, and when the next is due. Absent in state files written
     /// before polls were recorded, and until the first poll ends.
     var poll: PollRecord?
+    /// Issues waiting on open blockers, keyed by issue ID.
+    var blocked: [LinearIssue.ID: WaitingIssue]
+    /// Issues with a human label, keyed by issue ID.
+    var needsHuman: [LinearIssue.ID: WaitingIssue]
     /// When the daemon first polled the repository's GitHub issues. Issues you
     /// opened before then are left alone unless you comment `/superlinear-do`.
     var gitHubIssuesSince: Date?
@@ -93,11 +119,14 @@ struct WorkspaceState: Codable, Sendable {
         inFlight = [:]
         pendingMerges = [:]
         linkedPullRequests = [:]
+        blocked = [:]
+        needsHuman = [:]
     }
 
-    // State files written before runs were tracked have no `inFlight`, and
-    // those written before pull requests were watched have no `pendingMerges`
-    // or `linkedPullRequests`.
+    // State files written before runs were tracked have no `inFlight`, those
+    // written before pull requests were watched have no `pendingMerges` or
+    // `linkedPullRequests`, and those written before blockers and human labels
+    // were followed have no `blocked` or `needsHuman`.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         processedIssueIds = try container.decode(Set<String>.self, forKey: .processedIssueIds)
@@ -106,8 +135,13 @@ struct WorkspaceState: Codable, Sendable {
         pendingMerges = try container.decodeIfPresent([String: PendingMerge].self, forKey: .pendingMerges) ?? [:]
         linkedPullRequests = try container.decodeIfPresent([String: [String]].self, forKey: .linkedPullRequests) ?? [:]
         poll = try container.decodeIfPresent(PollRecord.self, forKey: .poll)
+        blocked = try container.decodeIfPresent([LinearIssue.ID: WaitingIssue].self, forKey: .blocked) ?? [:]
+        needsHuman = try container.decodeIfPresent([LinearIssue.ID: WaitingIssue].self, forKey: .needsHuman) ?? [:]
         gitHubIssuesSince = try container.decodeIfPresent(Date.self, forKey: .gitHubIssuesSince)
     }
+
+    /// Issues an agent may not start on yet.
+    var waitingIssueIds: Set<LinearIssue.ID> { Set(blocked.keys).union(needsHuman.keys) }
 }
 
 /// When a workspace's last poll ended, how, and when the next is due.
@@ -150,7 +184,8 @@ struct State: Codable, Sendable {
         do {
             return try decoded(from: data)
         } catch {
-            // Starting empty reprocesses every backlog issue, so say so.
+            // Starting empty starts agents again on issues already handled in
+            // `ready` mode, and forgets the waiting ones, so say so.
             print("[superlinear] Could not read \(url.path), starting with empty state: \(error)")
             return State()
         }
@@ -206,6 +241,22 @@ struct State: Codable, Sendable {
 
     func lastPollTimestamp(workspace: String) -> Date {
         workspaces[workspace]?.lastPollTimestamp ?? .distantPast
+    }
+
+    /// Replaces the workspace's waiting issues with those of the latest poll,
+    /// which checked every one of them again.
+    mutating func recordWaiting(
+        blocked: [LinearIssue.ID: WaitingIssue], needsHuman: [LinearIssue.ID: WaitingIssue], workspace: String
+    ) {
+        workspaces[workspace, default: WorkspaceState()].blocked = blocked
+        workspaces[workspace, default: WorkspaceState()].needsHuman = needsHuman
+    }
+
+    /// Issues the daemon has queued, run or watched, which no poll starts again.
+    func handledIssueIds(workspace: String) -> Set<LinearIssue.ID> {
+        guard let state = workspaces[workspace] else { return [] }
+        let ids = state.processedIssueIds.union(state.inFlight.keys).union(state.pendingMerges.keys)
+        return Set(ids.map(LinearIssue.ID.init(rawValue:)))
     }
 
     /// Records a run, replacing any earlier record for the same issue.

@@ -62,4 +62,30 @@ struct LinearIssueTests {
         #expect(issue.id == "uuid-1")
         #expect(issue.identifier == "SL-12")
     }
+
+    @Test("A candidate node decodes its labels, priority, ranks and open blockers")
+    func decodesCandidateNode() throws {
+        let issue = try decode("""
+        {
+          "id": "uuid-3", "identifier": "SL-13", "title": "t", "branchName": "b",
+          "createdAt": "2026-05-01T12:00:00Z", "team": {"id": "x", "key": "SL"},
+          "state": {"name": "Todo", "type": "unstarted"}, "priority": 2, "sortOrder": -3.5,
+          "project": {"sortOrder": 7}, "projectMilestone": null,
+          "labels": {"nodes": [{"name": "Feature"}]},
+          "inverseRelations": {"nodes": [
+            {"type": "blocks", "issue": {"id": "u10", "identifier": "SL-10", "state": {"type": "triage"}}},
+            {"type": "blocks", "issue": {"id": "u11", "identifier": "SL-11", "state": {"type": "completed"}}},
+            {"type": "blocks", "issue": {"id": "u12", "identifier": "SL-12", "state": {"type": "canceled"}}},
+            {"type": "related", "issue": {"id": "u14", "identifier": "SL-14", "state": {"type": "started"}}}
+          ]}
+        }
+        """)
+
+        #expect(issue.state?.type == "unstarted")
+        #expect(issue.priority == 2)
+        #expect(issue.project?.sortOrder == 7)
+        #expect(issue.projectMilestone == nil)
+        #expect(issue.labelNames == ["Feature"])
+        #expect(issue.openBlockers == ["SL-10"])
+    }
 }
