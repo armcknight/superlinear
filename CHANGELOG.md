@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A store for proposed changes to Linear, with trust levels, provenance and
+  an audit log. Each proposal — a new issue, an edit, a closure, a relation,
+  a promotion from Backlog to Todo, a spec change or a project update — is
+  kept in the state file with its target, change, reason, source and
+  status. The workspace's `autonomy` config sets each kind to `auto`,
+  applied at once, `standup`, kept for review, or `never`; only relations
+  are `auto` by default. Pending proposals expire after
+  `proposalExpiryDays`, 7 by default. Issues superlinear creates get the
+  `superlinear` label and a "Source" line; in other issues it edits only a
+  managed block between `<!-- superlinear -->` markers, never one labelled
+  `superlinear: hands off`, and never one changed since the proposal. A new
+  issue like an open one, or a change rejected before, is not proposed
+  again. Each applied change goes in
+  `~/.local/share/superlinear/audit/<workspace>.jsonl`, and `superlinear
+  proposals [--workspace W]` lists pending and recent proposals. Nothing
+  makes proposals yet.
 - A `selection` key per workspace: `"new"`, the default, starts agents for
   issues created since the last poll, as before; `"ready"` starts them for
   every open issue in one of the workspace's `readyStates` (default

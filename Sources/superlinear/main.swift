@@ -9,6 +9,7 @@ Usage: superlinear [--config <path>]
        superlinear install [--force]
        superlinear uninstall
        superlinear status [--config <path>]
+       superlinear proposals [--workspace <name>] [--config <path>]
 
 Watches Linear for new issues and starts an autonomous Claude Code agent
 for each one. With no subcommand, runs the daemon in the foreground.
@@ -24,6 +25,10 @@ Subcommands:
               its tasks: agents running or queued, and tasks completed,
               with pull request URLs. A task is completed once its pull
               request is merged and its Linear issue is done.
+  proposals   List the changes to Linear that superlinear proposed: those
+              pending, then those applied, rejected or expired in the last
+              7 days, with reasons, sources and diffs. --workspace limits
+              it to one workspace.
 
 Options:
   --config <path>   Config file. Default: ~/.config/superlinear/config.json
@@ -70,6 +75,9 @@ case .status(let path):
     // beside a daemon.
     Task { exit(await StatusCommand.run(configPath: path)) }
     dispatchMain()
+
+case .proposals(let path, let workspace):
+    exit(ProposalsCommand.run(configPath: path, workspace: workspace))
 
 case .version:
     print(Superlinear.fullVersion)

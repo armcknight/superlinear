@@ -9,9 +9,10 @@ enum IssueSelection: String, Codable, Sendable {
     case ready
 }
 
-struct WorkspaceConfig: Codable, Sendable {
+struct WorkspaceConfig: Decodable, Sendable {
     static let defaultReadyStates: [LinearStateType] = [.unstarted]
     static let defaultHumanLabels = ["Needs human", "Spike"]
+    static let defaultProposalExpiryDays = 7
 
     let name: String
     let apiKey: String
@@ -27,9 +28,14 @@ struct WorkspaceConfig: Codable, Sendable {
     /// Whether to work on the repository's GitHub issues too: those you open,
     /// and those you comment `/superlinear-do` on.
     let githubIssues: Bool
+    /// The trust level of each kind of proposal.
+    let autonomy: Autonomy
+    /// Days after which a pending proposal expires.
+    let proposalExpiryDays: Int
 
     enum CodingKeys: String, CodingKey {
         case name, apiKey, repoPath, teamIds, pollIntervalSeconds, selection, readyStates, humanLabels, githubIssues
+        case autonomy, proposalExpiryDays
     }
 
     init(from decoder: Decoder) throws {
@@ -43,6 +49,21 @@ struct WorkspaceConfig: Codable, Sendable {
         readyStates = try container.decodeIfPresent([LinearStateType].self, forKey: .readyStates) ?? Self.defaultReadyStates
         humanLabels = try container.decodeIfPresent([String].self, forKey: .humanLabels) ?? Self.defaultHumanLabels
         githubIssues = try container.decodeIfPresent(Bool.self, forKey: .githubIssues) ?? false
+        // A misspelt kind would otherwise leave its default in force unseen.
+        var overrides: [ProposalKind: TrustLevel] = [:]
+        for (key, level) in try container.decodeIfPresent([String: TrustLevel].self, forKey: .autonomy) ?? [:] {
+            guard let kind = ProposalKind(rawValue: key) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .autonomy, in: container,
+                    debugDescription: "Unknown proposal kind \"\(key)\". Known kinds: "
+                        + ProposalKind.allCases.map(\.rawValue).joined(separator: ", ")
+                )
+            }
+            overrides[kind] = level
+        }
+        autonomy = Autonomy(overrides: overrides)
+        let expiry = try container.decodeIfPresent(Int.self, forKey: .proposalExpiryDays) ?? Self.defaultProposalExpiryDays
+        proposalExpiryDays = max(1, expiry)
     }
 
     /// The Linear state types an issue may be in for an agent to start on it.
@@ -54,7 +75,7 @@ struct WorkspaceConfig: Codable, Sendable {
     }
 }
 
-struct Config: Codable, Sendable {
+struct Config: Decodable, Sendable {
     static let defaultMaxConcurrentAgents = 3
 
     let workspaces: [WorkspaceConfig]

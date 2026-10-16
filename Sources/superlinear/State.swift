@@ -112,6 +112,8 @@ struct WorkspaceState: Codable, Sendable {
     /// When the daemon first polled the repository's GitHub issues. Issues you
     /// opened before then are left alone unless you comment `/superlinear-do`.
     var gitHubIssuesSince: Date?
+    /// Proposed changes to Linear, pending and decided, oldest first.
+    var proposals: [Proposal]
 
     init() {
         processedIssueIds = []
@@ -121,12 +123,14 @@ struct WorkspaceState: Codable, Sendable {
         linkedPullRequests = [:]
         blocked = [:]
         needsHuman = [:]
+        proposals = []
     }
 
     // State files written before runs were tracked have no `inFlight`, those
     // written before pull requests were watched have no `pendingMerges` or
     // `linkedPullRequests`, and those written before blockers and human labels
-    // were followed have no `blocked` or `needsHuman`.
+    // were followed have no `blocked` or `needsHuman`. Those from before
+    // proposals have none.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         processedIssueIds = try container.decode(Set<String>.self, forKey: .processedIssueIds)
@@ -138,6 +142,7 @@ struct WorkspaceState: Codable, Sendable {
         blocked = try container.decodeIfPresent([LinearIssue.ID: WaitingIssue].self, forKey: .blocked) ?? [:]
         needsHuman = try container.decodeIfPresent([LinearIssue.ID: WaitingIssue].self, forKey: .needsHuman) ?? [:]
         gitHubIssuesSince = try container.decodeIfPresent(Date.self, forKey: .gitHubIssuesSince)
+        proposals = try container.decodeIfPresent([Proposal].self, forKey: .proposals) ?? []
     }
 
     /// Issues an agent may not start on yet.
@@ -307,6 +312,60 @@ struct State: Codable, Sendable {
 
     func pendingMerges(workspace: String) -> [PendingMerge] {
         workspaces[workspace].map { Array($0.pendingMerges.values) } ?? []
+    }
+
+    func proposals(workspace: String) -> [Proposal] {
+        workspaces[workspace]?.proposals ?? []
+    }
+
+    /// Adds a proposal, or replaces the one with its ID.
+    mutating func recordProposal(_ proposal: Proposal, workspace: String) {
+        var proposals = workspaces[workspace, default: WorkspaceState()].proposals
+        if let index = proposals.firstIndex(where: { $0.id == proposal.id }) {
+            proposals[index] = proposal
+        } else {
+            proposals.append(proposal)
+        }
+        workspaces[workspace, default: WorkspaceState()].proposals = proposals
+    }
+
+    /// Rejects a pending proposal, so the same change is not proposed again.
+    /// Returns false when no pending proposal has that ID.
+    @discardableResult
+    mutating func rejectProposal(id: Proposal.ID, reason: String?, workspace: String, now: Date = Date()) -> Bool {
+        guard var proposal = proposals(workspace: workspace).first(where: { $0.id == id }),
+              proposal.status == .pending
+        else { return false }
+        proposal.status = .rejected
+        proposal.rejectionReason = reason
+        proposal.decidedAt = now
+        recordProposal(proposal, workspace: workspace)
+        return true
+    }
+
+    /// How long applied and expired proposals stay listed. Rejected ones stay
+    /// for good, as they keep the same change from being proposed again.
+    static let decidedProposalRetention: TimeInterval = 30 * 24 * 60 * 60
+
+    /// Expires pending proposals older than `days` days, and drops applied and
+    /// expired ones decided more than `decidedProposalRetention` ago. Returns
+    /// the proposals it expired.
+    @discardableResult
+    mutating func expireProposals(olderThanDays days: Int, workspace: String, now: Date = Date()) -> [Proposal] {
+        guard var proposals = workspaces[workspace]?.proposals, !proposals.isEmpty else { return [] }
+        let cutoff = now.addingTimeInterval(-TimeInterval(days) * 24 * 60 * 60)
+        var expired: [Proposal] = []
+        for index in proposals.indices where proposals[index].status == .pending && proposals[index].createdAt < cutoff {
+            proposals[index].status = .expired
+            proposals[index].decidedAt = now
+            expired.append(proposals[index])
+        }
+        let forgetBefore = now.addingTimeInterval(-Self.decidedProposalRetention)
+        proposals.removeAll { proposal in
+            [.applied, .expired].contains(proposal.status) && (proposal.decidedAt ?? proposal.createdAt) < forgetBefore
+        }
+        workspaces[workspace]?.proposals = proposals
+        return expired
     }
 
     static func stateFileURL() -> URL {

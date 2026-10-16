@@ -28,6 +28,7 @@ struct WorkspaceProcessor: Sendable {
         }
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
+        await daemon.expireProposals(workspace: workspace)
 
         // Each step checks first, as one hitting the rate limit pauses the rest.
         if workspace.githubIssues, await daemon.gitHubAvailable() { await pollGitHubIssues() }
