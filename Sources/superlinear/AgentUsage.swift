@@ -113,18 +113,21 @@ struct WorkflowRun: Decodable, Sendable, Equatable {
         case timedOut = "timed_out"
         case actionRequired = "action_required"
         case startupFailure = "startup_failure"
-        /// A conclusion GitHub added since.
-        case unknown
 
         /// `gh`'s text for a conclusion, nil for the empty one it reports
-        /// for a run still going.
+        /// for a run still going, and for one GitHub added since.
         static func parse(_ text: String?) -> Conclusion? {
-            guard let text, !text.isEmpty else { return nil }
-            return Conclusion(rawValue: text) ?? .unknown
+            text.flatMap(Conclusion.init(rawValue:))
         }
 
         /// Whether the run passed, or did nothing to fail.
-        var isPassing: Bool { [.success, .skipped, .neutral].contains(self) }
+        var isPassing: Bool {
+            switch self {
+            case .success, .skipped, .neutral: true
+            case .failure, .cancelled, .stale, .timedOut, .actionRequired, .startupFailure: false
+            @unknown default: false
+            }
+        }
     }
 
     let headBranch: String
@@ -134,7 +137,8 @@ struct WorkflowRun: Decodable, Sendable, Equatable {
     /// The fields below are present when the listing asked for them, as the
     /// check for failing workflows does.
     var workflowName: String? = nil
-    /// How a completed run ended; nil while it runs.
+    /// How a completed run ended; nil while it runs, or when GitHub reports a
+    /// conclusion this build does not know.
     var conclusion: Conclusion? = nil
     var url: String? = nil
     var headSha: String? = nil

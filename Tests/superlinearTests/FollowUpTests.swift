@@ -218,7 +218,7 @@ struct WorkflowFailureTests {
              {"headBranch": "main", "workflowName": "CI", "status": "in_progress", "conclusion": ""},
              {"headBranch": "main", "workflowName": "CI", "status": "completed", "conclusion": "brand_new"}]
             """))
-        #expect(runs.map(\.conclusion) == [.failure, nil, .unknown])
+        #expect(runs.map(\.conclusion) == [.failure, nil, nil])
         #expect(runs.first?.workflowName == "CI")
         #expect(runs.first?.createdAt == ISO8601DateFormatter().date(from: "2026-10-16T12:00:00Z"))
     }
