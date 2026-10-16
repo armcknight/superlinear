@@ -58,7 +58,7 @@ description = "Deploys the app."
 
 [[docs]]
 title = "Builds"
-anchor = "builds"
+anchor = "builds.md#ci"
 """
 
 README = """\
@@ -96,7 +96,7 @@ class ValidateTests(unittest.TestCase):
         self.write("components/demo/CLAUDE.md", "# demo\n")
         self.write("components/demo/scaffold/README.md", SCAFFOLD_README)
         self.write("components/demo/scaffold/.github/workflows/deploy.yml", WORKFLOW)
-        self.anchors = {"builds", "bootstrap"}
+        self.anchors = {"builds.md#ci", "bootstrap.md#components"}
 
     def write(self, path, text):
         path = self.root / path
@@ -181,8 +181,8 @@ class ValidateTests(unittest.TestCase):
         self.assertProblem("shared path '.github/workflows/demo.yml' does not exist")
 
     def test_unknown_anchor(self):
-        self.anchors = {"bootstrap"}
-        self.assertProblem("docs anchor 'builds'")
+        self.anchors = {"bootstrap.md#components"}
+        self.assertProblem("docs anchor 'builds.md#ci'")
 
     def test_anchor_check_can_be_skipped(self):
         self.anchors = None
@@ -193,14 +193,25 @@ class ValidateTests(unittest.TestCase):
         self.assertProblem("does not link to components/demo")
         self.assertProblem("does not link to the shared workflow .github/workflows/demo.yml")
 
-    def test_anchors_are_github_heading_slugs(self):
+    def test_anchor_must_name_a_page(self):
+        self.edit_manifest('anchor = "builds.md#ci"', 'anchor = "ci"')
+        self.assertProblem("docs/0/anchor")
+
+    def test_anchors_are_read_from_the_tables(self):
         path = self.root / "anchors.md"
         path.write_text(textwrap.dedent("""\
             # Anchors
-            ## apple-app
-            ## Builds and Releases ##
+
+            Each section has an explicit anchor, `<a id="…"></a>`.
+
+            ## [Builds](builds.md)
+
+            | Anchor | Section |
+            | --- | --- |
+            | [`builds.md#ci`](builds.md#ci) | CI. |
+            | [`builds.md#build-numbers`](builds.md#build-numbers) | Build numbers. |
             """), encoding="utf-8")
-        self.assertEqual(validate.read_anchors(str(path)), {"anchors", "apple-app", "builds-and-releases"})
+        self.assertEqual(validate.read_anchors(str(path)), {"builds.md#ci", "builds.md#build-numbers"})
 
 
 if __name__ == "__main__":

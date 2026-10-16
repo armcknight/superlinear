@@ -91,6 +91,9 @@ struct ProposalEngine: Sendable {
     /// issue like an open one becomes a relation between that one and the
     /// issue the new one follows from, or nothing when it follows from none.
     func screen(_ draft: ProposalDraft, existing: [Proposal], now: Date = Date()) async throws -> Screening {
+        // Before Linear's search, which a draft made again each poll, such
+        // as one for a failing workflow, would otherwise repeat.
+        if let repeated = Self.repeated(draft, in: existing) { return repeated }
         var draft = draft
         if case .createIssue(let teamId, _, let title, _, let relatedIssueId) = draft.payload {
             let matches = try await linear.openIssues(like: title, teamId: teamId)
@@ -107,18 +110,23 @@ struct ProposalEngine: Sendable {
             }
         }
 
-        let sameness = Proposal.sameness(draft.payload, draft.target)
-        if let earlier = existing.first(where: { $0.sameness == sameness && [.pending, .rejected].contains($0.status) }) {
-            return .skip(reason: earlier.status == .rejected
-                ? "The same \(draft.payload.kind.rawValue) was rejected before"
-                : "The same \(draft.payload.kind.rawValue) is pending already")
-        }
+        if let repeated = Self.repeated(draft, in: existing) { return repeated }
 
         let trust = autonomy.level(for: draft.payload.kind)
         guard trust != .never else {
             return .skip(reason: "\(draft.payload.kind.rawValue) proposals are set to never")
         }
         return .store(Proposal(draft, trust: trust, now: now), applyNow: trust == .auto)
+    }
+
+    /// A skip when the same change is pending or was rejected.
+    private static func repeated(_ draft: ProposalDraft, in existing: [Proposal]) -> Screening? {
+        let sameness = Proposal.sameness(draft.payload, draft.target)
+        guard let earlier = existing.first(where: { $0.sameness == sameness && [.pending, .rejected].contains($0.status) })
+        else { return nil }
+        return .skip(reason: earlier.status == .rejected
+            ? "The same \(draft.payload.kind.rawValue) was rejected before"
+            : "The same \(draft.payload.kind.rawValue) is pending already")
     }
 
     /// Writes the proposal to Linear and returns it with its new status:

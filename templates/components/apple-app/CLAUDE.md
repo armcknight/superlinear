@@ -20,5 +20,5 @@ This project is an Apple app built with the `apple-app` component from [armcknig
 
 ## Further reading
 
-* [Builds](https://github.com/armcknight/superlinear/blob/main/docs/anchors.md#builds)
-* [The apple-app component](https://github.com/armcknight/superlinear/blob/main/docs/anchors.md#apple-app)
+* [Nightly TestFlight builds](https://github.com/armcknight/superlinear/blob/main/docs/builds.md#nightly-testflight)
+* [Build numbers](https://github.com/armcknight/superlinear/blob/main/docs/builds.md#build-numbers)

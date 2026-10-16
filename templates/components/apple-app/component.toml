@@ -212,16 +212,16 @@ description = "Checks that fastlane/Fastfile uses the shared lanes."
 
 [[docs]]
 title = "Components"
-anchor = "components"
+anchor = "bootstrap.md#components"
 
 [[docs]]
-title = "Bootstrap"
-anchor = "bootstrap"
+title = "Manifests"
+anchor = "bootstrap.md#manifests"
 
 [[docs]]
-title = "Builds"
-anchor = "builds"
+title = "Nightly TestFlight builds"
+anchor = "builds.md#nightly-testflight"
 
 [[docs]]
-title = "The apple-app component"
-anchor = "apple-app"
+title = "Build numbers"
+anchor = "builds.md#build-numbers"

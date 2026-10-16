@@ -14,7 +14,7 @@ schema/component.schema.json, then checks what a schema cannot:
   declared input, `templates` or `templates.tag`;
 * each regular expression compiles, and each `regex` infer rule has a group;
 * each shared path exists;
-* each docs anchor is a heading in the superlinear guide's docs/anchors.md;
+* each docs anchor is listed in the superlinear guide's docs/anchors.md;
 * README.md links to each component and each shared path.
 
 Prints each problem and exits 1 when there are any.
@@ -40,11 +40,8 @@ PLACEHOLDER = re.compile(r"(?<!\$)\{\{\s*([^{}]*?)\s*\}\}")
 BUILTIN_PLACEHOLDERS = {"templates", "templates.tag"}
 
 
-def github_slug(heading):
-    """The anchor GitHub makes for a Markdown heading."""
-    slug = heading.strip().lower()
-    slug = re.sub(r"[^\w\- ]", "", slug)
-    return slug.replace(" ", "-")
+# How docs/anchors.md lists each anchor: `<page>.md#<id>`, in code.
+LISTED_ANCHOR = re.compile(r"`([a-z][a-z0-9-]*\.md#[a-z0-9][a-z0-9-]*)`")
 
 
 def read_anchors(source):
@@ -53,7 +50,7 @@ def read_anchors(source):
             text = response.read().decode("utf-8")
     else:
         text = Path(source).read_text(encoding="utf-8")
-    return {github_slug(m.group(1)) for m in re.finditer(r"^#{1,6}\s+(.+?)\s*#*\s*$", text, re.MULTILINE)}
+    return set(LISTED_ANCHOR.findall(text))
 
 
 def placeholders(text):
@@ -164,7 +161,7 @@ def validate_component(root, directory, validator, anchors):
     if anchors is not None:
         for doc in manifest["docs"]:
             if doc["anchor"] not in anchors:
-                problems.append(f"{where}: docs anchor {doc['anchor']!r} is not a heading in docs/anchors.md")
+                problems.append(f"{where}: docs anchor {doc['anchor']!r} is not listed in docs/anchors.md")
 
     return problems, manifest
 

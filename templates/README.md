@@ -90,7 +90,7 @@ The reusable pieces of this repository that the component uses: `kind` (`workflo
 
 ### `docs`
 
-Anchors in the superlinear guide's [docs/anchors.md](https://github.com/armcknight/superlinear/blob/main/docs/anchors.md), with a title for each.
+Sections of the superlinear guide that explain the component, each with a `title` and an `anchor` listed in its [Anchors](https://github.com/armcknight/superlinear/blob/main/docs/anchors.md) page, as `<page>.md#<id>`, such as `builds.md#nightly-testflight`.
 
 ### Placeholders
 
@@ -116,14 +116,14 @@ Each component's `scaffold/README.md` has a section between these markers:
 * the components the project uses, each linked to `components/<name>` here at the pinned tag;
 * each shared workflow, lane, Makefile fragment and Brewfile the project uses, linked here at the pinned tag;
 * the secrets by name, never their values, with where each comes from, and the human steps;
-* links to the superlinear guide's [lifecycle](https://github.com/armcknight/superlinear/blob/main/docs/anchors.md#lifecycle), [planning](https://github.com/armcknight/superlinear/blob/main/docs/anchors.md#planning), [bootstrap](https://github.com/armcknight/superlinear/blob/main/docs/anchors.md#bootstrap) and [builds](https://github.com/armcknight/superlinear/blob/main/docs/anchors.md#builds) anchors, and the components' own `docs` anchors;
+* links to the superlinear guide's [life of an issue](https://github.com/armcknight/superlinear/blob/main/docs/lifecycle.md#overview), [planning](https://github.com/armcknight/superlinear/blob/main/docs/planning.md#proposals), [bootstrap](https://github.com/armcknight/superlinear/blob/main/docs/bootstrap.md#components) and [builds](https://github.com/armcknight/superlinear/blob/main/docs/builds.md#ci) sections, and to the components' own `docs` anchors;
 * a link to the project's Linear team and, when it has one, its spec document.
 
 ## Adding a component
 
 1. Make `components/<name>/` with `component.toml`, `CLAUDE.md` and `scaffold/README.md` with the markers.
 2. Put shared pieces at the top level, add them to the manifest's `shared` and to the table above.
-3. Add any new guide anchor to superlinear's `docs/anchors.md` first.
+3. Add any new guide section to superlinear's `docs/`, with its anchor listed in `docs/anchors.md`, first.
 4. Run the checks below, then tag a release.
 
 ## Checks
@@ -132,7 +132,7 @@ CI runs these on each pull request and push:
 
 ```sh
 pip install -r scripts/requirements.txt
-python3 scripts/validate.py                   # the manifests, against the schema and docs/anchors.md
+python3 scripts/validate.py                   # the manifests, against the schema and the guide's docs/anchors.md
 python3 -m unittest discover -s scripts       # the validator's tests
 ```
 

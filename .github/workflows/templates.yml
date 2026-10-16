@@ -2,8 +2,9 @@ name: templates
 
 # templates/ is the content of the armcknight/templates repository, kept here
 # until that repository exists. This runs its checks, against this
-# repository's docs/anchors.md, and checks the links between the two offline:
-# links to armcknight/templates do not resolve until it is published.
+# repository's docs/anchors.md, and checks its links offline: links to
+# armcknight/templates do not resolve until it is published. The ci workflow's
+# `make check-docs` checks the links in docs/.
 
 on:
   push:
@@ -42,5 +43,5 @@ jobs:
       - name: Check the local links
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --no-progress --offline --include-fragments './templates/**/*.md' './docs/**/*.md'
+          args: --no-progress --offline --include-fragments './templates/**/*.md'
           fail: true

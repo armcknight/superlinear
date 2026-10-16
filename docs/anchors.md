@@ -1,33 +1,94 @@
 # Anchors
 
-Stable links into the superlinear guide. Component manifests in [armcknight/templates](https://github.com/armcknight/templates), and the README sections that `superlinear bootstrap` writes, link to the headings here, not to the guide's other pages, so the guide can be reorganized without breaking those links. Each heading's anchor is its text, so do not rename one; add a new heading, and keep the old one pointing to the new place until no manifest uses it.
+Other repositories link to these sections, so their addresses must not change. Each section has an explicit anchor, `<a id="…"></a>`, above its heading, so a heading can be renamed without breaking a link. To link to a section from another repository, use its anchor below.
 
-The templates repository's validator fails when a manifest's `docs` names an anchor that is not a heading here.
+Rules:
 
-## lifecycle
+- Do not rename or remove an anchor. When a section moves, move its anchor with it. When a section goes away, keep its anchor at the section that replaces it.
+- Each new section that other repositories may link to gets an anchor, and a line here.
+- `make check-docs`, which CI runs, fails when a link or anchor does not resolve, or when an anchor in `docs/` is not listed here.
 
-How an issue becomes a pull request and is closed: the daemon picks issues, an agent works on each in its own worktree, and the merge closes the issue. See [How it works](../README.md#how-it-works).
+## [The life of an issue](lifecycle.md)
 
-## planning
+| Anchor | Section |
+| --- | --- |
+| [`lifecycle.md#overview`](lifecycle.md#overview) | Overview: from issue to merge, step by step. |
+| [`lifecycle.md#selection`](lifecycle.md#selection) | Selection: which issues superlinear picks, in `new` and `ready` mode. |
+| [`lifecycle.md#first-poll`](lifecycle.md#first-poll) | The first poll of a new workspace. |
+| [`lifecycle.md#ready-gate`](lifecycle.md#ready-gate) | The ready gate: blockers, human labels and holds. |
+| [`lifecycle.md#agent`](lifecycle.md#agent) | The agent: the queue, the worktree and the prompt. |
+| [`lifecycle.md#pull-request`](lifecycle.md#pull-request) | The pull request, and how the daemon follows it. |
+| [`lifecycle.md#reviews`](lifecycle.md#reviews) | Reviews that bring an agent back. |
+| [`lifecycle.md#conflicts`](lifecycle.md#conflicts) | Conflicts with the base branch. |
+| [`lifecycle.md#merge`](lifecycle.md#merge) | The merge and completion. |
+| [`lifecycle.md#started-issue-sweep`](lifecycle.md#started-issue-sweep) | Started issues the daemon does not follow. |
+| [`lifecycle.md#after-merge`](lifecycle.md#after-merge) | What follows a merge. |
 
-How work is chosen: `ready` selection, blockers, human labels, and the proposals that agents and the daily planning job make for the owner to approve in the standup. See [Selection](../README.md#selection).
+## [Planning](planning.md)
 
-## components
+| Anchor | Section |
+| --- | --- |
+| [`planning.md#proposals`](planning.md#proposals) | Proposals and trust levels. |
+| [`planning.md#trust-levels`](planning.md#trust-levels) | The trust levels: `auto`, `standup` and `never`. |
+| [`planning.md#proposal-kinds`](planning.md#proposal-kinds) | The kinds of proposal and their default trust levels. |
+| [`planning.md#proposal-rules`](planning.md#proposal-rules) | The rules for applying a proposal. |
+| [`planning.md#audit-log`](planning.md#audit-log) | The audit log, and `superlinear proposals`. |
+| [`planning.md#daily-planning`](planning.md#daily-planning) | The daily planning job. |
+| [`planning.md#follow-ups`](planning.md#follow-ups) | Follow-ups from agents. |
+| [`planning.md#standup`](planning.md#standup) | The standup. |
+| [`planning.md#standup-needs-human`](planning.md#standup-needs-human) | Signing off Needs human issues at the standup. |
+| [`planning.md#project-updates`](planning.md#project-updates) | Project updates. |
 
-What a component is — a reusable part of a project, such as `apple-app` or `vapor-fly` — and how its manifest, `component.toml`, describes detection, inputs, secrets, steps and the shared pieces it uses. See [the templates repository's README](https://github.com/armcknight/templates#readme).
+## [Bootstrap](bootstrap.md)
 
-## bootstrap
+| Anchor | Section |
+| --- | --- |
+| [`bootstrap.md#components`](bootstrap.md#components) | Components. |
+| [`bootstrap.md#manifests`](bootstrap.md#manifests) | Component manifests. |
+| [`bootstrap.md#secrets`](bootstrap.md#secrets) | Secrets and where they come from. |
+| [`bootstrap.md#needs-human-steps`](bootstrap.md#needs-human-steps) | Steps that need a person. |
+| [`bootstrap.md#bootstrap-check`](bootstrap.md#bootstrap-check) | `bootstrap --check`. |
 
-How `superlinear bootstrap` sets up a project's components from their manifests, and what it asks a person to do. Projects record their components and the pinned template tag in `.superlinear/components.toml`.
+## [Builds](builds.md)
 
-## secrets
+| Anchor | Section |
+| --- | --- |
+| [`builds.md#ci`](builds.md#ci) | CI. |
+| [`builds.md#nightly-testflight`](builds.md#nightly-testflight) | Nightly TestFlight builds. |
+| [`builds.md#build-numbers`](builds.md#build-numbers) | Build numbers. |
+| [`builds.md#release-rule`](builds.md#release-rule) | The release rule: agents never release. |
+| [`builds.md#testflight-feedback`](builds.md#testflight-feedback) | TestFlight feedback. |
 
-Where each component's secrets come from (`keychain:`, `1password:` or `generate:`), who they are shared with (`team`, `app` or `repo`), and when they are rotated. Values are only ever given to `gh secret set`, never to a log, a prompt or an agent.
+## [Configuration](configuration.md)
 
-## builds
+| Anchor | Section |
+| --- | --- |
+| [`configuration.md#top-level-keys`](configuration.md#top-level-keys) | Top-level keys. |
+| [`configuration.md#workspaces`](configuration.md#workspaces) | `workspaces` |
+| [`configuration.md#max-concurrent-agents`](configuration.md#max-concurrent-agents) | `maxConcurrentAgents` |
+| [`configuration.md#workspace-keys`](configuration.md#workspace-keys) | Workspace keys. |
+| [`configuration.md#name`](configuration.md#name) | `name` |
+| [`configuration.md#api-key`](configuration.md#api-key) | `apiKey` |
+| [`configuration.md#repo-path`](configuration.md#repo-path) | `repoPath` |
+| [`configuration.md#team-ids`](configuration.md#team-ids) | `teamIds` |
+| [`configuration.md#poll-interval-seconds`](configuration.md#poll-interval-seconds) | `pollIntervalSeconds` |
+| [`configuration.md#selection`](configuration.md#selection) | `selection` |
+| [`configuration.md#ready-states`](configuration.md#ready-states) | `readyStates` |
+| [`configuration.md#human-labels`](configuration.md#human-labels) | `humanLabels` |
+| [`configuration.md#autonomy`](configuration.md#autonomy) | `autonomy` |
+| [`configuration.md#proposal-expiry-days`](configuration.md#proposal-expiry-days) | `proposalExpiryDays` |
+| [`configuration.md#planning`](configuration.md#planning) | `planning` |
+| [`configuration.md#config-changes`](configuration.md#config-changes) | Changing the config. |
+| [`configuration.md#files`](configuration.md#files) | The files superlinear reads and writes. |
 
-How projects are tested and shipped through the shared workflows and lanes: tests on each pull request, and a nightly build that uploads only when the default branch changed after the last one.
+## [Operations](operations.md)
 
-## apple-app
-
-The `apple-app` component: iOS (with an optional embedded watch app), tvOS and macOS apps. Its `beta` lane uploads to TestFlight with the next build number and "What to Test" written from the pull requests merged since the last build. See [its directory](https://github.com/armcknight/templates/tree/main/components/apple-app).
+| Anchor | Section |
+| --- | --- |
+| [`operations.md#install`](operations.md#install) | Installation. |
+| [`operations.md#usage`](operations.md#usage) | Usage. |
+| [`operations.md#restarts`](operations.md#restarts) | Restarts. |
+| [`operations.md#disk-space`](operations.md#disk-space) | Disk space. |
+| [`operations.md#status`](operations.md#status) | `superlinear status`. |
+| [`operations.md#make-targets`](operations.md#make-targets) | Make targets. |
+| [`operations.md#releasing`](operations.md#releasing) | Releasing superlinear. |
