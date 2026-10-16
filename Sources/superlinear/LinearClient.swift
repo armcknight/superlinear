@@ -1,9 +1,17 @@
 import Foundation
+import Tagged
+
+/// The type of a Linear workflow state. Every state a team defines has one.
+enum LinearStateType: String, Codable, Sendable, CaseIterable {
+    case triage, backlog, unstarted, started, completed, canceled
+}
 
 /// An issue an agent may start on. The fields after `team` decide whether
 /// one does, and in what order; each is absent when the query did not ask.
 struct LinearIssue: Codable, Sendable, Equatable {
-    let id: String
+    typealias ID = Tagged<LinearIssue, String>
+
+    let id: ID
     let identifier: String
     let title: String
     let branchName: String
@@ -47,7 +55,7 @@ struct LinearIssue: Codable, Sendable, Equatable {
         }
 
         struct Related: Codable, Sendable, Equatable {
-            let id: String
+            let id: LinearIssue.ID
             let identifier: String
             let state: Kind
 
@@ -239,7 +247,8 @@ struct LinearClient: Sendable {
 
     /// Open issues whose state type is one of `states`, whenever created,
     /// optionally filtered by team.
-    func fetchReadyIssues(states: [String], teamIds: [String]) async throws -> [LinearIssue] {
+    func fetchReadyIssues(states: [LinearStateType], teamIds: [String]) async throws -> [LinearIssue] {
+        let states = states.map(\.rawValue)
         if teamIds.isEmpty {
             return try await fetchAll(Self.readyAllTeams, variables: ["states": states])
         }
@@ -248,10 +257,10 @@ struct LinearClient: Sendable {
 
     /// The issues with these IDs, with what it takes to decide whether an
     /// agent starts on them, 25 IDs to a request. Archived issues are absent.
-    func fetchCandidates(ids: [String]) async throws -> [LinearIssue] {
+    func fetchCandidates(ids: [LinearIssue.ID]) async throws -> [LinearIssue] {
         var issues: [LinearIssue] = []
         for start in stride(from: 0, to: ids.count, by: 25) {
-            let batch = Array(ids[start..<min(start + 25, ids.count)])
+            let batch = ids[start..<min(start + 25, ids.count)].map(\.rawValue)
             issues += try await fetchAll(Self.candidatesById, variables: ["ids": batch])
         }
         return issues

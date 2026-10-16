@@ -10,7 +10,7 @@ enum IssueSelection: String, Codable, Sendable {
 }
 
 struct WorkspaceConfig: Codable, Sendable {
-    static let defaultReadyStates = ["unstarted"]
+    static let defaultReadyStates: [LinearStateType] = [.unstarted]
     static let defaultHumanLabels = ["Needs human", "Spike"]
 
     let name: String
@@ -20,8 +20,9 @@ struct WorkspaceConfig: Codable, Sendable {
     let pollIntervalSeconds: Int
     let selection: IssueSelection
     /// Linear state types that mean "build this" in `ready` mode.
-    let readyStates: [String]
-    /// Labels that keep an issue for a person: no agent starts on it.
+    let readyStates: [LinearStateType]
+    /// Labels that keep an issue for a person: no agent starts on it. Teams
+    /// name their own labels, so these are names, matched in any case.
     let humanLabels: [String]
 
     enum CodingKeys: String, CodingKey {
@@ -36,14 +37,14 @@ struct WorkspaceConfig: Codable, Sendable {
         teamIds = try container.decodeIfPresent([String].self, forKey: .teamIds) ?? []
         pollIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .pollIntervalSeconds) ?? 60
         selection = try container.decodeIfPresent(IssueSelection.self, forKey: .selection) ?? .new
-        readyStates = try container.decodeIfPresent([String].self, forKey: .readyStates) ?? Self.defaultReadyStates
+        readyStates = try container.decodeIfPresent([LinearStateType].self, forKey: .readyStates) ?? Self.defaultReadyStates
         humanLabels = try container.decodeIfPresent([String].self, forKey: .humanLabels) ?? Self.defaultHumanLabels
     }
 
     /// The Linear state types an issue may be in for an agent to start on it.
-    var startableStates: Set<String> {
+    var startableStates: Set<LinearStateType> {
         switch selection {
-        case .new: ["backlog", "unstarted"]
+        case .new: [.backlog, .unstarted]
         case .ready: Set(readyStates)
         }
     }

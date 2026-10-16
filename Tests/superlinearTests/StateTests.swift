@@ -205,6 +205,10 @@ struct StateTests {
         #expect(restored.workspaces["w"]?.blocked == ["id-2": blocked])
         #expect(restored.workspaces["w"]?.needsHuman == ["id-3": human])
         #expect(restored.workspaces["w"]?.waitingIssueIds == ["id-2", "id-3"])
+        // Tagged IDs stay plain object keys in the file.
+        let file = try JSONSerialization.jsonObject(with: state.encoded()) as? [String: Any]
+        let workspaces = file?["workspaces"] as? [String: [String: Any]]
+        #expect((workspaces?["w"]?["blocked"] as? [String: Any])?.keys.sorted() == ["id-2"])
 
         state.recordWaiting(blocked: [:], needsHuman: ["id-3": human], workspace: "w")
         #expect(state.workspaces["w"]?.blocked.isEmpty == true)

@@ -108,9 +108,9 @@ struct ConfigTests {
         {"workspaces": [{"name": "w", "apiKey": "k", "repoPath": "~/r"}]}
         """).workspaces.first)
         #expect(workspace.selection == .new)
-        #expect(workspace.readyStates == ["unstarted"])
+        #expect(workspace.readyStates == [.unstarted])
         #expect(workspace.humanLabels == ["Needs human", "Spike"])
-        #expect(workspace.startableStates == ["backlog", "unstarted"])
+        #expect(workspace.startableStates == [.backlog, .unstarted])
     }
 
     @Test("Ready mode starts from its configured ready states")
@@ -120,7 +120,7 @@ struct ConfigTests {
           "selection": "ready", "readyStates": ["unstarted", "backlog"], "humanLabels": []}]}
         """).workspaces.first)
         #expect(workspace.selection == .ready)
-        #expect(workspace.startableStates == ["unstarted", "backlog"])
+        #expect(workspace.startableStates == [.unstarted, .backlog])
         #expect(workspace.humanLabels.isEmpty)
     }
 
@@ -129,6 +129,15 @@ struct ConfigTests {
         #expect(throws: DecodingError.self) {
             _ = try decode("""
             {"workspaces": [{"name": "w", "apiKey": "k", "repoPath": "~/r", "selection": "all"}]}
+            """)
+        }
+    }
+
+    @Test("A ready state that is not a Linear state type is an error")
+    func unknownReadyStateThrows() {
+        #expect(throws: DecodingError.self) {
+            _ = try decode("""
+            {"workspaces": [{"name": "w", "apiKey": "k", "repoPath": "~/r", "readyStates": ["Todo"]}]}
             """)
         }
     }

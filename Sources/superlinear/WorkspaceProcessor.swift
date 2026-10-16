@@ -43,7 +43,7 @@ struct WorkspaceProcessor: Sendable {
     private func fetchCandidates(client: LinearClient) async throws -> [LinearIssue] {
         switch workspace.selection {
         case .ready:
-            log("Polling issues in \(workspace.readyStates.joined(separator: ", "))")
+            log("Polling issues in \(workspace.readyStates.map(\.rawValue).joined(separator: ", "))")
             return try await client.fetchReadyIssues(states: workspace.readyStates, teamIds: workspace.teamIds)
         case .new:
             let lastPoll = await daemon.lastPollTimestamp(workspace: workspace.name)
@@ -66,8 +66,8 @@ struct WorkspaceProcessor: Sendable {
     /// poll, fetches no created issues rather than every open one, so only
     /// issues created after it start.
     static func newCandidates(
-        lastPoll: Date, waiting: Set<String>,
-        created: (Date) async throws -> [LinearIssue], byIds: ([String]) async throws -> [LinearIssue]
+        lastPoll: Date, waiting: Set<LinearIssue.ID>,
+        created: (Date) async throws -> [LinearIssue], byIds: ([LinearIssue.ID]) async throws -> [LinearIssue]
     ) async throws -> [LinearIssue] {
         let fresh = lastPoll == .distantPast ? [] : try await created(lastPoll)
         let rest = waiting.subtracting(fresh.map(\.id))

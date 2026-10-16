@@ -88,13 +88,13 @@ actor Daemon {
     /// at once start in the order of their `queuedAt`.
     func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig, queuedAt: Date = Date()) {
         let run = AgentRun(
-            issueId: issue.id,
+            issueId: issue.id.rawValue,
             identifier: issue.identifier,
             branchName: issue.branchName,
             sessionId: UUID().uuidString.lowercased(),
             queuedAt: queuedAt
         )
-        state.markProcessed(issue.id, workspace: workspace.name)
+        state.markProcessed(issue.id.rawValue, workspace: workspace.name)
         state.recordRun(run, workspace: workspace.name)
         log("Queued \(issue.identifier): \(issue.title)", workspace: workspace.name)
         save()
@@ -356,12 +356,12 @@ actor Daemon {
     }
 
     /// Issues the daemon has queued, run or watched, which no poll starts again.
-    func handledIssueIds(workspace: String) -> Set<String> {
+    func handledIssueIds(workspace: String) -> Set<LinearIssue.ID> {
         state.handledIssueIds(workspace: workspace)
     }
 
     /// Issues waiting on blockers or a human, which each poll checks again.
-    func waitingIssueIds(workspace: String) -> Set<String> {
+    func waitingIssueIds(workspace: String) -> Set<LinearIssue.ID> {
         state.workspaces[workspace]?.waitingIssueIds ?? []
     }
 

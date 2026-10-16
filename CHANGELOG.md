@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `selection` key per workspace: `"new"`, the default, starts agents for
   issues created since the last poll, as before; `"ready"` starts them for
   every open issue in one of the workspace's `readyStates` (default
-  `["unstarted"]`, which is Todo), whenever it was created, urgent first and
+  `["unstarted"]`, which is Todo; a value that is not a Linear state type is
+  a config error), whenever it was created, urgent first and
   no priority last, then by project, milestone and issue sort order. In
   `ready` mode, an issue moves to its team's first started state when its
   agent starts, so moving an issue from Backlog to Todo is how you say "build

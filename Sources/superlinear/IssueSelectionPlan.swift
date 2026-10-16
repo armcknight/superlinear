@@ -7,9 +7,9 @@ struct IssueSelectionPlan: Equatable {
     /// Issues to queue, in the order they should start.
     var start: [LinearIssue] = []
     /// Issues waiting on open blockers, keyed by issue ID.
-    var blocked: [String: WaitingIssue] = [:]
+    var blocked: [LinearIssue.ID: WaitingIssue] = [:]
     /// Issues carrying a human label, keyed by issue ID.
-    var needsHuman: [String: WaitingIssue] = [:]
+    var needsHuman: [LinearIssue.ID: WaitingIssue] = [:]
 }
 
 extension IssueSelection {
@@ -18,14 +18,16 @@ extension IssueSelection {
     /// agent may start from are left out, so they stop waiting. A human label
     /// wins over open blockers.
     static func plan(
-        _ candidates: [LinearIssue], workspace: WorkspaceConfig, handled: Set<String>
+        _ candidates: [LinearIssue], workspace: WorkspaceConfig, handled: Set<LinearIssue.ID>
     ) -> IssueSelectionPlan {
         var plan = IssueSelectionPlan()
-        var seen: Set<String> = []
+        var seen: Set<LinearIssue.ID> = []
         let startable = workspace.startableStates
         let humanLabels = Set(workspace.humanLabels.map { $0.lowercased() })
         for issue in candidates where seen.insert(issue.id).inserted && !handled.contains(issue.id) {
-            if let state = issue.state, !startable.contains(state.type) { continue }
+            if let state = issue.state, LinearStateType(rawValue: state.type).map(startable.contains) != true {
+                continue
+            }
             let labels = issue.labelNames.filter { humanLabels.contains($0.lowercased()) }
             if !labels.isEmpty {
                 plan.needsHuman[issue.id] = WaitingIssue(issue, labels: labels)

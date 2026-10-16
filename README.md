@@ -171,8 +171,8 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
 | `teamIds` | no | Linear team IDs to watch. Empty or absent means all teams. Defaults to `[]`. |
 | `pollIntervalSeconds` | no | Seconds between polls. Defaults to `60`. |
 | `selection` | no | `"new"` to start issues created since the last poll, or `"ready"` to start every issue in `readyStates`. See [Selection](#selection). Defaults to `"new"`. |
-| `readyStates` | no | Linear state types — `triage`, `backlog`, `unstarted` — that mean "build this" in `ready` mode. Defaults to `["unstarted"]`, which is Todo. |
-| `humanLabels` | no | Labels that keep an issue for a person: no agent starts on it. Matched in any case. Defaults to `["Needs human", "Spike"]`. |
+| `readyStates` | no | Linear state types that mean "build this" in `ready` mode: any of `triage`, `backlog`, `unstarted`, `started`, `completed` and `canceled`, usually the first three. Any other value, such as a state name like `"Todo"`, is an error. Defaults to `["unstarted"]`, which is Todo. |
+| `humanLabels` | no | Names of labels that keep an issue for a person: no agent starts on it. Matched in any case. Defaults to `["Needs human", "Spike"]`. |
 
 `maxConcurrentAgents`, at the top level beside `workspaces`, limits how many agents run at once across all workspaces. It defaults to `3`. Further issues wait in a queue, kept in the state file, and start oldest first as running agents finish. An interrupted agent keeps its place, so it resumes before newer issues start.
 
