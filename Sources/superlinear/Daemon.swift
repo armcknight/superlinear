@@ -30,6 +30,9 @@ actor Daemon {
     private var gitHubPausedUntil: Date?
     /// What standups decided, read again at each poll.
     private var standups: StandupRecord
+    /// Failed workflow runs already screened for a proposal, so that each is
+    /// screened once rather than searched for in Linear every poll.
+    private var screenedWorkflowRuns: Set<String> = []
 
     init(config: Config) {
         self.config = config
@@ -237,6 +240,13 @@ actor Daemon {
         let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
         let mode = runner.launchMode(for: run)
         do {
+            try FollowUpFile.ignore(repoPath: repoPath)
+        } catch {
+            if firstReport("ignore \(repoPath)") {
+                log("Could not add \(FollowUpFile.excludeLine) to git's info/exclude in \(repoPath): \(error)", workspace: workspace.name)
+            }
+        }
+        do {
             var run = run
             run.launchedAt = run.launchedAt ?? Date()
             let (launched, process) = try runner.launch(run, mode: mode, repoPath: repoPath) { [run] status in
@@ -329,7 +339,71 @@ actor Daemon {
         runner.cleanUp(run)
         save()
         fillSlots()
+        collectFollowUps(of: run, workspace: workspace)
         cleanWorktree(of: run, workspace: workspace)
+    }
+
+    /// Proposes the follow-ups the agent left in its worktree. Those that
+    /// could not be proposed stay in the file for the next agent's exit; a
+    /// malformed file stays for inspection.
+    private func collectFollowUps(of run: AgentRun, workspace name: String) {
+        guard let workspace = workspace(named: name) else { return }
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let pullRequest = run.review?.url ?? run.conflict?.url
+            ?? state.linkedPullRequests(issueId: run.issueId, workspace: name).sorted().last
+        Task.detached {
+            guard let worktree = FollowUpFile.worktree(branch: run.branchName, repoPath: repoPath) else { return }
+            let path = FollowUpFile.path(worktree: worktree)
+            switch FollowUpFile.read(worktree: worktree) {
+            case .none:
+                return
+            case .malformed(let reason):
+                await self.log("Could not read \(run.identifier)'s follow-ups, kept for inspection at \(path): \(reason)", workspace: name)
+            case .entries(let entries):
+                let source = ProposalSource(
+                    kind: .agentSession, value: run.sessionId, issue: run.identifier, pullRequest: pullRequest
+                )
+                let remaining = await self.proposeFollowUps(entries, of: run, source: source, workspace: workspace)
+                do {
+                    try FollowUpFile.keep(remaining, worktree: worktree)
+                } catch {
+                    await self.log("Could not update \(path): \(error)", workspace: name)
+                }
+            }
+        }
+    }
+
+    /// Proposes a new issue for each follow-up, and returns those it could not.
+    private func proposeFollowUps(
+        _ entries: [FollowUp], of run: AgentRun, source: ProposalSource, workspace: WorkspaceConfig
+    ) async -> [FollowUp] {
+        log("\(run.identifier)'s agent reported \(entries.count) follow-up(s)", workspace: workspace.name)
+        let linear = LinearClient(apiKey: workspace.apiKey)
+        let issue: EditableIssue
+        do {
+            issue = try await linear.editableIssue(id: LinearIssue.ID(rawValue: run.issueId))
+        } catch {
+            log("Could not look up \(run.identifier) to propose its follow-ups: \(error)", workspace: workspace.name)
+            return entries
+        }
+        var remaining: [FollowUp] = []
+        for entry in entries {
+            // Linear finds an issue by its identifier too. One it cannot find
+            // is still named in the description.
+            var related = issue.id
+            if let identifier = entry.relatedIssue,
+               let found = try? await linear.editableIssue(id: LinearIssue.ID(rawValue: identifier.rawValue)) {
+                related = found.id
+            }
+            let draft = entry.draft(teamId: issue.teamId, relatedIssueId: related, agentIssue: run.identifier, source: source)
+            do {
+                try await propose(draft, workspace: workspace)
+            } catch {
+                log("Could not propose \(run.identifier)'s follow-up \"\(entry.title)\": \(error)", workspace: workspace.name)
+                remaining.append(entry)
+            }
+        }
+        return remaining
     }
 
     /// Frees the build output of an agent that has ended, as it goes.
@@ -485,6 +559,17 @@ actor Daemon {
         reported.insert(message).inserted
     }
 
+    /// Whether the failed workflow run at `url` is yet to be screened, and
+    /// marks it screened.
+    func screenWorkflowRun(_ url: String) -> Bool {
+        screenedWorkflowRuns.insert(url).inserted
+    }
+
+    /// Lets the next poll screen the run again, as after Linear failed.
+    func unscreenWorkflowRun(_ url: String) {
+        screenedWorkflowRuns.remove(url)
+    }
+
     func linkedPullRequests(issueId: String, workspace: String) -> Set<String> {
         state.linkedPullRequests(issueId: issueId, workspace: workspace)
     }
@@ -504,16 +589,10 @@ actor Daemon {
     /// Stores a proposed change to Linear, unless the same change is pending
     /// or was rejected, or its kind is set to never. One whose kind is `auto`
     /// is applied at once. Returns the proposal as stored, or nil when none was.
+    /// Throws when Linear could not be searched for duplicates.
     @discardableResult
-    func propose(_ draft: ProposalDraft, workspace: WorkspaceConfig) async -> Proposal? {
-        let engine = proposalEngine(workspace)
-        let screening: ProposalEngine.Screening
-        do {
-            screening = try await engine.screen(draft, existing: state.proposals(workspace: workspace.name))
-        } catch {
-            log("Could not check a \(draft.payload.kind.rawValue) proposal for duplicates: \(error)", workspace: workspace.name)
-            return nil
-        }
+    func propose(_ draft: ProposalDraft, workspace: WorkspaceConfig) async throws -> Proposal? {
+        let screening = try await proposalEngine(workspace).screen(draft, existing: state.proposals(workspace: workspace.name))
         guard case .store(let proposal, let applyNow) = screening else {
             if case .skip(let reason) = screening {
                 log("Not proposing \(draft.payload.kind.rawValue): \(reason)", workspace: workspace.name)

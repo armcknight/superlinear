@@ -42,6 +42,77 @@ struct WorkspaceProcessor: Sendable {
         if await daemon.gitHubAvailable() { await linkRunningAgentsPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await checkPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await sweepStartedIssues(client: client, listing: listing) }
+        if await daemon.gitHubAvailable() { await checkDefaultBranchWorkflows(client: client, repoPath: listing.repoPath) }
+    }
+
+    /// Proposes an issue for each workflow whose latest run on the default
+    /// branch failed. Each failed run is screened once.
+    private func checkDefaultBranchWorkflows(client: LinearClient, repoPath: String) async {
+        let branch = Git.defaultBranch(in: repoPath) ?? "main"
+        let runs: [WorkflowRun]
+        do {
+            let output = try await PullRequestChecker().run(WorkflowFailures.listArguments(branch: branch), in: repoPath)
+            runs = try WorkflowFailures.decodeRuns(output)
+        } catch {
+            if await pausedForRateLimit(error, repoPath: repoPath) { return }
+            await logOnce("Could not list the workflow runs on \(branch): \(error)")
+            return
+        }
+        var failing: [WorkflowRun] = []
+        for run in WorkflowFailures.failing(runs) where await daemon.screenWorkflowRun(run.url ?? "") {
+            failing.append(run)
+        }
+        guard !failing.isEmpty else { return }
+        let teamId: LinearTeam.ID
+        do {
+            teamId = try await client.proposalTeamId(teamIds: workspace.teamIds)
+        } catch {
+            for run in failing { await daemon.unscreenWorkflowRun(run.url ?? "") }
+            await logOnce("Could not find a team for proposals about failing workflows: \(error)")
+            return
+        }
+        for run in failing {
+            log("The \(run.workflowName ?? "unnamed") workflow fails on \(branch): \(run.url ?? "")")
+            do {
+                try await daemon.propose(WorkflowFailures.draft(run, branch: branch, teamId: teamId), workspace: workspace)
+            } catch {
+                await daemon.unscreenWorkflowRun(run.url ?? "")
+                await logOnce("Could not propose an issue for the failing \(run.workflowName ?? "unnamed") workflow: \(error)")
+            }
+        }
+    }
+
+    /// Proposes an issue for each `TODO` or `FIXME` line the merged pull
+    /// request added that names no issue. Tried once, as the watch ends.
+    private func proposeAddedTodos(of pullRequest: PullRequest, pending: PendingMerge, client: LinearClient, repoPath: String) async {
+        let todos: [AddedTodos.Todo]
+        do {
+            let diff = try await PullRequestChecker().run(AddedTodos.diffArguments(number: pullRequest.number), in: repoPath)
+            todos = AddedTodos.parse(diff: String(decoding: diff, as: UTF8.self))
+        } catch {
+            _ = await pausedForRateLimit(error, repoPath: repoPath)
+            log("  Could not read the diff of \(pullRequest.url) for added TODOs: \(error)")
+            return
+        }
+        guard !todos.isEmpty else { return }
+        log("  \(pullRequest.url) added \(todos.count) TODO or FIXME line(s)")
+        let issue: EditableIssue
+        do {
+            issue = try await client.editableIssue(id: LinearIssue.ID(rawValue: pending.issueId))
+        } catch {
+            log("  Could not look up \(pending.identifier) to propose its added TODOs: \(error)")
+            return
+        }
+        for todo in todos {
+            let draft = AddedTodos.draft(
+                todo, pullRequest: pullRequest, agentIssue: pending.identifier, issueId: issue.id, teamId: issue.teamId
+            )
+            do {
+                try await daemon.propose(draft, workspace: workspace)
+            } catch {
+                log("  Could not propose an issue for the \(todo.marker.rawValue) at \(todo.file):\(todo.line): \(error)")
+            }
+        }
     }
 
     /// The issues an agent might start on this poll: in `new` mode, those
@@ -220,6 +291,7 @@ struct WorkspaceProcessor: Sendable {
                     log("  Could not mark \(pending.identifier) done in Linear: \(error)")
                     continue
                 }
+                await proposeAddedTodos(of: pr, pending: pending, client: client, repoPath: repoPath)
                 let workLog = AgentRunner().workLog(identifier: pending.identifier)
                 do {
                     try await checker.finishWorktree(branch: pending.branchName, repoPath: repoPath, logFile: workLog)

@@ -41,6 +41,8 @@ enum LinearQuery: CaseIterable, Sendable {
     case changeProjectSpec
     case changeDocumentSpec
     case postProjectUpdate
+    /// The workspace's first team, for proposals that belong to no issue.
+    case firstTeam
 
     var text: String {
         switch self {
@@ -247,6 +249,9 @@ enum LinearQuery: CaseIterable, Sendable {
               projectUpdateCreate(input: { projectId: $projectId, body: $body }) { success projectUpdate { id url } }
             }
             """
+        case .firstTeam: """
+            query FirstTeam { teams(first: 1) { nodes { id } } }
+            """
         }
     }
 
@@ -422,6 +427,18 @@ extension LinearQuery {
 
     struct DocumentSpecData: Decodable {
         let document: SpecNode
+    }
+
+    struct TeamsData: Decodable {
+        let teams: Teams
+
+        struct Teams: Decodable {
+            let nodes: [Team]
+        }
+
+        struct Team: Decodable {
+            let id: LinearTeam.ID
+        }
     }
 
     /// The part of a mutation's answer that says whether it worked.

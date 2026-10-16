@@ -110,18 +110,30 @@ enum ProposalTarget: Codable, Sendable, Equatable, Hashable {
 /// superlinear creates can link back to it.
 struct ProposalSource: Codable, Sendable, Equatable {
     enum Kind: String, Codable, Sendable {
-        case pullRequest, commitRange, agentSession
+        case pullRequest, commitRange, agentSession, workflowRun
     }
 
     var kind: Kind
-    /// The pull request URL, the commit range such as `abc123..def456`, or
-    /// the agent's session ID.
+    /// The pull request URL, the commit range such as `abc123..def456`, the
+    /// agent's session ID, or the workflow run's URL.
     var value: String
     /// A link to the commit range or the session, when there is one. A pull
-    /// request's value is its link.
+    /// request's or a workflow run's value is its link.
     var url: String?
+    /// The issue the agent or pull request worked on, such as `SPL-4`.
+    var issue: LinearIssue.Identifier?
+    /// The agent's pull request, when the source is an agent session.
+    var pullRequest: String?
 
-    var link: String? { kind == .pullRequest ? value : url }
+    init(kind: Kind, value: String, url: String? = nil, issue: LinearIssue.Identifier? = nil, pullRequest: String? = nil) {
+        self.kind = kind
+        self.value = value
+        self.url = url
+        self.issue = issue
+        self.pullRequest = pullRequest
+    }
+
+    var link: String? { [.pullRequest, .workflowRun].contains(kind) ? value : url }
 
     /// The line added to what superlinear writes, saying where it came from.
     var line: String {
@@ -129,9 +141,12 @@ struct ProposalSource: Codable, Sendable, Equatable {
         case .pullRequest: value
         case .commitRange: "commits \(value)"
         case .agentSession: "agent session \(value)"
+        case .workflowRun: value
         }
-        guard let link, link != text else { return "Source: \(text)" }
-        return "Source: [\(text)](\(link))"
+        var source = if let link, link != text { "[\(text)](\(link))" } else { text }
+        if let issue { source += " for \(issue)" }
+        if let pullRequest, pullRequest != link { source += ", \(pullRequest)" }
+        return "Source: \(source)"
     }
 }
 
