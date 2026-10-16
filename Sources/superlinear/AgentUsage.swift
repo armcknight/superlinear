@@ -111,6 +111,14 @@ struct WorkflowRun: Codable, Sendable, Equatable {
     let status: String
     let startedAt: Date?
     let updatedAt: Date?
+    /// The fields below are present when the listing asked for them, as the
+    /// check for failing workflows does.
+    var workflowName: String? = nil
+    /// How a completed run ended, such as `success` or `failure`.
+    var conclusion: String? = nil
+    var url: String? = nil
+    var headSha: String? = nil
+    var createdAt: Date? = nil
 
     static let jsonFields = "headBranch,status,startedAt,updatedAt"
 
