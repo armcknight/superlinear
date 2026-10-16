@@ -4,10 +4,10 @@ import Testing
 
 /// Linear as proposals see it, kept in memory, recording every write.
 private actor FakeLinear: LinearWriting {
-    var issues: [String: EditableIssue] = [:]
+    var issues: [LinearIssue.ID: EditableIssue] = [:]
     var openMatches: [IssueMatch] = []
     var specs: [String: SpecText] = [:]
-    var labels: [String: String] = [:]
+    var labels: [String: LinearLabel.ID] = [:]
     var writes: [String] = []
     var failWrites = false
 
@@ -24,51 +24,51 @@ private actor FakeLinear: LinearWriting {
         return .object(["success": .bool(true), "write": .string(description)])
     }
 
-    func editableIssue(id: String) async throws -> EditableIssue {
+    func editableIssue(id: LinearIssue.ID) async throws -> EditableIssue {
         guard let issue = issues[id] else { throw LinearClientError.apiError(["Entity not found"]) }
         return issue
     }
 
-    func openIssues(like title: String, teamId: String) async throws -> [IssueMatch] { openMatches }
+    func openIssues(like title: String, teamId: LinearTeam.ID) async throws -> [IssueMatch] { openMatches }
 
-    func labelId(named name: String, teamId: String) async throws -> String {
+    func labelId(named name: String, teamId: LinearTeam.ID) async throws -> LinearLabel.ID {
         if let id = labels[name] { return id }
-        labels[name] = "label-\(labels.count)"
+        labels[name] = LinearLabel.ID(rawValue: "label-\(labels.count)")
         writes.append("create label \(name)")
         return labels[name]!
     }
 
     func createIssue(
-        teamId: String, projectId: String?, title: String, description: String, labelIds: [String]
+        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String, labelIds: [LinearLabel.ID]
     ) async throws -> JSONValue {
-        try written("create \(title) labels=\(labelIds) description=\(description)")
+        try written("create \(title) labels=\(labelIds.map(\.rawValue)) description=\(description)")
     }
 
-    func updateIssueDescription(id: String, description: String) async throws -> JSONValue {
+    func updateIssueDescription(id: LinearIssue.ID, description: String) async throws -> JSONValue {
         let response = try written("edit \(id)")
         issues[id]?.description = description
         return response
     }
 
-    func closeIssue(id: String) async throws -> JSONValue { try written("close \(id)") }
-    func promoteIssue(id: String) async throws -> JSONValue { try written("promote \(id)") }
+    func closeIssue(id: LinearIssue.ID) async throws -> JSONValue { try written("close \(id)") }
+    func promoteIssue(id: LinearIssue.ID) async throws -> JSONValue { try written("promote \(id)") }
 
-    func createRelation(issueId: String, relatedIssueId: String, type: String) async throws -> JSONValue {
+    func createRelation(issueId: LinearIssue.ID, relatedIssueId: LinearIssue.ID, type: String) async throws -> JSONValue {
         try written("relate \(issueId) \(type) \(relatedIssueId)")
     }
 
     func spec(of target: ProposalTarget) async throws -> SpecText {
-        guard let spec = specs[target.id] else { throw LinearClientError.apiError(["Entity not found"]) }
+        guard let spec = specs[target.rawID] else { throw LinearClientError.apiError(["Entity not found"]) }
         return spec
     }
 
     func setSpec(_ spec: SpecText, id: String) { specs[id] = spec }
 
     func updateSpec(of target: ProposalTarget, content: String) async throws -> JSONValue {
-        try written("spec \(target.id)")
+        try written("spec \(target.rawID)")
     }
 
-    func postProjectUpdate(projectId: String, body: String) async throws -> JSONValue {
+    func postProjectUpdate(projectId: LinearProject.ID, body: String) async throws -> JSONValue {
         try written("update \(projectId) \(body)")
     }
 }
@@ -77,26 +77,26 @@ private let source = ProposalSource(kind: .pullRequest, value: "https://github.c
 private let proposedAt = Date(timeIntervalSince1970: 1_700_000_000)
 
 private func issue(
-    _ id: String = "i1", description: String = "", labels: [String] = [], state: String = "backlog",
+    _ id: String = "i1", description: String = "", labels: [String] = [], state: LinearStateType = .backlog,
     updatedAt: Date = proposedAt
 ) -> EditableIssue {
     EditableIssue(
-        id: id, identifier: id.uppercased(), description: description, updatedAt: updatedAt,
+        id: LinearIssue.ID(rawValue: id), identifier: id.uppercased(), description: description, updatedAt: updatedAt,
         labels: labels, stateType: state, teamId: "team"
     )
 }
 
 private func draft(
-    _ payload: ProposalPayload, target: ProposalTarget = ProposalTarget(kind: .issue, id: "i1"),
+    _ payload: ProposalPayload, target: ProposalTarget = .issue("i1"),
     updatedAt: Date? = proposedAt
 ) -> ProposalDraft {
     ProposalDraft(payload: payload, target: target, reason: "because", source: source, targetUpdatedAt: updatedAt)
 }
 
-private func newIssue(_ title: String, relatedTo related: String? = nil) -> ProposalDraft {
+private func newIssue(_ title: String, relatedTo related: LinearIssue.ID? = nil) -> ProposalDraft {
     draft(
         .createIssue(teamId: "team", projectId: nil, title: title, description: "Do it.", relatedIssueId: related),
-        target: ProposalTarget(kind: .team, id: "team"), updatedAt: nil
+        target: .team("team"), updatedAt: nil
     )
 }
 
@@ -180,7 +180,7 @@ struct ProposalDuplicateTests {
 
         // Another target is another proposal.
         _ = try stored(await engine(linear).screen(
-            draft(.closeIssue, target: ProposalTarget(kind: .issue, id: "i2")), existing: state.proposals(workspace: "w")
+            draft(.closeIssue, target: .issue("i2")), existing: state.proposals(workspace: "w")
         ))
     }
 
@@ -215,7 +215,7 @@ struct ProposalDuplicateTests {
             newIssue("Add retries to the sync", relatedTo: "i3"), existing: []
         ))
         #expect(proposal.payload == .addRelation(relatedIssueId: "i9", type: "related"))
-        #expect(proposal.target == ProposalTarget(kind: .issue, id: "i3"))
+        #expect(proposal.target == .issue("i3"))
         #expect(applyNow)
     }
 
@@ -388,10 +388,10 @@ struct ProposalApplyTests {
 
     @Test("A promotion needs the issue still in the backlog")
     func promotion() async throws {
-        let linear = FakeLinear(issues: [issue(state: "backlog"), issue("i2", state: "unstarted")])
+        let linear = FakeLinear(issues: [issue(state: .backlog), issue("i2", state: .unstarted)])
         #expect(await engine(linear).apply(Proposal(draft(.promoteIssue), trust: .standup)).status == .applied)
         let moved = await engine(linear).apply(Proposal(
-            draft(.promoteIssue, target: ProposalTarget(kind: .issue, id: "i2")), trust: .standup
+            draft(.promoteIssue, target: .issue("i2")), trust: .standup
         ))
         #expect(moved.status == .pending)
         #expect(await linear.writes == ["promote i1"])
@@ -401,7 +401,7 @@ struct ProposalApplyTests {
     func specChange() async throws {
         let linear = FakeLinear()
         await linear.setSpec(SpecText(content: "Spec", updatedAt: proposedAt.addingTimeInterval(3600)), id: "d1")
-        let target = ProposalTarget(kind: .document, id: "d1", name: "Plan")
+        let target = ProposalTarget.document("d1", name: "Plan")
         let stale = await engine(linear).apply(Proposal(
             draft(.changeSpec(oldText: "Spec", newText: "Spec v2"), target: target), trust: .standup
         ))
@@ -466,6 +466,19 @@ struct ProposalStorageTests {
         #expect(old.proposals(workspace: "w").isEmpty)
     }
 
+    @Test("Targets and tagged IDs keep a plain JSON form in the state file")
+    func targetFormat() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let target = ProposalTarget.document("d1", name: "Plan")
+        #expect(String(decoding: try encoder.encode(target), as: UTF8.self) == #"{"id":"d1","kind":"document","name":"Plan"}"#)
+        #expect(try JSONDecoder().decode(ProposalTarget.self, from: encoder.encode(target)) == target)
+
+        let payload = ProposalPayload.addRelation(relatedIssueId: "i2", type: "blocks")
+        let json = String(decoding: try encoder.encode(payload), as: UTF8.self)
+        #expect(json.contains(#""relatedIssueId":"i2""#))
+    }
+
     @Test("Rejecting needs a pending proposal")
     func rejectOnlyPending() {
         var state = State()
@@ -482,7 +495,7 @@ struct ProposalStorageTests {
     func listing() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let pending = Proposal(
-            draft(.editIssue(oldText: "one\ntwo", newText: "one\nthree"), target: ProposalTarget(kind: .issue, id: "i1", name: "SPL-1")),
+            draft(.editIssue(oldText: "one\ntwo", newText: "one\nthree"), target: .issue("i1", name: "SPL-1")),
             trust: .standup, id: "aaaaaaaa-1", now: now.addingTimeInterval(-60)
         )
         var applied = Proposal(newIssue("Applied"), trust: .auto, id: "bbbbbbbb-2", now: now.addingTimeInterval(-120))

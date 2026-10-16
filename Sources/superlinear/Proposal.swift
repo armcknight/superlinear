@@ -1,4 +1,5 @@
 import Foundation
+import Tagged
 
 /// The kinds of change superlinear can propose to a Linear workspace. Each
 /// has its own trust level in the workspace's `autonomy` config.
@@ -42,17 +43,67 @@ struct Autonomy: Sendable, Equatable {
     }
 }
 
-/// What a proposal changes. A new issue's target is its team, or its project
-/// when it has one.
-struct ProposalTarget: Codable, Sendable, Equatable, Hashable {
+/// What a proposal changes, by its ID in Linear. A new issue's target is its
+/// team. `name` is what a person calls it, such as `SPL-4` or the project's
+/// name.
+enum ProposalTarget: Codable, Sendable, Equatable, Hashable {
+    case issue(LinearIssue.ID, name: String? = nil)
+    case project(LinearProject.ID, name: String? = nil)
+    case document(LinearDocument.ID, name: String? = nil)
+    case team(LinearTeam.ID, name: String? = nil)
+
     enum Kind: String, Codable, Sendable {
         case issue, project, document, team
     }
 
-    var kind: Kind
-    var id: String
-    /// What a person calls it, such as `SPL-4` or the project's name.
-    var name: String?
+    var kind: Kind {
+        switch self {
+        case .issue: .issue
+        case .project: .project
+        case .document: .document
+        case .team: .team
+        }
+    }
+
+    /// The ID without its tag, for showing and comparing across kinds.
+    var rawID: String {
+        switch self {
+        case .issue(let id, _): id.rawValue
+        case .project(let id, _): id.rawValue
+        case .document(let id, _): id.rawValue
+        case .team(let id, _): id.rawValue
+        }
+    }
+
+    var name: String? {
+        switch self {
+        case .issue(_, let name), .project(_, let name), .document(_, let name), .team(_, let name): name
+        }
+    }
+
+    // Kept as `{kind, id, name}` in the state file.
+    private enum CodingKeys: String, CodingKey {
+        case kind, id, name
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let id = try container.decode(String.self, forKey: .id)
+        let name = try container.decodeIfPresent(String.self, forKey: .name)
+        self = switch try container.decode(Kind.self, forKey: .kind) {
+        case .issue: .issue(LinearIssue.ID(rawValue: id), name: name)
+        case .project: .project(LinearProject.ID(rawValue: id), name: name)
+        case .document: .document(LinearDocument.ID(rawValue: id), name: name)
+        case .team: .team(LinearTeam.ID(rawValue: id), name: name)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(rawID, forKey: .id)
+        try container.encodeIfPresent(name, forKey: .name)
+    }
 }
 
 /// Where a proposal came from, so the owner can judge it, and so issues
@@ -91,12 +142,15 @@ enum ProposalPayload: Codable, Sendable, Equatable {
     /// `relatedIssueId` is the issue the new one follows from, if any. Should
     /// an open issue like the new one exist already, a relation to it is
     /// proposed instead.
-    case createIssue(teamId: String, projectId: String?, title: String, description: String, relatedIssueId: String?)
+    case createIssue(
+        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
+        relatedIssueId: LinearIssue.ID?
+    )
     case editIssue(oldText: String, newText: String)
     case closeIssue
     /// `type` is one of Linear's relation types: `blocks`, `duplicate`,
     /// `related` or `similar`. The target is the relation's first issue.
-    case addRelation(relatedIssueId: String, type: String)
+    case addRelation(relatedIssueId: LinearIssue.ID, type: String)
     case promoteIssue
     case changeSpec(oldText: String, newText: String)
     case postProjectUpdate(body: String)
@@ -130,11 +184,13 @@ struct ProposalDraft: Sendable, Equatable {
 /// A proposed change to Linear, kept in the state file from when it is made
 /// until it expires or long after it is decided.
 struct Proposal: Codable, Sendable, Equatable, Identifiable {
+    typealias ID = Tagged<Proposal, String>
+
     enum Status: String, Codable, Sendable {
         case pending, applied, rejected, expired
     }
 
-    var id: String
+    var id: ID
     var payload: ProposalPayload
     var target: ProposalTarget
     var reason: String
@@ -156,7 +212,7 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
 
     var kind: ProposalKind { payload.kind }
 
-    init(_ draft: ProposalDraft, trust: TrustLevel, id: String = UUID().uuidString.lowercased(), now: Date = Date()) {
+    init(_ draft: ProposalDraft, trust: TrustLevel, id: ID = ID(rawValue: UUID().uuidString.lowercased()), now: Date = Date()) {
         self.id = id
         payload = draft.payload
         target = draft.target
@@ -174,7 +230,7 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
     var sameness: String { Self.sameness(payload, target) }
 
     static func sameness(_ payload: ProposalPayload, _ target: ProposalTarget) -> String {
-        var key = "\(payload.kind.rawValue) \(target.kind.rawValue):\(target.id)"
+        var key = "\(payload.kind.rawValue) \(target.kind.rawValue):\(target.rawID)"
         switch payload {
         case .createIssue(_, _, let title, _, _):
             key += " " + TitleMatch.normalized(title)
@@ -190,6 +246,9 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
 /// Whether two issue titles name the same work: equal once case, punctuation
 /// and spacing are set aside, or close by the Sørensen–Dice coefficient of
 /// their letter pairs, which forgives plurals and small rewordings.
+///
+/// TODO: SPL-24. A title match misses the same intent in other words; an
+/// agent is to find such duplicates and show them at standup.
 enum TitleMatch {
     static let closeness = 0.8
 

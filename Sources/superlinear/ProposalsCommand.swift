@@ -49,7 +49,7 @@ enum ProposalsCommand {
     }
 
     static func describe(_ proposal: Proposal, now: Date = Date()) -> [String] {
-        let target = "\(proposal.target.kind.rawValue) \(proposal.target.name ?? proposal.target.id)"
+        let target = "\(proposal.target.kind.rawValue) \(proposal.target.name ?? proposal.target.rawID)"
         var status = switch proposal.status {
         case .pending: proposal.trust == .auto ? "auto" : "awaiting standup"
         case .applied: "applied"
@@ -58,7 +58,7 @@ enum ProposalsCommand {
         }
         if let decided = proposal.decidedAt { status += " \(StatusTime.rendered(decided, now: now))" }
         var lines = [
-            "    \(proposal.id.prefix(8))  \(proposal.kind.rawValue) → \(target)  [\(status)]",
+            "    \(proposal.id.rawValue.prefix(8))  \(proposal.kind.rawValue) → \(target)  [\(status)]",
             "      proposed \(StatusTime.rendered(proposal.createdAt, now: now))",
             "      reason: \(proposal.reason)",
             "      \(proposal.source.line.replacingOccurrences(of: "Source: ", with: "source: "))",

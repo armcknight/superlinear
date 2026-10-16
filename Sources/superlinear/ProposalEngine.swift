@@ -2,14 +2,13 @@ import Foundation
 
 /// An issue as an edit needs it: its text, labels and when it last changed.
 struct EditableIssue: Sendable, Equatable {
-    var id: String
+    var id: LinearIssue.ID
     var identifier: String
     var description: String
     var updatedAt: Date
     var labels: [String]
-    /// One of Linear's workflow state types, such as `backlog`.
-    var stateType: String
-    var teamId: String
+    var stateType: LinearStateType
+    var teamId: LinearTeam.ID
 
     /// Whether superlinear created it, as its label says.
     var createdBySuperlinear: Bool { labels.contains { $0.caseInsensitiveCompare(ProposalEngine.label) == .orderedSame } }
@@ -19,7 +18,7 @@ struct EditableIssue: Sendable, Equatable {
 
 /// An open issue whose title may match a new one's.
 struct IssueMatch: Sendable, Equatable {
-    var id: String
+    var id: LinearIssue.ID
     var identifier: String
     var title: String
 }
@@ -33,25 +32,25 @@ struct SpecText: Sendable, Equatable {
 /// The reads and writes in Linear that proposals need. `LinearClient` does
 /// them for real; tests stand in for it. Each write returns Linear's response.
 protocol LinearWriting: Sendable {
-    func editableIssue(id: String) async throws -> EditableIssue
+    func editableIssue(id: LinearIssue.ID) async throws -> EditableIssue
     /// Open issues in the team whose titles look like `title`, as Linear's
     /// search finds them.
-    func openIssues(like title: String, teamId: String) async throws -> [IssueMatch]
+    func openIssues(like title: String, teamId: LinearTeam.ID) async throws -> [IssueMatch]
     /// The ID of the label with this name in the team or the workspace,
     /// created in the team when there is none.
-    func labelId(named name: String, teamId: String) async throws -> String
+    func labelId(named name: String, teamId: LinearTeam.ID) async throws -> LinearLabel.ID
     func createIssue(
-        teamId: String, projectId: String?, title: String, description: String, labelIds: [String]
+        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String, labelIds: [LinearLabel.ID]
     ) async throws -> JSONValue
-    func updateIssueDescription(id: String, description: String) async throws -> JSONValue
+    func updateIssueDescription(id: LinearIssue.ID, description: String) async throws -> JSONValue
     /// Moves the issue to its team's first canceled state.
-    func closeIssue(id: String) async throws -> JSONValue
+    func closeIssue(id: LinearIssue.ID) async throws -> JSONValue
     /// Moves the issue to its team's first unstarted state, such as Todo.
-    func promoteIssue(id: String) async throws -> JSONValue
-    func createRelation(issueId: String, relatedIssueId: String, type: String) async throws -> JSONValue
+    func promoteIssue(id: LinearIssue.ID) async throws -> JSONValue
+    func createRelation(issueId: LinearIssue.ID, relatedIssueId: LinearIssue.ID, type: String) async throws -> JSONValue
     func spec(of target: ProposalTarget) async throws -> SpecText
     func updateSpec(of target: ProposalTarget, content: String) async throws -> JSONValue
-    func postProjectUpdate(projectId: String, body: String) async throws -> JSONValue
+    func postProjectUpdate(projectId: LinearProject.ID, body: String) async throws -> JSONValue
 }
 
 enum ProposalError: Error, CustomStringConvertible {
@@ -101,7 +100,7 @@ struct ProposalEngine: Sendable {
                 }
                 draft = ProposalDraft(
                     payload: .addRelation(relatedIssueId: match.id, type: "related"),
-                    target: ProposalTarget(kind: .issue, id: relatedIssueId),
+                    target: .issue(relatedIssueId),
                     reason: "\(match.identifier) already covers the proposed issue \"\(title)\". \(draft.reason)",
                     source: draft.source
                 )
@@ -192,7 +191,7 @@ struct ProposalEngine: Sendable {
         case .promoteIssue:
             let issue = try await issue(target, for: proposal)
             if let refusal = refusal(of: proposal, on: issue) { return refusal }
-            guard issue.stateType == "backlog" else {
+            guard issue.stateType == .backlog else {
                 return .changed("\(issue.identifier) is no longer in the backlog")
             }
             return .applied(try await linear.promoteIssue(id: issue.id))
@@ -216,14 +215,16 @@ struct ProposalEngine: Sendable {
             return .applied(try await linear.updateSpec(of: target, content: newText))
 
         case .postProjectUpdate(let body):
-            guard target.kind == .project else { throw ProposalError.unsupportedTarget(proposal.kind, target.kind) }
-            return .applied(try await linear.postProjectUpdate(projectId: target.id, body: body + "\n\n" + proposal.source.line))
+            guard case .project(let projectId, _) = target else {
+                throw ProposalError.unsupportedTarget(proposal.kind, target.kind)
+            }
+            return .applied(try await linear.postProjectUpdate(projectId: projectId, body: body + "\n\n" + proposal.source.line))
         }
     }
 
     private func issue(_ target: ProposalTarget, for proposal: Proposal) async throws -> EditableIssue {
-        guard target.kind == .issue else { throw ProposalError.unsupportedTarget(proposal.kind, target.kind) }
-        return try await linear.editableIssue(id: target.id)
+        guard case .issue(let id, _) = target else { throw ProposalError.unsupportedTarget(proposal.kind, target.kind) }
+        return try await linear.editableIssue(id: id)
     }
 
     /// Why a change to `issue` must not go ahead now, if it must not: the
@@ -238,6 +239,6 @@ struct ProposalEngine: Sendable {
     }
 
     private func changedNote(_ target: ProposalTarget, name: String? = nil) -> String {
-        "\(name ?? target.name ?? target.id) changed in Linear after this was proposed"
+        "\(name ?? target.name ?? target.rawID) changed in Linear after this was proposed"
     }
 }

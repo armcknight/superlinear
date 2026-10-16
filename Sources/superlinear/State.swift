@@ -318,7 +318,7 @@ struct State: Codable, Sendable {
     /// Rejects a pending proposal, so the same change is not proposed again.
     /// Returns false when no pending proposal has that ID.
     @discardableResult
-    mutating func rejectProposal(id: String, reason: String?, workspace: String, now: Date = Date()) -> Bool {
+    mutating func rejectProposal(id: Proposal.ID, reason: String?, workspace: String, now: Date = Date()) -> Bool {
         guard var proposal = proposals(workspace: workspace).first(where: { $0.id == id }),
               proposal.status == .pending
         else { return false }
