@@ -195,6 +195,15 @@ struct LinearClient: Sendable {
         return issues
     }
 
+    /// The open issues in projects, and those completed since `since`,
+    /// optionally filtered by team.
+    func fetchProjectIssues(completedSince since: Date, teamIds: [String]) async throws -> [ProjectIssue] {
+        var variables: [String: Any] = ["since": ISO8601DateFormatter().string(from: since)]
+        if teamIds.isEmpty { return try await fetchAll(.projectIssues, variables: variables) }
+        variables["teamIds"] = teamIds
+        return try await fetchAll(.projectIssuesInTeams, variables: variables)
+    }
+
     /// Runs an `issues` query, following its pages to the end.
     private func fetchAll<Node: Decodable>(_ query: LinearQuery, variables: [String: Any]) async throws -> [Node] {
         var allNodes: [Node] = []

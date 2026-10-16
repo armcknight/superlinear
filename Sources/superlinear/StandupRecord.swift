@@ -25,6 +25,9 @@ struct WorkspaceStandup: Codable, Sendable, Equatable {
     var order: [LinearIssue.ID] = []
     /// The identifiers of the issues the last standup unblocked.
     var unblocked: [LinearIssue.Identifier] = []
+    /// Proposals standups made, such as project updates, for the daemon to
+    /// store: pending, or applied already when their kind is `auto`.
+    var newProposals: [Proposal] = []
 
     init() {}
 
@@ -37,16 +40,18 @@ struct WorkspaceStandup: Codable, Sendable, Equatable {
         held = try container.decodeIfPresent([LinearIssue.ID: LinearIssue.Identifier].self, forKey: .held) ?? [:]
         order = try container.decodeIfPresent([LinearIssue.ID].self, forKey: .order) ?? []
         unblocked = try container.decodeIfPresent([LinearIssue.Identifier].self, forKey: .unblocked) ?? []
+        newProposals = try container.decodeIfPresent([Proposal].self, forKey: .newProposals) ?? []
     }
 
     /// How long proposal outcomes and shown times stay, once the daemon has
     /// long since taken them in.
     static let retention: TimeInterval = 30 * 24 * 60 * 60
 
-    /// Drops outcomes and shown times older than `retention`.
+    /// Drops outcomes, new proposals and shown times older than `retention`.
     mutating func prune(now: Date = Date()) {
         let cutoff = now.addingTimeInterval(-Self.retention)
         proposalOutcomes.removeAll { ($0.decidedAt ?? now) < cutoff }
+        newProposals.removeAll { $0.createdAt < cutoff }
         proposalsShownAt = proposalsShownAt.filter { $0.value >= cutoff }
     }
 

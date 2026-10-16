@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Project updates and milestone forecasts. At the end of each standup,
+  superlinear proposes a `postProjectUpdate` for each project with activity
+  since the last one: issues completed, pull requests merged, decisions
+  entered, issues that need a human, each milestone's forecast, and the
+  project's health. The forecast schedules the open issues of the
+  workspace's projects with the median agent time and median time from
+  start to merge of the last 30 completed issues, at most
+  `maxConcurrentAgents` at once, in dependency order. A milestone is
+  `onTrack`, `atRisk` when forecast after its target date, or `offTrack`
+  once the target date has passed. The standup's risks list the milestones
+  at risk or off track.
+
 - `superlinear standup`, an interactive review in the terminal: what
   superlinear did since the last standup; pull requests waiting on you,
   those holding back the most work first, by stack; pending proposals to

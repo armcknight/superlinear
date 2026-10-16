@@ -99,10 +99,10 @@ extension LinearClient: LinearWriting {
         }
     }
 
-    func postProjectUpdate(projectId: LinearProject.ID, body: String) async throws -> JSONValue {
-        try await mutate(
-            .postProjectUpdate, variables: ["projectId": projectId.rawValue, "body": body], field: "projectUpdateCreate"
-        )
+    func postProjectUpdate(projectId: LinearProject.ID, body: String, health: ProjectHealth?) async throws -> JSONValue {
+        var variables: [String: Any] = ["projectId": projectId.rawValue, "body": body]
+        if let health { variables["health"] = health.rawValue }
+        return try await mutate(.postProjectUpdate, variables: variables, field: "projectUpdateCreate")
     }
 }
 

@@ -111,11 +111,13 @@ enum ProposalTarget: Codable, Sendable, Equatable, Hashable {
 struct ProposalSource: Codable, Sendable, Equatable {
     enum Kind: String, Codable, Sendable {
         case pullRequest, commitRange, agentSession
+        /// A standup, by its day.
+        case standup
     }
 
     var kind: Kind
-    /// The pull request URL, the commit range such as `abc123..def456`, or
-    /// the agent's session ID.
+    /// The pull request URL, the commit range such as `abc123..def456`, the
+    /// agent's session ID, or the standup's day.
     var value: String
     /// A link to the commit range or the session, when there is one. A pull
     /// request's value is its link.
@@ -129,6 +131,7 @@ struct ProposalSource: Codable, Sendable, Equatable {
         case .pullRequest: value
         case .commitRange: "commits \(value)"
         case .agentSession: "agent session \(value)"
+        case .standup: "standup of \(value)"
         }
         guard let link, link != text else { return "Source: \(text)" }
         return "Source: [\(text)](\(link))"
@@ -153,7 +156,8 @@ enum ProposalPayload: Codable, Sendable, Equatable {
     case addRelation(relatedIssueId: LinearIssue.ID, type: String)
     case promoteIssue
     case changeSpec(oldText: String, newText: String)
-    case postProjectUpdate(body: String)
+    /// `health` is absent when no milestone of the project has one.
+    case postProjectUpdate(body: String, health: ProjectHealth?)
 
     var kind: ProposalKind {
         switch self {
@@ -228,7 +232,8 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
 
     /// What makes two proposals the same, for refusing one rejected or
     /// pending already: the kind and target, and for a new issue its title,
-    /// for a relation the other issue, since one team or issue gets many.
+    /// for a relation the other issue, and for a project update its text,
+    /// since one team, issue or project gets many.
     var sameness: String { Self.sameness(payload, target) }
 
     static func sameness(_ payload: ProposalPayload, _ target: ProposalTarget) -> String {
@@ -238,6 +243,8 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
             key += " " + TitleMatch.normalized(title)
         case .addRelation(let relatedIssueId, let type):
             key += " \(type) \(relatedIssueId)"
+        case .postProjectUpdate(let body, _):
+            key += " " + body
         default:
             break
         }

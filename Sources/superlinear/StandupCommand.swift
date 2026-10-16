@@ -349,7 +349,16 @@ enum StandupCommand {
 
         for (index, workspace) in workspaces.enumerated() {
             let workspaceState = state.workspaces[workspace.name] ?? WorkspaceState()
-            let view = await gather(workspace, state: workspaceState, standup: record[workspace.name], full: !printOnly)
+            let since = Standup.since(record[workspace.name], now: Date())
+            var forecast: ProjectForecast?
+            if !printOnly {
+                forecast = await ProjectForecast.gather(
+                    workspace, state: workspaceState, agents: config.maxConcurrentAgents, since: since)
+            }
+            var view = await gather(
+                workspace, state: workspaceState, standup: record[workspace.name], full: !printOnly,
+                milestones: forecast?.milestones ?? [])
+            view.warnings += forecast?.warnings ?? []
             if printOnly {
                 io.say((index > 0 ? "\n" : "") + view.rendered(sections: StandupView.printedSections))
                 continue
@@ -368,9 +377,18 @@ enum StandupCommand {
                 linear: LinearClient(apiKey: workspace.apiKey),
                 specDocument: workspace.planning.specDocumentId
             )
-            let outcome = await applier.apply(session, state: workspaceState, standup: record[workspace.name])
-            let summary = outcome.summary
+            let now = Date()
+            let outcome = await applier.apply(session, state: workspaceState, standup: record[workspace.name], now: now)
+            var summary = outcome.summary
             record[workspace.name] = outcome.standup
+            if let forecast {
+                let decisions = outcome.standup.decisions.filter { $0.time == now }
+                let made = await forecast.proposeUpdates(
+                    engine: applier.engine, existing: workspaceState.proposals + record[workspace.name].newProposals,
+                    decisions: decisions, needsHuman: workspaceState.needsHuman, since: view.since, now: now)
+                record[workspace.name].newProposals += made.proposals
+                summary += made.summary
+            }
             do {
                 try record.save()
             } catch {
@@ -384,9 +402,11 @@ enum StandupCommand {
     }
 
     /// The view of one workspace. `full` adds what only the interactive
-    /// standup shows: pull requests waiting on the owner, the backlog, and risks.
+    /// standup shows: pull requests waiting on the owner, the backlog, and
+    /// risks, among them the `milestones` forecast to be late.
     static func gather(
-        _ workspace: WorkspaceConfig, state: WorkspaceState, standup: WorkspaceStandup, full: Bool, now: Date = Date()
+        _ workspace: WorkspaceConfig, state: WorkspaceState, standup: WorkspaceStandup, full: Bool,
+        milestones: [MilestoneForecast] = [], now: Date = Date()
     ) async -> StandupView {
         let client = LinearClient(apiKey: workspace.apiKey)
         var warnings: [String] = []
@@ -425,11 +445,13 @@ enum StandupCommand {
         } catch {
             view.warnings.append("Could not list open pull requests: \(error)")
         }
-        view.risks = risks(repoPath: repoPath, now: now, warnings: &view.warnings)
+        view.risks = risks(repoPath: repoPath, milestones: milestones, now: now, warnings: &view.warnings)
         return view
     }
 
-    private static func risks(repoPath: String, now: Date, warnings: inout [String]) -> [String] {
+    private static func risks(
+        repoPath: String, milestones: [MilestoneForecast], now: Date, warnings: inout [String]
+    ) -> [String] {
         let branch = Git.run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: repoPath)
             .map { String($0.dropFirst("origin/".count)) }
         var latest: Standup.DefaultBranchRun?
@@ -449,7 +471,8 @@ enum StandupCommand {
         } catch {
             warnings.append("Could not check GitHub's rate limit: \(error)")
         }
-        return Standup.risks(defaultBranch: branch, latestRun: latest, rateLimit: rateLimit, now: now)
+        return Standup.risks(
+            defaultBranch: branch, latestRun: latest, rateLimit: rateLimit, milestones: milestones, now: now)
     }
 
     /// The GraphQL limit, which `gh pr list` spends, from `gh api rate_limit`.

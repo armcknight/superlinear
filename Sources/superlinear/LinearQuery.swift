@@ -41,6 +41,10 @@ enum LinearQuery: CaseIterable, Sendable {
     case changeProjectSpec
     case changeDocumentSpec
     case postProjectUpdate
+    /// Issues in a project, open or completed since a time, in any team.
+    case projectIssues
+    /// Issues in a project, open or completed since a time, in some teams.
+    case projectIssuesInTeams
 
     var text: String {
         switch self {
@@ -115,6 +119,7 @@ enum LinearQuery: CaseIterable, Sendable {
                   title
                   branchName
                   state { name type }
+                  startedAt
                 }
                 pageInfo { hasNextPage endCursor }
               }
@@ -243,12 +248,63 @@ enum LinearQuery: CaseIterable, Sendable {
             }
             """
         case .postProjectUpdate: """
-            mutation PostProjectUpdate($projectId: String!, $body: String!) {
-              projectUpdateCreate(input: { projectId: $projectId, body: $body }) { success projectUpdate { id url } }
+            mutation PostProjectUpdate($projectId: String!, $body: String!, $health: ProjectUpdateHealthType) {
+              projectUpdateCreate(input: { projectId: $projectId, body: $body, health: $health }) {
+                success
+                projectUpdate { id url }
+              }
+            }
+            """
+        case .projectIssues: """
+            query ProjectIssues($since: DateTimeOrDuration, $cursor: String) {
+              issues(
+                filter: {
+                  project: { null: false }
+                  or: [{ state: { type: { nin: ["completed", "canceled"] } } }, { completedAt: { gte: $since } }]
+                }
+                first: 25
+                after: $cursor
+              ) {
+            \(Self.projectIssueFields)
+              }
+            }
+            """
+        case .projectIssuesInTeams: """
+            query ProjectIssues($since: DateTimeOrDuration, $teamIds: [ID!], $cursor: String) {
+              issues(
+                filter: {
+                  project: { null: false }
+                  team: { id: { in: $teamIds } }
+                  or: [{ state: { type: { nin: ["completed", "canceled"] } } }, { completedAt: { gte: $since } }]
+                }
+                first: 25
+                after: $cursor
+              ) {
+            \(Self.projectIssueFields)
+              }
             }
             """
         }
     }
+
+    /// What project updates and milestone forecasts read of an issue.
+    private static let projectIssueFields = """
+        nodes {
+          id
+          identifier
+          title
+          branchName
+          priority
+          sortOrder
+          startedAt
+          completedAt
+          state { type }
+          project { id name }
+          projectMilestone { id name targetDate sortOrder }
+          inverseRelations(first: 50) { nodes { type issue { id identifier state { type } } } }
+        }
+        pageInfo { hasNextPage endCursor }
+    """
 
     /// What it takes to decide whether, and in what order, an agent starts
     /// on an issue. Pages are smaller than elsewhere, as the nested labels and

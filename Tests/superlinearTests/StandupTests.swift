@@ -54,7 +54,7 @@ private actor FakeLinear: StandupWriting {
         return written("spec \(target.rawID)")
     }
 
-    func postProjectUpdate(projectId: LinearProject.ID, body: String) async throws -> JSONValue {
+    func postProjectUpdate(projectId: LinearProject.ID, body: String, health: ProjectHealth?) async throws -> JSONValue {
         written("update \(projectId)")
     }
 

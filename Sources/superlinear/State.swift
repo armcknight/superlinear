@@ -385,8 +385,15 @@ struct State: Codable, Sendable {
 
     /// Takes in what standups decided about the workspace's proposals: the
     /// time each was first shown, and the outcome of each one decided. A
-    /// proposal no longer pending keeps what became of it.
-    mutating func takeIn(_ standup: WorkspaceStandup, workspace: String) {
+    /// proposal no longer pending keeps what became of it. Proposals a
+    /// standup made are added once; those older than the standup record
+    /// keeps them are not, as the state file may have dropped them already.
+    mutating func takeIn(_ standup: WorkspaceStandup, workspace: String, now: Date = Date()) {
+        let known = Set(proposals(workspace: workspace).map(\.id))
+        let cutoff = now.addingTimeInterval(-WorkspaceStandup.retention)
+        for proposal in standup.newProposals where !known.contains(proposal.id) && proposal.createdAt >= cutoff {
+            recordProposal(proposal, workspace: workspace)
+        }
         guard var proposals = workspaces[workspace]?.proposals else { return }
         let outcomes = Dictionary(standup.proposalOutcomes.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         for index in proposals.indices {

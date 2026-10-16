@@ -79,8 +79,9 @@ enum ProposalsCommand {
             return LineDiff.lines(from: old, to: new)
         case .addRelation(let relatedIssueId, let type):
             return ["\(type) \(relatedIssueId)"]
-        case .postProjectUpdate(let body):
-            return body.split(separator: "\n", omittingEmptySubsequences: false).map { "| \($0)" }
+        case .postProjectUpdate(let body, let health):
+            return ["health: \(health?.rendered ?? "none")"]
+                + body.split(separator: "\n", omittingEmptySubsequences: false).map { "| \($0)" }
         case .closeIssue, .promoteIssue:
             return []
         }

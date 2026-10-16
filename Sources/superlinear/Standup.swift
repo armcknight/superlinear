@@ -304,7 +304,8 @@ enum Standup {
 
     /// Section 6.
     static func risks(
-        defaultBranch: String?, latestRun: DefaultBranchRun?, rateLimit: RateLimit?, now: Date = Date()
+        defaultBranch: String?, latestRun: DefaultBranchRun?, rateLimit: RateLimit?,
+        milestones: [MilestoneForecast] = [], now: Date = Date()
     ) -> [String] {
         var risks: [String] = []
         if let defaultBranch, let run = latestRun, run.status == .completed,
@@ -317,8 +318,8 @@ enum Standup {
             risks.append("GitHub rate limit: \(rateLimit.remaining) of \(rateLimit.limit) left, "
                 + "resets \(StatusTime.rendered(rateLimit.reset, now: now))")
         }
-        // TODO: SPL-26 adds budgets, and SPL-13 milestone forecasts; list
-        // budgets used and milestones forecast to be late here.
+        risks += ProjectUpdates.risks(milestones)
+        // TODO: SPL-26 adds budgets; list budgets used here.
         return risks
     }
 

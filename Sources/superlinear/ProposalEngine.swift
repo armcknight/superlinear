@@ -50,7 +50,7 @@ protocol LinearWriting: Sendable {
     func createRelation(issueId: LinearIssue.ID, relatedIssueId: LinearIssue.ID, type: String) async throws -> JSONValue
     func spec(of target: ProposalTarget) async throws -> SpecText
     func updateSpec(of target: ProposalTarget, content: String) async throws -> JSONValue
-    func postProjectUpdate(projectId: LinearProject.ID, body: String) async throws -> JSONValue
+    func postProjectUpdate(projectId: LinearProject.ID, body: String, health: ProjectHealth?) async throws -> JSONValue
 }
 
 enum ProposalError: Error, CustomStringConvertible {
@@ -214,11 +214,12 @@ struct ProposalEngine: Sendable {
             if changed { return .changed(changedNote(target)) }
             return .applied(try await linear.updateSpec(of: target, content: newText))
 
-        case .postProjectUpdate(let body):
+        case .postProjectUpdate(let body, let health):
             guard case .project(let projectId, _) = target else {
                 throw ProposalError.unsupportedTarget(proposal.kind, target.kind)
             }
-            return .applied(try await linear.postProjectUpdate(projectId: projectId, body: body + "\n\n" + proposal.source.line))
+            return .applied(try await linear.postProjectUpdate(
+                projectId: projectId, body: body + "\n\n" + proposal.source.line, health: health))
         }
     }
 
