@@ -6,7 +6,10 @@
       "apiKey": "lin_api_YOUR_KEY_HERE",
       "repoPath": "~/Code/my-project",
       "teamIds": [],
-      "pollIntervalSeconds": 60
+      "pollIntervalSeconds": 60,
+      "selection": "new",
+      "readyStates": ["unstarted"],
+      "humanLabels": ["Needs human", "Spike"]
     }
   ]
 }
