@@ -9,6 +9,7 @@ enum Command: Equatable {
     case status(configPath: String?)
     case proposals(configPath: String?, workspace: String?)
     case standup(configPath: String?, workspace: String?, printOnly: Bool)
+    case resume
     case plan(configPath: String?, workspace: String?)
     case version
     case help
@@ -25,6 +26,9 @@ enum Command: Equatable {
                 force = true
             }
             return .install(force: force)
+        case "resume":
+            if let extra = rest.dropFirst().first { return .invalid("unknown option for resume: \(extra)") }
+            return .resume
         case "uninstall":
             if let extra = rest.dropFirst().first { return .invalid("unknown option for uninstall: \(extra)") }
             return .uninstall

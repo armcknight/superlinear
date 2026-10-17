@@ -22,6 +22,8 @@ struct ArgumentsTests {
         #expect(Command.parse(["proposals"]) == .proposals(configPath: nil, workspace: nil))
         #expect(Command.parse(["proposals", "--workspace", "w", "--config", "/c.json"])
             == .proposals(configPath: "/c.json", workspace: "w"))
+        #expect(Command.parse(["resume"]) == .resume)
+        #expect(Command.parse(["resume", "--now"]) == .invalid("unknown option for resume: --now"))
         #expect(Command.parse(["--version"]) == .version)
         #expect(Command.parse(["-h"]) == .help)
     }

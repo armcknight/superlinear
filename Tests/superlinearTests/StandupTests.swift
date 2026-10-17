@@ -276,9 +276,11 @@ struct StandupSectionTests {
     @Test("Risks list CI failing on the default branch and a low rate limit")
     func risks() {
         let failing = Standup.DefaultBranchRun(status: .completed, conclusion: .failure, url: "https://ci/1", workflowName: "ci")
+        let noPauses = Standup.Pauses(claude: nil, waiting: [], spendingLimit: nil)
         let risks = Standup.risks(
             defaultBranch: "main", latestRun: failing,
-            rateLimit: Standup.RateLimit(remaining: 100, limit: 5000, reset: now.addingTimeInterval(600)), now: now
+            rateLimit: Standup.RateLimit(remaining: 100, limit: 5000, reset: now.addingTimeInterval(600)),
+            pauses: noPauses, now: now
         )
         #expect(risks.count == 2)
         #expect(risks[0] == "CI failure on main (ci): https://ci/1")
@@ -286,7 +288,7 @@ struct StandupSectionTests {
         let passing = Standup.DefaultBranchRun(status: .completed, conclusion: .success)
         #expect(Standup.risks(
             defaultBranch: "main", latestRun: passing,
-            rateLimit: Standup.RateLimit(remaining: 4000, limit: 5000, reset: now), now: now
+            rateLimit: Standup.RateLimit(remaining: 4000, limit: 5000, reset: now), pauses: noPauses, now: now
         ).isEmpty)
     }
 
@@ -303,7 +305,10 @@ struct StandupSectionTests {
             Standup.DefaultBranchRun(status: .completed, conclusion: .timedOut),
             Standup.DefaultBranchRun(status: .unknown),
         ])
-        #expect(Standup.risks(defaultBranch: "main", latestRun: runs[1], rateLimit: nil) == ["CI timed_out on main"])
+        #expect(Standup.risks(
+            defaultBranch: "main", latestRun: runs[1], rateLimit: nil,
+            pauses: Standup.Pauses(claude: nil, waiting: [], spendingLimit: nil), now: now
+        ) == ["CI timed_out on main"])
     }
 
     @Test("The rate limit is read from gh api rate_limit")

@@ -29,6 +29,9 @@ Your task:
 Work autonomously. Do not pause to ask questions. If you encounter ambiguity, make a reasonable \
 decision and document it in the PR description.
 
+If CI jobs did not start because of GitHub's spending limit or a billing problem, that is not a \
+failure to fix: do not change code for it, stop monitoring CI, and say so in the pull request description.
+
 \(followUpInstructions)
 """
 
@@ -54,6 +57,9 @@ func reviewPrompt(for review: ReviewRequest) -> String {
     4. Run /armcknight-claude:commit to stage and commit your changes, then push the branch.
     5. Update the pull request description with `gh pr edit` if the changes make it out of date.
     6. Monitor CI until all checks pass, fixing breakages as they come.
+
+    If CI jobs did not start because of GitHub's spending limit or a billing problem, that is not a \
+    failure to fix: do not change code for it, stop monitoring CI, and say so in the pull request description.
 
     Do not reply to the review or post comments on GitHub. If every point is already addressed, \
     stop. If you encounter ambiguity, make a reasonable decision and document it in the pull \
@@ -88,6 +94,9 @@ func conflictPrompt(for conflict: ConflictRequest) -> String {
     5. Push the branch.
     6. Update the pull request description with `gh pr edit` if the merge makes it out of date.
     7. Monitor CI until all checks pass, fixing breakages as they come.
+
+    If CI jobs did not start because of GitHub's spending limit or a billing problem, that is not a \
+    failure to fix: do not change code for it, stop monitoring CI, and say so in the pull request description.
 
     Do not post comments on GitHub. If the branch already merges cleanly with `origin/\(base)`, \
     stop. If you encounter ambiguity, make a reasonable decision and document it in the pull \
@@ -267,12 +276,15 @@ struct AgentRunner: Sendable {
         claudeSessionExists(run.sessionId) ? .resume : .start
     }
 
-    /// The waiting run to launch next: the new issue a standup moved
-    /// furthest up, by `rank`, then the run queued longest ago.
+    /// The waiting run to launch next: one the Claude usage limit stopped,
+    /// then the new issue a standup moved furthest up, by `rank`, then the
+    /// run queued longest ago.
     static func nextQueued<Key>(
         _ runs: [(Key, AgentRun)], rank: (Key, AgentRun) -> Int? = { _, _ in nil }
     ) -> (Key, AgentRun)? {
         runs.filter { $0.1.isQueued }.min { a, b in
+            let (limitedA, limitedB) = (a.1.usageLimited == true, b.1.usageLimited == true)
+            if limitedA != limitedB { return limitedA }
             let rankA = (a.1.isFresh ? rank(a.0, a.1) : nil) ?? .max
             let rankB = (b.1.isFresh ? rank(b.0, b.1) : nil) ?? .max
             if rankA != rankB { return rankA < rankB }
@@ -300,6 +312,21 @@ struct AgentRunner: Sendable {
         }
         return source
     }
+
+    /// The Claude usage limit message the run's session ended with, if it
+    /// did: the end of its log, written by `work`, which starts the log
+    /// afresh for a new session and appends to it for a resumed one.
+    func usageLimitHit(for run: AgentRun, now: Date) -> ClaudeUsageLimit.Hit? {
+        guard let handle = FileHandle(forReadingAtPath: agentLog(for: run)) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > Self.logTailSize ? size - Self.logTailSize : 0)
+        guard let data = try? handle.readToEnd() else { return nil }
+        return ClaudeUsageLimit.hit(in: String(decoding: data, as: UTF8.self), now: now, timeZone: .current)
+    }
+
+    /// How much of the end of an agent's log is searched for the usage limit.
+    static let logTailSize: UInt64 = 8 * 1024
 
     /// Removes the files a finished run leaves behind.
     func cleanUp(_ run: AgentRun) {
