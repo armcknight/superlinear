@@ -24,15 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restart. `superlinear plan [--workspace W]` runs one now, and the
   standup offers to when something changed since the last, with that
   job's token use.
-- The content of the `armcknight/templates` repository, in `templates/` until
-  that repository is published: the component manifest format
+- The [`armcknight/templates`](https://github.com/armcknight/templates)
+  repository: the component manifest format
   (`component.toml`) with its JSON Schema and a validator, and the first
   component, `apple-app`, with shared `test` and `beta` fastlane lanes for
-  iOS, tvOS and macOS, the reusable `apple-test.yml` and `apple-beta.yml`
-  workflows, a Makefile fragment, and a scaffold. CI validates the manifests
+  iOS, tvOS and macOS and a `stage` lane for iOS, a Makefile fragment whose
+  `deploy-beta` target cuts a release candidate and uploads it to TestFlight
+  by hand, and a scaffold whose workflows call `ios-ci.yml`, `ota-refresh.yml`
+  and `ota-cleanup.yml` from `armcknight/workflows` for pull request tests and
+  on-demand staging builds. A manifest's secret can be `local`: kept in the
+  owner's Keychain, never set as a GitHub secret. CI validates the manifests
   against the guide's `docs/anchors.md` and checks the links. The guide's
-  components, manifests, nightly TestFlight builds and build numbers sections
-  are filled in.
+  components, manifests, TestFlight builds and build numbers sections are
+  filled in.
 
 - The superlinear guide, in `docs/`: the life of an issue, planning,
   bootstrap, builds, configuration and operations. The README is now an

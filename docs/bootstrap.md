@@ -9,15 +9,15 @@ The guide's sections here describe work that is planned. Each one that is not bu
 
 A component is a reusable part of a project: `apple-app`, and later `swift-cli`, `vapor-fly`, `supabase` and `web-frontend`. A project can use more than one, such as an Apple app and a Vapor server in one repository.
 
-Components live in the [armcknight/templates](https://github.com/armcknight/templates) repository. Until it is published, its content is in [templates/](../templates/README.md) in this repository, where CI validates it. Each component has a directory, `components/<name>/`, with:
+Components live in the [armcknight/templates](https://github.com/armcknight/templates) repository. Each component has a directory, `components/<name>/`, with:
 
 - `component.toml`, its [manifest](#manifests);
 - `scaffold/`, files copied one time into a project, never over a file that exists, including a README with the generated "How this project is built" section's markers;
 - `CLAUDE.md`, conventions for agents, which the project's `CLAUDE.md` includes.
 
-The pieces that projects share — reusable workflows, fastlane lanes and Makefile fragments — are at the top of the templates repository. Releases are tags, `v1`, `v1.1`; projects refer to a tag, never to `main`.
+The pieces that projects share — fastlane lanes and Makefile fragments — are at the top of the templates repository. Releases are tags, `v1`, `v1.1`; projects refer to a tag, never to `main`. Reusable GitHub workflows are in [armcknight/workflows](https://github.com/armcknight/workflows), which projects call at its major tag, such as `@4`.
 
-The first component is `apple-app`: an iOS app, with an optional embedded watch app, a tvOS app or a macOS app. It brings the shared `test` and `beta` lanes, the `apple-test.yml` workflow for pull requests and the `apple-beta.yml` workflow for [nightly TestFlight builds](builds.md#nightly-testflight).
+The first component is `apple-app`: an iOS app, with an optional embedded watch app, a tvOS app or a macOS app. It brings the shared `test`, `stage` and `beta` lanes, and workflows that call `ios-ci.yml` from [armcknight/workflows](https://github.com/armcknight/workflows) for pull requests and staging builds. The owner uploads to TestFlight by hand with `make deploy-beta`: see [TestFlight builds](builds.md#testflight).
 
 <a id="manifests"></a>
 ## Manifests
@@ -25,13 +25,13 @@ The first component is `apple-app`: an iOS app, with an optional embedded watch 
 Each component's `component.toml` says:
 
 - `detect`: how to know from its files that a repository uses the component, such as an `.xcodeproj` with an application target. Each rule is a file glob, optionally with a pattern the file must contain.
-- `inputs`: the values that differ per project, such as the bundle ID and the team ID, each with an example, and `infer`: where to read it in the repository — a build setting, a key in `fastlane/Appfile`, a field in a TOML file, a file's path or a pattern in a file. An input that is not found is asked for one time.
-- `secrets`: the GitHub Actions secrets by name, where each value comes from, who it is shared with, the step a person must do to make it, and how often to rotate it. See [Secrets](#secrets).
+- `inputs`: the values that differ per project, such as the bundle ID and the team ID, each with an example, and `infer`: where to read it in the repository — a build setting, a key in `fastlane/Appfile`, a field in a TOML or YAML file, a file's path or a pattern in a file. An input that is not found is asked for one time.
+- `secrets`: the secrets by name, where each value comes from, who it is shared with, the step a person must do to make it, and how often to rotate it. Most are GitHub Actions secrets. A `local` one, such as the App Store Connect API key, stays in the owner's Keychain and is never a GitHub secret. See [Secrets](#secrets).
 - `steps`: in order, a `check` command for each and a `fix`, which is a command or the text of a [Needs human step](#needs-human-steps).
-- `shared`: the shared pieces the component uses, with their paths and the tags they changed in.
+- `shared`: the shared pieces the component uses, with their repositories, paths and tags.
 - `docs`: the anchors in this guide that explain the component, from [Anchors](anchors.md).
 
-The [templates repository's README](../templates/README.md#the-manifest) describes each field, and [its JSON Schema](../templates/schema/component.schema.json) is the full format.
+The [templates repository's README](https://github.com/armcknight/templates/blob/main/README.md#the-manifest) describes each field, and [its JSON Schema](https://github.com/armcknight/templates/blob/main/schema/component.schema.json) is the full format.
 
 <a id="secrets"></a>
 ## Secrets and where they come from

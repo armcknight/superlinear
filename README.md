@@ -26,7 +26,7 @@ The details are in [the superlinear guide](docs/index.md):
 - [The life of an issue](docs/lifecycle.md): selection and the ready gate, the agent, the pull request, reviews, conflicts, the merge, completion.
 - [Planning](docs/planning.md): proposals and trust levels, the planning job, follow-ups from agents, the standup, project updates.
 - [Bootstrap](docs/bootstrap.md): components, manifests, secrets, Needs human steps, `bootstrap --check`.
-- [Builds](docs/builds.md): CI, nightly TestFlight builds, build numbers, the release rule, TestFlight feedback.
+- [Builds](docs/builds.md): CI, staging and TestFlight builds, build numbers, the release rule, TestFlight feedback.
 - [Configuration](docs/configuration.md): every config key, and the files superlinear reads and writes.
 - [Operations](docs/operations.md): installing and running the daemon, `superlinear status`, make targets, releases.
 
