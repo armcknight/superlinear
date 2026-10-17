@@ -51,3 +51,17 @@ enum StartedIssueSweep {
         return latest
     }
 }
+
+/// The agents recovered after the Claude usage limit stopped them, by issue
+/// ID, with when each one's log was last written, so each log is recovered
+/// once.
+struct UsageLimitRecoveries {
+    private var logs: [String: Date] = [:]
+
+    /// Whether to recover `issueId`'s agent now, recording it when so.
+    mutating func claim(issueId: String, logModified: Date?) -> Bool {
+        guard let logModified, logs[issueId] != logModified else { return false }
+        logs[issueId] = logModified
+        return true
+    }
+}

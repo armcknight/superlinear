@@ -293,6 +293,9 @@ struct WorkspaceProcessor: Sendable {
             processed: await daemon.processedIssueIds(workspace: workspace.name), tracked: tracked
         ) { runner.usageLimitHit(identifier: $0, now: now) != nil }
         for issue in stopped {
+            guard await daemon.claimUsageLimitRecovery(
+                issueId: issue.id, logModified: runner.agentLogModified(identifier: issue.identifier))
+            else { continue }
             let session = FollowUpFile.worktree(branch: issue.branchName, repoPath: repoPath)
                 .flatMap(runner.latestClaudeSession(inWorktree:))
             await daemon.requeueStoppedAtUsageLimit(issue, sessionId: session, workspace: workspace)
@@ -444,8 +447,10 @@ struct WorkspaceProcessor: Sendable {
         // A daemon from before the Claude pause took the reviews of an agent
         // that the usage limit stopped as addressed. One more agent reads them.
         let runner = AgentRunner()
+        let logModified = runner.agentLogModified(identifier: pending.identifier)
         if runner.usageLimitHit(identifier: pending.identifier, now: Date()) != nil,
-           PullRequestReview.stoppedAtUsageLimit(reviews, by: login, logWrittenAt: runner.agentLogModified(identifier: pending.identifier)) {
+           PullRequestReview.stoppedAtUsageLimit(reviews, by: login, logWrittenAt: logModified),
+           await daemon.claimUsageLimitRecovery(issueId: pending.issueId, logModified: logModified) {
             log("\(pending.identifier)'s last agent stopped at the Claude usage limit; queuing its reviews on \(pullRequest.url) again")
             await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
             return .queued

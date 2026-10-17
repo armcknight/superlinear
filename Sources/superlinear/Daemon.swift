@@ -28,6 +28,8 @@ actor Daemon {
     /// Until when a GitHub rate limit is used up. Polls skip their GitHub
     /// work until then.
     private var gitHubPausedUntil: Date?
+    /// The agents recovered after the usage limit stopped them.
+    private var usageLimitRecoveries = UsageLimitRecoveries()
     /// What standups decided, read again at each poll.
     private var standups: StandupRecord
     /// Whether each workspace's repository is private, once looked up. Only
@@ -154,6 +156,14 @@ actor Daemon {
         log("\(issue.identifier) stopped at the Claude usage limit before it could be paused; queued again, it \(how)", workspace: workspace.name)
         save()
         fillSlots()
+    }
+
+    /// Whether to recover the agent for `issueId` that stopped at the usage
+    /// limit, given when its log was last written. Each log is recovered
+    /// once: a relaunch that fails before it writes the log again leaves the
+    /// old limit message, which would otherwise queue the issue every poll.
+    func claimUsageLimitRecovery(issueId: String, logModified: Date?) -> Bool {
+        usageLimitRecoveries.claim(issueId: issueId, logModified: logModified)
     }
 
     /// Issues the daemon queued an agent for.

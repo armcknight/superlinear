@@ -85,4 +85,18 @@ struct StartedIssueSweepTests {
         ) { $0.rawValue != "finished" }
         #expect(found.map(\.id) == ["stopped"])
     }
+
+    @Test("Each stopped agent's log is recovered once")
+    func recoveredOnce() {
+        var recoveries = UsageLimitRecoveries()
+        let log = Date(timeIntervalSince1970: 100)
+        let claims = [
+            recoveries.claim(issueId: "a", logModified: log),
+            recoveries.claim(issueId: "a", logModified: log),
+            recoveries.claim(issueId: "b", logModified: log),
+            recoveries.claim(issueId: "a", logModified: Date(timeIntervalSince1970: 200)),
+            recoveries.claim(issueId: "c", logModified: nil),
+        ]
+        #expect(claims == [true, false, true, true, false])
+    }
 }

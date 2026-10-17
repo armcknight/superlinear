@@ -111,7 +111,7 @@ A daemon from before this pause took an agent that the limit stopped for one tha
 - A started issue the daemon queued, with no run or merge watch and no pull request from its branch, whose log ends with the limit message, is queued again ahead of the others. It resumes the newest Claude session of its worktree, so uncommitted work there carries on, or starts a new session on the same branch when there is none. It is not a new start: the issue is not moved in Linear again.
 - An issue awaiting its merge whose log ends with the limit message, and whose pull request's latest review from you asks for changes and came before that log, gets one more agent for its reviews: the stopped agent was answering them, and the old daemon counted them as answered.
 
-If the limit is still on, the relaunched session ends with the limit message, and the pause above takes over.
+Each log is recovered once: an agent whose relaunch fails before it writes its log again is not queued again for the same message. If the limit is still on, the relaunched session ends with the limit message, and the pause above takes over.
 
 <a id="spending-limit"></a>
 ### The GitHub Actions spending limit
