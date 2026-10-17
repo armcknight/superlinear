@@ -144,6 +144,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The summary that ended `superlinear status` is now its own command,
+  `superlinear stats`: the counts of each section across workspaces, the
+  measures per pull request with medians and histograms, the totals over
+  every tracked task, and the figures by project. `status` no longer reads
+  the Claude transcripts, lists the CI runs or diffs the open branches, so
+  it is quicker; `stats` does, and warns when a local base branch is ahead
+  of origin.
 - A pending proposal expires `proposalExpiryDays` after the first standup
   that showed it, not after it was made.
 - The first poll of a workspace with no state, in `new` mode, starts nothing

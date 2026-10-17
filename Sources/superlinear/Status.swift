@@ -117,15 +117,17 @@ struct TaskEntry: Sendable, Equatable {
     var ciTime: TimeInterval? = nil
 }
 
-/// What `superlinear status` prints for one workspace.
+/// What `superlinear status` prints for one workspace, and what
+/// `superlinear stats` measures.
 struct WorkspaceReport: Sendable {
     let name: String
-    let entries: [TaskEntry]
+    var entries: [TaskEntry]
     /// Open pull requests belonging to Linear issues, whether or not the
     /// daemon is tracking the issue. Nil when GitHub or Linear could not be
     /// asked, in which case open pull requests show only among the tasks.
     var reviews: [ReviewEntry]? = nil
-    /// The agents' open and merged pull requests, for the summary.
+    /// The agents' open and merged pull requests, for `superlinear stats`.
+    /// Empty until `measured`.
     var pullRequestStats: [PullRequestStats] = []
     /// Local branches and worktrees no longer needed.
     var stale: [StaleBranch] = []
@@ -292,10 +294,9 @@ struct WorkspaceReport: Sendable {
     }
 
     /// Gathers the report for one workspace from the state file, Linear and
-    /// GitHub. Never throws: what cannot be fetched becomes a warning.
-    static func gather(
-        workspace: WorkspaceConfig, state: State, runner: AgentRunner, transcripts: Transcripts
-    ) async -> WorkspaceReport {
+    /// GitHub. Never throws: what cannot be fetched becomes a warning. What
+    /// the tasks took is left for `measured`.
+    static func gather(workspace: WorkspaceConfig, state: State, runner: AgentRunner) async -> WorkspaceReport {
         let workspaceState = state.workspaces[workspace.name] ?? WorkspaceState()
         var warnings: [String] = []
 
@@ -332,42 +333,7 @@ struct WorkspaceReport: Sendable {
             warnings.append("Could not list open pull requests for review: \(error)")
         }
 
-        var tasks = entries(state: workspaceState, issues: issues, pullRequests: pullRequests, runner: runner)
-        var ciTimes: [String: TimeInterval]?
-        if !tasks.isEmpty || reviews?.isEmpty == false {
-            do {
-                    let runs = try WorkflowRun.list(in: repoPath)
-                // A repository without CI has no CI time, rather than none per task.
-                if !runs.isEmpty { ciTimes = WorkflowRun.time(byBranch: runs) }
-            } catch {
-                warnings.append("Could not list CI runs: \(error)")
-            }
-        }
-        for index in tasks.indices {
-            tasks[index].usage = transcripts.usage(forBranch: tasks[index].branch)
-            if let ciTimes { tasks[index].ciTime = ciTimes[tasks[index].branch] ?? 0 }
-        }
-
-        var stats = PullRequestStats.of(tasks: tasks, reviews: reviews ?? []) { branch in
-            (transcripts.usage(forBranch: branch), ciTimes.map { $0[branch] ?? 0 })
-        }
-        // Merged branches are in their base already, so only open ones can
-        // be measured locally.
-        for index in stats.indices where !stats[index].merged {
-            guard let base = stats[index].base,
-                let diff = LocalDiff.measure(branch: stats[index].branch, base: base, in: repoPath)
-            else { continue }
-            stats[index].apply(diff)
-        }
-        let ahead = stats.filter(\.forkedAheadOfOrigin)
-        for base in Set(ahead.compactMap(\.base)).sorted() {
-            let count = ahead.filter { $0.base == base }.count
-            let commits = LocalDiff.commitsAhead(base: base, in: repoPath).map { " by \($0) commits" } ?? ""
-            warnings.append(
-                "Local \(base) is ahead of origin/\(base)\(commits), and \(count) open pull request\(count == 1 ? "" : "s") "
-                    + "include commits from it, so GitHub shows them larger than they are. Push \(base). "
-                    + "The summary measures them from the local fork point.")
-        }
+        let tasks = entries(state: workspaceState, issues: issues, pullRequests: pullRequests, runner: runner)
 
         var stale: [StaleBranch] = []
         if let pullRequests {
@@ -383,11 +349,56 @@ struct WorkspaceReport: Sendable {
             name: workspace.name,
             entries: tasks,
             reviews: reviews,
-            pullRequestStats: stats,
             stale: stale,
             ciStoppedBranches: workspaceState.spendingLimit?.branches ?? [],
             warnings: warnings
         )
+    }
+
+    /// The report with what its tasks and pull requests took: usage from
+    /// the Claude transcripts, CI time from the repository's finished runs,
+    /// and each open pull request's size from the local repository.
+    /// `superlinear stats` runs this; `status` leaves it out, since it reads
+    /// every transcript, lists every CI run and diffs every open branch.
+    func measured(repoPath: String, transcripts: Transcripts) -> WorkspaceReport {
+        var report = self
+        var ciTimes: [String: TimeInterval]?
+        if !entries.isEmpty || reviews?.isEmpty == false {
+            do {
+                let runs = try WorkflowRun.list(in: repoPath)
+                // A repository without CI has no CI time, rather than none per task.
+                if !runs.isEmpty { ciTimes = WorkflowRun.time(byBranch: runs) }
+            } catch {
+                report.warnings.append("Could not list CI runs: \(error)")
+            }
+        }
+        for index in report.entries.indices {
+            report.entries[index].usage = transcripts.usage(forBranch: entries[index].branch)
+            if let ciTimes { report.entries[index].ciTime = ciTimes[entries[index].branch] ?? 0 }
+        }
+
+        var stats = PullRequestStats.of(tasks: report.entries, reviews: reviews ?? []) { branch in
+            (transcripts.usage(forBranch: branch), ciTimes.map { $0[branch] ?? 0 })
+        }
+        // Merged branches are in their base already, so only open ones can
+        // be measured locally.
+        for index in stats.indices where !stats[index].merged {
+            guard let base = stats[index].base,
+                let diff = LocalDiff.measure(branch: stats[index].branch, base: base, in: repoPath)
+            else { continue }
+            stats[index].apply(diff)
+        }
+        let ahead = stats.filter(\.forkedAheadOfOrigin)
+        for base in Set(ahead.compactMap(\.base)).sorted() {
+            let count = ahead.filter { $0.base == base }.count
+            let commits = LocalDiff.commitsAhead(base: base, in: repoPath).map { " by \($0) commits" } ?? ""
+            report.warnings.append(
+                "Local \(base) is ahead of origin/\(base)\(commits), and \(count) open pull request\(count == 1 ? "" : "s") "
+                    + "include commits from it, so GitHub shows them larger than they are. Push \(base). "
+                    + "The stats measure them from the local fork point.")
+        }
+        report.pullRequestStats = stats
+        return report
     }
 }
 
@@ -414,6 +425,44 @@ enum StatusCommand {
         return lines
     }
 
+    /// Every configured workspace's report, in config order, gathered at
+    /// once. With `transcripts`, each is measured too, for `superlinear
+    /// stats`. Warnings about GitHub's rate limit become one header line,
+    /// rather than one per GitHub call in every workspace.
+    static func reports(
+        config: Config, state: State, transcripts: Transcripts? = nil
+    ) async -> (reports: [WorkspaceReport], header: [String]) {
+        let runner = AgentRunner()
+        var reports = await withTaskGroup(of: (Int, WorkspaceReport).self) { group in
+            for (index, workspace) in config.workspaces.enumerated() {
+                group.addTask {
+                    var report = await WorkspaceReport.gather(workspace: workspace, state: state, runner: runner)
+                    if let transcripts {
+                        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+                        report = report.measured(repoPath: repoPath, transcripts: transcripts)
+                    }
+                    return (index, report)
+                }
+            }
+            var reports: [(Int, WorkspaceReport)] = []
+            for await report in group {
+                reports.append(report)
+            }
+            return reports.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+
+        var header: [String] = []
+        if let repoPath = rateLimitedRepoPath(reports, config: config) {
+            for index in reports.indices {
+                reports[index].warnings.removeAll { $0.localizedCaseInsensitiveContains("rate limit") }
+            }
+            let reset = GitHubRateLimit.resetDate(repoPath: repoPath)
+            let time = reset.formatted(date: .omitted, time: .shortened)
+            header.append("warning: GitHub's rate limit is used up until \(time), so pull requests could not all be listed")
+        }
+        return (reports, header)
+    }
+
     /// Prints a report for every configured workspace, in config order, and
     /// returns the exit status.
     static func run(configPath: String?) async -> Int32 {
@@ -426,36 +475,11 @@ enum StatusCommand {
         }
         let standups = StandupRecord.load()
         let state = State.loadWithStandups(standups: standups)
-        let runner = AgentRunner()
-        let transcripts = Transcripts()
-
-        var reports = await withTaskGroup(of: (Int, WorkspaceReport).self) { group in
-            for (index, workspace) in config.workspaces.enumerated() {
-                group.addTask { (index, await WorkspaceReport.gather(
-                    workspace: workspace, state: state, runner: runner, transcripts: transcripts)) }
-            }
-            var reports: [(Int, WorkspaceReport)] = []
-            for await report in group {
-                reports.append(report)
-            }
-            return reports.sorted { $0.0 < $1.0 }.map(\.1)
-        }
-
-        var header: [String] = []
-        if let repoPath = rateLimitedRepoPath(reports, config: config) {
-            // One line, rather than one per GitHub call in every workspace.
-            for index in reports.indices {
-                reports[index].warnings.removeAll { $0.localizedCaseInsensitiveContains("rate limit") }
-            }
-            let reset = GitHubRateLimit.resetDate(repoPath: repoPath)
-            let time = reset.formatted(date: .omitted, time: .shortened)
-            header.append("warning: GitHub's rate limit is used up until \(time), so pull requests could not all be listed")
-        }
-        header += pauseLines(state: state, workspaces: config.workspaces.map(\.name), now: Date())
-        let summary = StatusSummary(reports: reports).rendered()
-            + "\n\n" + Standup.statusLine(state: state, standups: standups, workspaces: config.workspaces.map(\.name))
+        let gathered = await reports(config: config, state: state)
+        let header = gathered.header + pauseLines(state: state, workspaces: config.workspaces.map(\.name), now: Date())
+        let standup = Standup.statusLine(state: state, standups: standups, workspaces: config.workspaces.map(\.name))
         let footer = DaemonStatus.read().footer(polls: config.workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })
-        print((header + reports.map { $0.rendered() } + [summary, footer]).joined(separator: "\n\n"))
+        print((header + gathered.reports.map { $0.rendered() } + [standup, footer]).joined(separator: "\n\n"))
         return 0
     }
 }

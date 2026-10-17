@@ -1,9 +1,9 @@
 import Foundation
 
-/// What `superlinear status` ends with: how many items each section holds
-/// across all workspaces, what the agents' pull requests took, and the same
-/// per workspace.
-struct StatusSummary: Sendable {
+/// What `superlinear stats` prints: how many items each section of the
+/// status report holds across all workspaces, what the agents' pull requests
+/// took, and the same per workspace.
+struct Stats: Sendable {
     let reports: [WorkspaceReport]
 
     /// Each section heading with how many items it holds in all workspaces, in
@@ -81,16 +81,14 @@ struct StatusSummary: Sendable {
     }
 
     func rendered() -> String {
-        var lines = ["Summary"]
-        lines += Self.table([["Projects", "\(reports.count)"]] + counts.map { [$0.heading, "\($0.count)"] })
-            .map { "  " + $0 }
+        var lines = Self.table([["Projects", "\(reports.count)"]] + counts.map { [$0.heading, "\($0.count)"] })
 
         for report in reports {
             let ahead = report.pullRequestStats.filter(\.forkedAheadOfOrigin)
             let bases = Set(ahead.compactMap(\.base)).sorted().joined(separator: ", ")
             guard !ahead.isEmpty else { continue }
             lines.append(
-                "  Out of sync: \(ahead.count) of \(report.name)'s pull requests carry unpushed commits from local \(bases)")
+                "Out of sync: \(ahead.count) of \(report.name)'s pull requests carry unpushed commits from local \(bases)")
         }
 
         let pullRequests = reports.flatMap(\.pullRequestStats)
@@ -98,12 +96,12 @@ struct StatusSummary: Sendable {
         if !metrics.isEmpty {
             let merged = pullRequests.filter(\.merged).count
             lines.append("")
-            lines.append("  Per pull request (\(pullRequests.count) from agents: \(pullRequests.count - merged) open, \(merged) merged)")
+            lines.append("Per pull request (\(pullRequests.count) from agents: \(pullRequests.count - merged) open, \(merged) merged)")
             let rows = [["", "total", "median", "min", "distribution", "max"]] + metrics.map { metric in
                 [metric.name, metric.format(metric.total), metric.format(metric.median), metric.format(metric.min),
                  metric.histogram, metric.format(metric.max)]
             }
-            lines += Self.table(rows, leftAligned: [0, 4, 5]).map { "    " + $0 }
+            lines += Self.table(rows, leftAligned: [0, 4, 5]).map { "  " + $0 }
         }
 
         let all = reports.flatMap(\.entries)
@@ -116,13 +114,13 @@ struct StatusSummary: Sendable {
                 "\(Self.duration(usage.map(\.activeTime).reduce(0, +))) agent time",
             ] + (all.contains { $0.ciTime != nil } ? ["\(Self.duration(ciTime)) CI time"] : [])
             lines.append("")
-            lines.append("  All \(all.count) tracked tasks: " + totals.joined(separator: ", "))
+            lines.append("All \(all.count) tracked tasks: " + totals.joined(separator: ", "))
         }
 
         let projects = reports.filter { !$0.entries.isEmpty || !$0.pullRequestStats.isEmpty }
         if !projects.isEmpty {
             lines.append("")
-            lines.append("  By project")
+            lines.append("By project")
             let rows = [["", "tasks", "PRs", "+lines", "-lines", "tokens", "agent time", "CI time"]]
                 + projects.map { report in
                     let pullRequests = report.pullRequestStats
@@ -139,7 +137,7 @@ struct StatusSummary: Sendable {
                         ciTimes.isEmpty ? "-" : Self.duration(ciTimes.reduce(0, +)),
                     ]
                 }
-            lines += Self.table(rows).map { "    " + $0 }
+            lines += Self.table(rows).map { "  " + $0 }
         }
         return lines.joined(separator: "\n")
     }
@@ -233,5 +231,25 @@ struct PullRequestStats: Sendable, Equatable {
             ))
         }
         return stats
+    }
+}
+
+enum StatsCommand {
+    /// Gathers every workspace's report, measures it, and prints the stats,
+    /// after any warnings; returns the exit status. Takes no daemon lock, so
+    /// it runs beside a daemon.
+    static func run(configPath: String?) async -> Int32 {
+        let config: Config
+        do {
+            config = try Config.load(from: configPath)
+        } catch {
+            print("[superlinear] Failed to load config: \(error)")
+            return 1
+        }
+        let (reports, header) = await StatusCommand.reports(config: config, state: State.loadWithStandups(), transcripts: Transcripts())
+        let warnings = header + reports.flatMap { report in report.warnings.map { "warning: \(report.name): \($0)" } }
+        let sections = (warnings.isEmpty ? [] : [warnings.joined(separator: "\n")]) + [Stats(reports: reports).rendered()]
+        print(sections.joined(separator: "\n\n"))
+        return 0
     }
 }

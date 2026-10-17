@@ -7,6 +7,7 @@ enum Command: Equatable {
     case install(force: Bool)
     case uninstall
     case status(configPath: String?)
+    case stats(configPath: String?)
     case proposals(configPath: String?, workspace: String?)
     case standup(configPath: String?, workspace: String?, printOnly: Bool)
     case resume
@@ -32,17 +33,17 @@ enum Command: Equatable {
         case "uninstall":
             if let extra = rest.dropFirst().first { return .invalid("unknown option for uninstall: \(extra)") }
             return .uninstall
-        case "status":
+        case .some(let command) where ["status", "stats"].contains(command):
             rest = rest.dropFirst()
             var configPath: String?
             while let argument = rest.first {
                 rest = rest.dropFirst()
-                guard argument == "--config" else { return .invalid("unknown option for status: \(argument)") }
+                guard argument == "--config" else { return .invalid("unknown option for \(command): \(argument)") }
                 guard let path = rest.first else { return .invalid("--config needs a path") }
                 configPath = path
                 rest = rest.dropFirst()
             }
-            return .status(configPath: configPath)
+            return command == "status" ? .status(configPath: configPath) : .stats(configPath: configPath)
         case "proposals":
             rest = rest.dropFirst()
             var configPath: String?

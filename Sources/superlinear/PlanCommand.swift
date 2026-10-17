@@ -123,7 +123,7 @@ enum PlanCommand {
             return false
         }
         var summary = "[\(name)] The planning job proposed \(record.proposed), skipped \(record.skipped)"
-        if let usage = record.usage { summary += ", and used \(StatusSummary.compact(usage.tokens)) tokens" }
+        if let usage = record.usage { summary += ", and used \(Stats.compact(usage.tokens)) tokens" }
         say(summary + (record.proposed > 0 ? ". Review them with `superlinear standup`." : "."))
         return true
     }
@@ -155,7 +155,7 @@ enum PlanCommand {
             return "No planning job has run for \(workspace.name) yet."
         }
         let age = StatusTime.relative(Int(last.startedAt.timeIntervalSince(now).rounded()))
-        let cost = last.usage.map { ", and used \(StatusSummary.compact($0.tokens)) tokens" } ?? ""
+        let cost = last.usage.map { ", and used \(Stats.compact($0.tokens)) tokens" } ?? ""
         return "Since the last planning job for \(workspace.name), which ran \(age)\(cost), \(trigger)."
     }
 }
