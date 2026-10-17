@@ -39,9 +39,11 @@ private actor FakeLinear: LinearWriting {
     }
 
     func createIssue(
-        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String, labelIds: [LinearLabel.ID]
-    ) async throws -> JSONValue {
-        try written("create \(title) labels=\(labelIds.map(\.rawValue)) description=\(description)")
+        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
+        labelIds: [LinearLabel.ID], stateId: String?
+    ) async throws -> CreatedIssue {
+        let response = try written("create \(title) labels=\(labelIds.map(\.rawValue)) description=\(description)")
+        return CreatedIssue(id: "new", identifier: "NEW-1", url: nil, response: response)
     }
 
     func updateIssueDescription(id: LinearIssue.ID, description: String) async throws -> JSONValue {
@@ -123,15 +125,15 @@ private enum ProposalTestError: Error {
 
 @Suite("Proposal trust levels")
 struct TrustLevelTests {
-    @Test("By default relations apply at once and everything else waits for standup")
+    @Test("By default relations apply at once and everything else waits for review in Linear")
     func defaults() {
         let autonomy = Autonomy()
         for kind in ProposalKind.allCases {
-            #expect(autonomy.level(for: kind) == (kind == .addRelation ? .auto : .standup))
+            #expect(autonomy.level(for: kind) == (kind == .addRelation ? .auto : .review))
         }
     }
 
-    @Test("An auto proposal is stored to apply now, a standup one to wait")
+    @Test("An auto proposal is stored to apply now, a review one to wait")
     func autoAppliesNow() async throws {
         let linear = FakeLinear(issues: [issue()])
         let (relation, relationNow) = try stored(await engine(linear).screen(
@@ -142,7 +144,7 @@ struct TrustLevelTests {
 
         let (close, closeNow) = try stored(await engine(linear).screen(draft(.closeIssue), existing: []))
         #expect(!closeNow)
-        #expect(close.trust == .standup)
+        #expect(close.trust == .review)
     }
 
     @Test("A kind set to never is not proposed, and config overrides apply")
@@ -237,18 +239,21 @@ struct ProposalDuplicateTests {
 
 @Suite("Proposal expiry")
 struct ProposalExpiryTests {
-    @Test("Pending proposals a standup showed longer ago than the expiry expire; others stay")
+    @Test("Pending proposals put in Linear longer ago than the expiry expire; others stay")
     func expiry() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let day: TimeInterval = 24 * 60 * 60
+        func post(_ daysAgo: Double) -> ProposalPost {
+            ProposalPost(form: .triageIssue, issueId: "i", postedAt: now.addingTimeInterval(-daysAgo * day))
+        }
         var state = State()
-        var old = Proposal(newIssue("Old"), trust: .standup, id: "old", now: now.addingTimeInterval(-20 * day))
-        old.firstShownAt = now.addingTimeInterval(-8 * day)
-        var fresh = Proposal(newIssue("Fresh"), trust: .standup, id: "fresh", now: now.addingTimeInterval(-20 * day))
-        fresh.firstShownAt = now.addingTimeInterval(-6 * day)
-        // No standup has shown it, so it waits however old it is.
-        let unseen = Proposal(newIssue("Unseen"), trust: .standup, id: "unseen", now: now.addingTimeInterval(-60 * day))
-        var rejected = Proposal(newIssue("Rejected"), trust: .standup, id: "rejected", now: now.addingTimeInterval(-90 * day))
+        var old = Proposal(newIssue("Old"), trust: .review, id: "old", now: now.addingTimeInterval(-20 * day))
+        old.post = post(8)
+        var fresh = Proposal(newIssue("Fresh"), trust: .review, id: "fresh", now: now.addingTimeInterval(-20 * day))
+        fresh.post = post(6)
+        // Not in Linear yet, so it waits however old it is.
+        let unseen = Proposal(newIssue("Unseen"), trust: .review, id: "unseen", now: now.addingTimeInterval(-60 * day))
+        var rejected = Proposal(newIssue("Rejected"), trust: .review, id: "rejected", now: now.addingTimeInterval(-90 * day))
         rejected.status = .rejected
         rejected.decidedAt = now.addingTimeInterval(-89 * day)
         var applied = Proposal(newIssue("Applied"), trust: .auto, id: "applied", now: now.addingTimeInterval(-40 * day))
@@ -283,7 +288,15 @@ struct ProposalExpiryTests {
         #expect(config.workspaces[1].proposalExpiryDays == 3)
         #expect(config.workspaces[1].autonomy.level(for: .createIssue) == .auto)
         #expect(config.workspaces[1].autonomy.level(for: .addRelation) == .never)
-        #expect(config.workspaces[1].autonomy.level(for: .editIssue) == .standup)
+        #expect(config.workspaces[1].autonomy.level(for: .editIssue) == .review)
+    }
+
+    @Test("A config from before proposals were reviewed in Linear still names the review level")
+    func formerLevelName() throws {
+        let config = try Config.decoded(from: Data("""
+        {"workspaces": [{"name": "a", "apiKey": "k", "repoPath": "~/r", "autonomy": {"createIssue": "standup"}}]}
+        """.utf8))
+        #expect(config.workspaces[0].autonomy.level(for: .createIssue) == .review)
     }
 
     @Test("An unknown kind or level in autonomy is an error")
@@ -316,7 +329,7 @@ struct ProposalApplyTests {
     @Test("An edit to an issue superlinear did not create changes only its managed block")
     func editKeepsOwnerText() async throws {
         let linear = FakeLinear(issues: [issue(description: "Owner's text")])
-        let proposal = Proposal(draft(.editIssue(oldText: "", newText: "Blocked by SPL-2")), trust: .standup)
+        let proposal = Proposal(draft(.editIssue(oldText: "", newText: "Blocked by SPL-2")), trust: .review)
         let result = await engine(linear).apply(proposal)
 
         #expect(result.status == .applied)
@@ -328,7 +341,7 @@ struct ProposalApplyTests {
     @Test("An edit to an issue superlinear created replaces its description")
     func editOwnIssue() async throws {
         let linear = FakeLinear(issues: [issue(description: "Old", labels: ["Superlinear"])])
-        let result = await engine(linear).apply(Proposal(draft(.editIssue(oldText: "Old", newText: "New")), trust: .standup))
+        let result = await engine(linear).apply(Proposal(draft(.editIssue(oldText: "Old", newText: "New")), trust: .review))
         #expect(result.status == .applied)
         #expect(await linear.issues["i1"]?.description == "New")
     }
@@ -339,8 +352,10 @@ struct ProposalApplyTests {
         for payload in [ProposalPayload.editIssue(oldText: "", newText: "Note"), .closeIssue, .promoteIssue] {
             let result = await engine(linear).apply(Proposal(draft(payload), trust: .auto))
             #expect(result.status == .pending)
-            #expect(result.trust == .standup)
+            #expect(result.trust == .review)
             #expect(result.reviewNote?.contains("changed in Linear") == true)
+            // Reviewed again against the issue as it is now.
+            #expect(result.targetUpdatedAt == proposedAt.addingTimeInterval(60))
         }
         #expect(await linear.writes.isEmpty)
         #expect(await linear.issues["i1"]?.description == "Edited by hand")
@@ -349,7 +364,7 @@ struct ProposalApplyTests {
     @Test("Linear's milliseconds, which the state file drops, do not count as a change")
     func subsecondUpdate() async throws {
         let linear = FakeLinear(issues: [issue(updatedAt: proposedAt.addingTimeInterval(0.7))])
-        let result = await engine(linear).apply(Proposal(draft(.closeIssue), trust: .standup))
+        let result = await engine(linear).apply(Proposal(draft(.closeIssue), trust: .review))
         #expect(result.status == .applied)
     }
 
@@ -357,7 +372,7 @@ struct ProposalApplyTests {
     func changedText() async throws {
         let linear = FakeLinear(issues: [issue(description: "Old", labels: ["superlinear"])])
         let result = await engine(linear).apply(Proposal(
-            draft(.editIssue(oldText: "Older", newText: "New"), updatedAt: nil), trust: .standup
+            draft(.editIssue(oldText: "Older", newText: "New"), updatedAt: nil), trust: .review
         ))
         #expect(result.status == .pending)
         #expect(result.reviewNote != nil)
@@ -381,7 +396,7 @@ struct ProposalApplyTests {
     func createIssue() async throws {
         let linear = FakeLinear()
         for _ in 0..<2 {
-            let result = await engine(linear).apply(Proposal(newIssue("Add retries"), trust: .standup))
+            let result = await engine(linear).apply(Proposal(newIssue("Add retries"), trust: .review))
             #expect(result.status == .applied)
         }
         let writes = await linear.writes
@@ -394,9 +409,9 @@ struct ProposalApplyTests {
     @Test("A promotion needs the issue still in the backlog")
     func promotion() async throws {
         let linear = FakeLinear(issues: [issue(state: .backlog), issue("i2", state: .unstarted)])
-        #expect(await engine(linear).apply(Proposal(draft(.promoteIssue), trust: .standup)).status == .applied)
+        #expect(await engine(linear).apply(Proposal(draft(.promoteIssue), trust: .review)).status == .applied)
         let moved = await engine(linear).apply(Proposal(
-            draft(.promoteIssue, target: .issue("i2")), trust: .standup
+            draft(.promoteIssue, target: .issue("i2")), trust: .review
         ))
         #expect(moved.status == .pending)
         #expect(await linear.writes == ["promote i1"])
@@ -408,14 +423,14 @@ struct ProposalApplyTests {
         await linear.setSpec(SpecText(content: "Spec", updatedAt: proposedAt.addingTimeInterval(3600)), id: "d1")
         let target = ProposalTarget.document("d1", name: "Plan")
         let stale = await engine(linear).apply(Proposal(
-            draft(.changeSpec(oldText: "Spec", newText: "Spec v2"), target: target), trust: .standup
+            draft(.changeSpec(oldText: "Spec", newText: "Spec v2"), target: target), trust: .review
         ))
         #expect(stale.status == .pending)
         #expect(stale.reviewNote == "Plan changed in Linear after this was proposed")
 
         let current = await engine(linear).apply(Proposal(
             draft(.changeSpec(oldText: "Spec", newText: "Spec v2"), target: target, updatedAt: proposedAt.addingTimeInterval(3600)),
-            trust: .standup
+            trust: .review
         ))
         #expect(current.status == .applied)
     }
@@ -433,7 +448,7 @@ struct ProposalApplyTests {
         )
         // A change that was not made is not logged.
         await linear.setFailWrites(true)
-        let failed = await engine(linear, audit: audit).apply(Proposal(draft(.closeIssue), trust: .standup))
+        let failed = await engine(linear, audit: audit).apply(Proposal(draft(.closeIssue), trust: .review))
         #expect(failed.status == .pending)
         #expect(failed.lastError?.contains("offline") == true)
 
@@ -455,12 +470,12 @@ struct ProposalStorageTests {
     func roundTrip() throws {
         var state = State()
         var proposal = Proposal(
-            draft(.editIssue(oldText: "a", newText: "b")), trust: .standup, id: "p1",
+            draft(.editIssue(oldText: "a", newText: "b")), trust: .review, id: "p1",
             now: Date(timeIntervalSince1970: 1_700_000_000)
         )
         proposal.reviewNote = "note"
         state.recordProposal(proposal, workspace: "w")
-        state.recordProposal(Proposal(newIssue("New"), trust: .standup, id: "p2", now: proposedAt), workspace: "w")
+        state.recordProposal(Proposal(newIssue("New"), trust: .review, id: "p2", now: proposedAt), workspace: "w")
 
         let decoded = try State.decoded(from: state.encoded())
         #expect(decoded.proposals(workspace: "w") == state.proposals(workspace: "w"))
@@ -501,7 +516,7 @@ struct ProposalStorageTests {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let pending = Proposal(
             draft(.editIssue(oldText: "one\ntwo", newText: "one\nthree"), target: .issue("i1", name: "SPL-1")),
-            trust: .standup, id: "aaaaaaaa-1", now: now.addingTimeInterval(-60)
+            trust: .review, id: "aaaaaaaa-1", now: now.addingTimeInterval(-60)
         )
         var applied = Proposal(newIssue("Applied"), trust: .auto, id: "bbbbbbbb-2", now: now.addingTimeInterval(-120))
         applied.status = .applied
@@ -511,7 +526,7 @@ struct ProposalStorageTests {
         old.decidedAt = now.addingTimeInterval(-20 * 86400)
 
         let text = ProposalsCommand.rendered([old, applied, pending], workspace: "w", now: now)
-        #expect(text.contains("  Pending (1)\n    aaaaaaaa  editIssue → issue SPL-1  [awaiting standup]"))
+        #expect(text.contains("  Pending (1)\n    aaaaaaaa  editIssue → issue SPL-1  [to be put in Linear]"))
         #expect(text.contains("      - two\n      + three"))
         #expect(text.contains("  Recent (1)\n    bbbbbbbb  createIssue → team team  [applied"))
         #expect(!text.contains("cccccccc"))

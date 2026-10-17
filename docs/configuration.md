@@ -47,9 +47,9 @@ Each workspace entry is one Linear-account-to-repository pairing. List several t
 | <a id="selection"></a>`selection` | no | `"new"` to start issues created since the last poll, or `"ready"` to start every issue in `readyStates`. See [Selection](lifecycle.md#selection). Defaults to `"new"`. |
 | <a id="ready-states"></a>`readyStates` | no | Linear state types that mean "build this" in `ready` mode: any of `triage`, `backlog`, `unstarted`, `started`, `completed` and `canceled`, usually the first three. Any other value, such as a state name like `"Todo"`, is an error. Defaults to `["unstarted"]`, which is Todo. |
 | <a id="human-labels"></a>`humanLabels` | no | Names of labels that keep an issue for a person: no agent starts on it. Matched in any case. See [The ready gate](lifecycle.md#ready-gate). Defaults to `["Needs human", "Spike"]`. |
-| <a id="autonomy"></a>`autonomy` | no | The trust level of each kind of proposal: a map from kind to `"auto"`, `"standup"` or `"never"`. Kinds left out keep their defaults. An unknown kind or level is a config error, so a misspelt kind does not leave its default in force unseen. See [Proposals and trust levels](planning.md#proposals). |
-| <a id="proposal-expiry-days"></a>`proposalExpiryDays` | no | Days after which a pending proposal expires, counted from the first standup that showed it. Defaults to `7`. |
-| <a id="planning"></a>`planning` | no | Planning settings. `planning.enabled` turns on the [planning job](planning.md#daily-planning); it defaults to `false`. `planning.specDocumentURL` is the URL of the Linear document holding the project's spec; the planning job reads it, and decisions entered at a [standup](planning.md#standup-needs-human) are added to it. |
+| <a id="autonomy"></a>`autonomy` | no | The trust level of each kind of proposal: a map from kind to `"auto"`, `"review"` or `"never"`. Kinds left out keep their defaults. An unknown kind or level is a config error, so a misspelt kind does not leave its default in force unseen. See [Proposals and trust levels](planning.md#proposals). |
+| <a id="proposal-expiry-days"></a>`proposalExpiryDays` | no | Days after which a pending proposal expires, counted from when it was [put in Linear](planning.md#standup). Defaults to `7`. |
+| <a id="planning"></a>`planning` | no | Planning settings. `planning.enabled` turns on the [planning job](planning.md#daily-planning); it defaults to `false`. `planning.specDocumentURL` is the URL of the Linear document holding the project's spec, which the planning job reads and may propose changes to. |
 
 For example, to apply new issues at once and never post project updates:
 
@@ -70,8 +70,7 @@ Edits take effect on their own. The daemon checks the file every five seconds; w
 | Path | Contents |
 | --- | --- |
 | `~/.config/superlinear/config.json` | Configuration, including API keys. |
-| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, blocked and human-labeled issues, proposals, 30 days of what the daemon did, for the standup, and the last 30 planning jobs, per workspace. |
-| `~/.local/share/superlinear/standup.json` | Per workspace, the time of the last standup, and what standups decided: proposals shown and decided, decisions, held issues and the queue's order. |
+| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, blocked and human-labeled issues, proposals with where they wait in Linear, 30 days of what the daemon did, for `superlinear status`, and the last 30 planning jobs, per workspace. |
 | `~/.local/share/superlinear/planning.json` | Per workspace, the planning jobs `superlinear plan` ran and the proposals they stored, for the daemon to take in. |
 | `~/.local/share/superlinear/audit/<workspace>.jsonl` | Each change superlinear applied in Linear, with the proposal and Linear's response. |
 | `~/.local/share/superlinear/daemon.lock` | Held by the running daemon, so a second one exits. |

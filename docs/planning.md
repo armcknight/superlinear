@@ -1,6 +1,6 @@
 # Planning
 
-How superlinear keeps the plan in Linear up to date: it proposes changes, and you approve them at a standup, or let them through on their own.
+How superlinear keeps the plan in Linear up to date: it proposes changes in Linear, where you accept or reject them, or let them through on their own.
 
 <a id="proposals"></a>
 ## Proposals and trust levels
@@ -15,7 +15,7 @@ The workspace's [`autonomy`](configuration.md#autonomy) config sets what happens
 | Level | Effect |
 | --- | --- |
 | `auto` | Applied at once, and still listed for review. |
-| `standup` | Kept pending for you to approve or reject at a [standup](#standup). |
+| `review` | Put in Linear for you to approve or reject there. See [Reviewing proposals in Linear](#standup). |
 | `never` | Not proposed at all. |
 
 <a id="proposal-kinds"></a>
@@ -23,13 +23,13 @@ The workspace's [`autonomy`](configuration.md#autonomy) config sets what happens
 
 | Kind | Change | Default |
 | --- | --- | --- |
-| `createIssue` | A new issue. | `standup` |
-| `editIssue` | A new description, or managed block, for an issue. | `standup` |
-| `closeIssue` | Moves an issue to its team's first canceled state. | `standup` |
+| `createIssue` | A new issue. | `review` |
+| `editIssue` | A new description, or managed block, for an issue. | `review` |
+| `closeIssue` | Moves an issue to its team's first canceled state. | `review` |
 | `addRelation` | Relates two issues: `blocks`, `duplicate`, `related` or `similar`. | `auto` |
-| `promoteIssue` | Moves an issue from Backlog to its team's first unstarted state, such as Todo, as when its blockers are done. | `standup` |
-| `changeSpec` | A new description for a project, or new content for a document. | `standup` |
-| `postProjectUpdate` | Posts a project update. | `standup` |
+| `promoteIssue` | Moves an issue from Backlog to its team's first unstarted state, such as Todo, as when its blockers are done. | `review` |
+| `changeSpec` | A new description for a project, or new content for a document. | `review` |
+| `postProjectUpdate` | Posts a project update. The proposal names the project's overview issue, on which it is proposed; without one it is not proposed. | `review` |
 
 <a id="proposal-rules"></a>
 ### Rules for applying a proposal
@@ -37,16 +37,16 @@ The workspace's [`autonomy`](configuration.md#autonomy) config sets what happens
 - **Its own issues are labelled.** Each issue superlinear creates gets the label `superlinear`, which it creates in the team when neither the team nor the workspace has it, and ends with a "Source" line linking to where it came from. Project updates end with the same line.
 - **Your text is yours.** In an issue without the `superlinear` label, an edit changes only the managed block between `<!-- superlinear -->` and `<!-- /superlinear -->`, which Linear does not show; it adds the block at the end when there is none. The rest of the description is left exactly as it was. In an issue with the label, an edit replaces the description.
 - **Hands off.** An issue with the label `superlinear: hands off` is never edited, closed, promoted or related. A proposal to change one is rejected.
-- **No lost updates.** A proposal records the target's `updatedAt` when it was worked out. Before an edit, closure, promotion or spec change, superlinear reads the target again. If it changed after that time, the proposal is not applied but stays pending, sent back for review with a note, even when its kind is `auto`. A proposal without the time is checked against the old text instead. Times within a second count as the same, as the state file keeps dates to the second.
+- **No lost updates.** A proposal records the target's `updatedAt` when it was worked out. Before an edit, closure, promotion or spec change, superlinear reads the target again. If it changed after that time, the proposal is not applied but stays pending, sent back for review with a note, even when its kind is `auto`: it is [asked again in Linear](#standup), against the target as it is now. A proposal without the time is checked against the old text instead. Times within a second count as the same, as the state file keeps dates to the second.
 - **No duplicates.** Before a new issue is proposed, Linear's search looks for open issues in its team with the same title or a close one, by the [Sørensen–Dice coefficient](https://en.wikipedia.org/wiki/Dice-S%C3%B8rensen_coefficient) of their letter pairs, at 0.8 or more, once case and punctuation are set aside. When one is found, nothing is proposed, or, for an issue that follows from another, a `related` relation between that one and the open one. A change already pending, or rejected before, is not proposed again: the same kind and target, and for a new issue the same title, for a relation the same other issue and type.
-- **Proposals expire.** A proposal still pending [`proposalExpiryDays`](configuration.md#proposal-expiry-days) days after the first [standup](#standup) that showed it expires. One no standup has shown does not expire. Applied and expired proposals drop out of the state file 30 days after; rejected ones stay, to keep the change from coming back.
+- **Proposals expire.** A proposal still pending [`proposalExpiryDays`](configuration.md#proposal-expiry-days) days after it was [put in Linear](#standup) expires: its comment says so, or its issue is canceled with a note. One not yet in Linear does not expire. Applied and expired proposals drop out of the state file 30 days after; rejected ones stay, to keep the change from coming back.
 
 <a id="audit-log"></a>
 ### The audit log
 
 Each change applied is appended to `~/.local/share/superlinear/audit/<workspace>.jsonl`: the time, the proposal, and Linear's response, one JSON object a line. A failed write leaves the proposal pending, with the error, and writes nothing to the log.
 
-`superlinear proposals [--workspace <name>]` lists each workspace's pending proposals, oldest first, then those applied, rejected or expired in the last 7 days, newest first. Each shows its ID's first 8 characters, kind, target, status, when it was made, reason and source, any rejection reason, note or error, and the change: a new issue's title and description, or a line diff for an edit.
+`superlinear proposals [--workspace <name>]` lists each workspace's pending proposals, oldest first, then those applied, rejected or expired in the last 7 days, newest first. Each shows its ID's first 8 characters, kind, target, status, when it was made, reason and source, where it waits in Linear and since when, any rejection reason, note or error, and the change: a new issue's title and description, or a line diff for an edit.
 
 <a id="daily-planning"></a>
 ## The planning job
@@ -55,7 +55,7 @@ Each change applied is appended to `~/.local/share/superlinear/audit/<workspace>
 superlinear plan [--workspace <name>]
 ```
 
-Each change that may move the project's direction makes superlinear review what was merged and how the open issues stand, for each workspace with `planning.enabled`, and store what it finds as [proposals](#proposals). It never writes to Linear itself; each proposal's trust level decides whether it is applied at once or waits for a standup.
+Each change that may move the project's direction makes superlinear review what was merged and how the open issues stand, for each workspace with `planning.enabled`, and store what it finds as [proposals](#proposals). It never writes to Linear itself; each proposal's trust level decides whether it is applied at once or [put in Linear for review](#standup).
 
 There is no schedule. At each poll, when no job is running for the workspace, the daemon starts one when:
 
@@ -63,7 +63,7 @@ There is no schedule. At each poll, when no job is running for the workspace, th
 - the default branch's head is not the one the last job looked at, failed or not: a pull request merged, or commits were pushed outside one. The head comes from `git ls-remote`, so the poll fetches nothing;
 - an issue of the watched teams was completed after the last job ended, in Linear by hand or by the daemon after a merge. Completions while the last job ran do not count again.
 
-Jobs for one workspace run one at a time, so several merges while one runs make one job after it, which covers them all. A failed job counts: the branch has to move, or an issue be completed, before the next. `superlinear plan` runs a job at once, in the foreground, for the workspace named, or for every workspace with planning on; the [standup](#standup) offers it when one of the conditions above holds. The session is told why its job runs.
+Jobs for one workspace run one at a time, so several merges while one runs make one job after it, which covers them all. A failed job counts: the branch has to move, or an issue be completed, before the next. `superlinear plan` runs a job at once, in the foreground, for the workspace named, or for every workspace with planning on. The session is told why its job runs.
 
 A job runs one headless Claude session, `claude -p`, in the worktree that has the repository's default branch checked out, which is that of `origin/HEAD`, or `main` or `master`. superlinear first fetches the branch and fast-forwards that worktree to it when the worktree is clean. The session may read the code and run `git log`, `git show` and `git diff`, and write one file. Its prompt gives:
 
@@ -85,7 +85,7 @@ When the session ends, superlinear checks the file against what the job was give
 
 The job has no token budget of its own. Like an agent, it outlives a daemon restart: a later daemon waits for it, takes in its proposals if it ended meanwhile, or resumes its Claude session if it was interrupted, up to three times. A session that the Claude usage limit stops ends as a failed job for now; pausing and resuming it as agents will be is [SPL-26](https://linear.app/superlinear-linear/issue/SPL-26). Jobs do not count toward `maxConcurrentAgents`.
 
-`superlinear plan` stores its proposals and runs in `~/.local/share/superlinear/planning.json`, apart from the state file that only the daemon writes; the daemon, `superlinear proposals` and the standup take them in from there. It refuses to start while the daemon or another `plan` runs a job for the workspace.
+`superlinear plan` stores its proposals and runs in `~/.local/share/superlinear/planning.json`, apart from the state file that only the daemon writes; the daemon and `superlinear proposals` take them in from there, and the daemon puts them in Linear at its next poll. It refuses to start while the daemon or another `plan` runs a job for the workspace.
 
 <a id="follow-ups"></a>
 ## Follow-ups from agents
@@ -114,28 +114,26 @@ Two more sources make `createIssue` proposals:
 - **TODOs in merged pull requests.** When an agent's pull request merges, the daemon reads its diff, and proposes an issue for each added line with `TODO` or `FIXME` that names no issue (a line like `TODO: SPL-24` is already tracked). The title is the words after the marker; the description gives the file and line. Its source is the pull request and the agent's issue, which the new issue follows from. Pull requests merged outside the daemon's merge watch are not read.
 
 <a id="standup"></a>
-## The standup
+## Reviewing proposals in Linear
 
-```sh
-superlinear standup [--print] [--workspace <name>]
-```
+Proposals that need you are reviewed in Linear, where the rest of your triage happens: there is no second place to look. At each poll, the daemon puts every pending proposal in Linear, in the form its kind takes, reads your answers to those already there, and applies or rejects them. Only the answers of the API key's user count.
 
-An interactive review in the terminal, run when you want: there is no schedule. It is where proposals that need you are approved, and where you sign off work only you can do. Each workspace goes through these sections in turn:
+| Kind | In Linear | Approve | Reject |
+| --- | --- | --- | --- |
+| `createIssue` | The issue itself, created at once in the team's **Triage** state, with the labels `superlinear` and `superlinear: proposed`, its reason and its source. | Accept it from Triage, into any state. | Decline or cancel it. |
+| `editIssue`, `closeIssue`, `addRelation`, `promoteIssue` | A comment on the target issue, written by superlinear: what it proposes, the reason, the source, and for an edit the diff of the managed block. The issue gets the label `superlinear: proposed` while it waits. | React 👍 on the comment. | React 👎 on the comment. |
+| `changeSpec` | An issue in Triage, labeled `superlinear: spec` as well, with the diff of the spec and a link to the document or the project. | Accept it from Triage. The change is applied to the document or project, and the issue completed. | Decline or cancel it. |
+| `postProjectUpdate` | A comment on the project's overview issue, as above. | React 👍. | React 👎. |
 
-1. **Done autonomously:** what superlinear did since your last standup that you may not have seen: agents started, finished, failed or stopped; reviews addressed; conflicts resolved; issues completed in Linear after their merge; and proposals applied automatically. Not merged pull requests: superlinear never merges, so you know what you merged.
-2. **Waiting on you:** open pull requests ready for review, the ones holding back the most work first: the open issues their issues block, directly and indirectly, and the pull requests stacked on them. Each stack is listed bottom first. Drafts, and pull requests an agent is working on, are left out.
-3. **Proposals:** each pending proposal with its reason, source and change, with a diff for edits. Keys: `a` approves it, `e` opens the change in `$EDITOR` as JSON and shows it again, `r` rejects it and asks why, `d` or Enter defers it.
-4. <a id="standup-needs-human"></a>**Needs human:** issues with a [`humanLabels`](configuration.md#human-labels) label, those blocking the most open issues, directly and indirectly, first. Keys: `d` marks it done, so the issues it blocks become ready; `e` enters a decision, added to the issue's managed block and, when [`planning.specDocumentURL`](configuration.md#planning) is set, to the end of that document; `s` or Enter skips it.
-5. **Plan for today:** the issues agents start next, in the order they will: those queued, then, in `ready` mode, the ready issues not yet queued. Then the issues held, and those the last standup unblocked. Commands: `h N` holds item N, so no agent starts on it until a standup releases it with `h N` again; `u N` and `d N` move it up or down; `p bN` promotes backlog item N to Todo, or takes the promotion back. The 10 backlog issues listed are the first in Linear's order. Enter ends the section.
-6. **Risks:** CI failing on the default branch, GitHub's rate limit when less than a fifth of it is left, and the active [pauses](lifecycle.md#limits) with the work they hold back: Claude sessions waiting out the usage limit, and branches whose CI the GitHub Actions spending limit stopped. While Claude sessions are paused, the standup ends by offering to resume them now, as `superlinear resume` does.
+A team with Triage off: superlinear turns Triage on when the API key may, and logs once when it may not. Then the issue is created in Backlog with the same labels; moving it out of Backlog, or removing the `superlinear: proposed` label, approves it, and canceling it rejects it. Deleting a proposed issue, or a proposal's comment, rejects it too.
 
-`q` at any prompt quits, applying and recording nothing for that workspace. At the end of each workspace's standup, the approved proposals are applied and the other decisions written to Linear. Then the standup's time, the proposals shown and decided, the decisions, the holds and the order are recorded in `~/.local/share/superlinear/standup.json`, and a summary is printed. The daemon reads that file at each poll: it takes in the proposals' outcomes, holds issues back, and starts the queue in your order. A hold or a new order applies only to issues no agent has started on.
+Once answered, superlinear edits the comment's first line to say so, with the time: `**Applied 2026-10-17T20:31:00Z.** superlinear proposed to cancel this issue.` The `superlinear: proposed` label comes off the issue once nothing waits on it, so the issues with that label are the proposals still open: the number waiting in each workspace is in [`superlinear status`](operations.md#status), with a link to each. A rejection is recorded, so the same change is not proposed again. Each approval goes through the [rules above](#proposal-rules): one whose issue changed since it was proposed is not applied, but asked again in a new comment with a note, the old one marked superseded; a spec change goes back to Triage with a note. An issue labeled `superlinear: hands off` gets no comment: the proposal is rejected.
 
-"Since the last standup" means since you last finished one; the first covers the last 7 days. Between standups, agents keep working on the ready queue and `auto` proposals keep being applied; other proposals wait. `superlinear status` ends with a line giving the time of the last standup and the numbers of pending proposals and issues that need a human, so you know when one is worth running.
+<a id="standup-needs-human"></a>Issues that need a human need nothing from superlinear: when you mark one Done in Linear, the issues it blocks become ready at the next poll. Holding an issue back is moving it to Backlog; the Todo order in Linear — priority, project, milestone, sort order — is the only queue order.
 
-`--print` prints sections 1, 3, 4 and 5 without prompts and records nothing, for a quick look or a script. Without `--print`, the standup needs a terminal.
+**Expiry:** [`proposalExpiryDays`](configuration.md#proposal-expiry-days) counts from when the proposal was put in Linear. An expired comment's first line says so; an expired Triage issue is canceled with a note.
 
-Before the first workspace, for each workspace with planning on that has had no [planning job](#daily-planning), or whose default branch moved or whose issues were completed since the last one, the standup says when that job ran, how many tokens it used and what changed since, and offers to run one first, so that its proposals come up in the same standup. It does not yet show late milestones.
+**Migration:** at the first poll after an upgrade from a version that reviewed proposals in the terminal, every pending proposal in the state file is put in Linear as above. Those with the old trust name read as `review`.
 
 <a id="project-updates"></a>
 ## Project updates

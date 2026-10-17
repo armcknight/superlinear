@@ -54,6 +54,17 @@ enum LinearQuery: CaseIterable, Sendable {
     case teams
     /// The workspace's first team, for proposals that belong to no issue.
     case firstTeam
+    /// The user the API key belongs to.
+    case viewer
+    /// A team's workflow states, and whether Triage is on.
+    case teamStates
+    case enableTriage
+    case createComment
+    case updateComment
+    case addLabel
+    case removeLabel
+    /// The issues proposals wait on, with their comments and reactions.
+    case proposalIssues
 
     var text: String {
         switch self {
@@ -319,6 +330,53 @@ enum LinearQuery: CaseIterable, Sendable {
             """
         case .firstTeam: """
             query FirstTeam { teams(first: 1) { nodes { id } } }
+            """
+        case .viewer: """
+            query Viewer { viewer { id } }
+            """
+        case .teamStates: """
+            query TeamStates($id: String!) {
+              team(id: $id) { triageEnabled states { nodes { id type position } } }
+            }
+            """
+        case .enableTriage: """
+            mutation EnableTriage($id: String!) {
+              teamUpdate(id: $id, input: { triageEnabled: true }) { success team { id triageEnabled } }
+            }
+            """
+        case .createComment: """
+            mutation CreateComment($issueId: String!, $body: String!) {
+              commentCreate(input: { issueId: $issueId, body: $body }) { success comment { id url } }
+            }
+            """
+        case .updateComment: """
+            mutation UpdateComment($id: String!, $body: String!) {
+              commentUpdate(id: $id, input: { body: $body }) { success comment { id } }
+            }
+            """
+        case .addLabel: """
+            mutation AddLabel($id: String!, $labelId: String!) {
+              issueAddLabel(id: $id, labelId: $labelId) { success issue { id identifier } }
+            }
+            """
+        case .removeLabel: """
+            mutation RemoveLabel($id: String!, $labelId: String!) {
+              issueRemoveLabel(id: $id, labelId: $labelId) { success issue { id identifier } }
+            }
+            """
+        case .proposalIssues: """
+            query ProposalIssues($ids: [ID!], $cursor: String) {
+              issues(filter: { id: { in: $ids } }, first: 25, after: $cursor) {
+                nodes {
+                  id
+                  identifier
+                  state { type }
+                  labels(first: 50) { nodes { name } }
+                  comments(first: 100) { nodes { id reactions { emoji user { id } } } }
+                }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
             """
         }
     }
@@ -627,6 +685,69 @@ extension LinearQuery {
 
         struct Team: Decodable {
             let id: LinearTeam.ID
+        }
+    }
+
+    struct ViewerData: Decodable {
+        let viewer: Viewer
+
+        struct Viewer: Decodable {
+            let id: String
+        }
+    }
+
+    struct TeamStatesData: Decodable {
+        let team: Team
+
+        struct Team: Decodable {
+            let triageEnabled: Bool
+            let states: Nodes<State>
+        }
+
+        struct State: Decodable {
+            let id: String
+            let type: LinearStateType
+            let position: Double
+        }
+    }
+
+    /// An issue a proposal waits on, as the proposal-issues query answers
+    /// with it.
+    struct ProposalIssueNode: Decodable {
+        let id: LinearIssue.ID
+        let identifier: String
+        let state: State
+        let labels: Nodes<Label>
+        let comments: Nodes<Comment>
+
+        struct State: Decodable {
+            let type: LinearStateType
+        }
+
+        struct Label: Decodable {
+            let name: String
+        }
+
+        struct Comment: Decodable {
+            let id: String
+            let reactions: [Reaction]
+        }
+
+        struct Reaction: Decodable {
+            let emoji: String
+            let user: User?
+        }
+
+        struct User: Decodable {
+            let id: String
+        }
+
+        var snapshot: ProposalIssueSnapshot {
+            ProposalIssueSnapshot(
+                id: id, identifier: identifier, stateType: state.type, labels: labels.nodes.map(\.name),
+                comments: comments.nodes.map {
+                    .init(id: $0.id, reactions: $0.reactions.map { .init(emoji: $0.emoji, userId: $0.user?.id) })
+                })
         }
     }
 

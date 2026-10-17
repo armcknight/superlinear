@@ -1,3 +1,5 @@
+import Foundation
+
 /// What the command line asks for. Anything unrecognised is an error rather
 /// than ignored: an unknown word used to fall through to running the daemon,
 /// so `superlinear status`, a command this version lacks, started a second
@@ -6,9 +8,9 @@ enum Command: Equatable {
     case run(configPath: String?)
     case install(force: Bool)
     case uninstall
-    case status(configPath: String?)
+    /// `since` is how far back "Done autonomously" looks; nil for the default.
+    case status(configPath: String?, since: TimeInterval?)
     case proposals(configPath: String?, workspace: String?)
-    case standup(configPath: String?, workspace: String?, printOnly: Bool)
     case resume
     case plan(configPath: String?, workspace: String?)
     case version
@@ -35,14 +37,24 @@ enum Command: Equatable {
         case "status":
             rest = rest.dropFirst()
             var configPath: String?
+            var since: TimeInterval?
             while let argument = rest.first {
                 rest = rest.dropFirst()
-                guard argument == "--config" else { return .invalid("unknown option for status: \(argument)") }
-                guard let path = rest.first else { return .invalid("--config needs a path") }
-                configPath = path
+                switch argument {
+                case "--config":
+                    guard let path = rest.first else { return .invalid("--config needs a path") }
+                    configPath = path
+                case "--since":
+                    guard let text = rest.first, let duration = StatusReview.duration(text) else {
+                        return .invalid("--since needs a duration such as 24h, 7d or 90m")
+                    }
+                    since = duration
+                default:
+                    return .invalid("unknown option for status: \(argument)")
+                }
                 rest = rest.dropFirst()
             }
-            return .status(configPath: configPath)
+            return .status(configPath: configPath, since: since)
         case "proposals":
             rest = rest.dropFirst()
             var configPath: String?
@@ -75,27 +87,6 @@ enum Command: Equatable {
                 rest = rest.dropFirst()
             }
             return .plan(configPath: configPath, workspace: workspace)
-        case "standup":
-            rest = rest.dropFirst()
-            var configPath: String?
-            var workspace: String?
-            var printOnly = false
-            while let argument = rest.first {
-                rest = rest.dropFirst()
-                if argument == "--print" {
-                    printOnly = true
-                    continue
-                }
-                guard ["--config", "--workspace"].contains(argument) else {
-                    return .invalid("unknown option for standup: \(argument)")
-                }
-                guard let value = rest.first else {
-                    return .invalid(argument == "--config" ? "--config needs a path" : "--workspace needs a name")
-                }
-                if argument == "--config" { configPath = value } else { workspace = value }
-                rest = rest.dropFirst()
-            }
-            return .standup(configPath: configPath, workspace: workspace, printOnly: printOnly)
         default:
             break
         }

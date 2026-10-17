@@ -22,7 +22,7 @@ enum ProposalsCommand {
             }
             names = [workspace]
         }
-        let state = State.loadWithStandups()
+        let state = State.loadWithPlanning()
         print(names.map { rendered(state.proposals(workspace: $0), workspace: $0) }.joined(separator: "\n\n"))
         return 0
     }
@@ -51,7 +51,7 @@ enum ProposalsCommand {
     static func describe(_ proposal: Proposal, now: Date = Date()) -> [String] {
         let target = "\(proposal.target.kind.rawValue) \(proposal.target.name ?? proposal.target.rawID)"
         var status = switch proposal.status {
-        case .pending: proposal.trust == .auto ? "auto" : "awaiting standup"
+        case .pending: proposal.trust == .auto ? "auto" : proposal.post == nil ? "to be put in Linear" : "in Linear"
         case .applied: "applied"
         case .rejected: "rejected"
         case .expired: "expired"
@@ -63,6 +63,10 @@ enum ProposalsCommand {
             "      reason: \(proposal.reason)",
             "      \(proposal.source.line.replacingOccurrences(of: "Source: ", with: "source: "))",
         ]
+        if let post = proposal.post {
+            let place = post.form == .comment ? "a comment on \(post.issueIdentifier ?? post.issueId.rawValue)" : "issue \(post.issueIdentifier ?? post.issueId.rawValue)"
+            lines.append("      in Linear: \(place)" + (post.url.map { ", \($0)" } ?? "") + ", since \(StatusTime.rendered(post.postedAt, now: now))")
+        }
         if let reason = proposal.rejectionReason { lines.append("      rejected: \(reason)") }
         if let note = proposal.reviewNote { lines.append("      review again: \(note)") }
         if let error = proposal.lastError { lines.append("      last error: \(error)") }
@@ -79,7 +83,7 @@ enum ProposalsCommand {
             return LineDiff.lines(from: old, to: new)
         case .addRelation(let relatedIssueId, let type):
             return ["\(type) \(relatedIssueId)"]
-        case .postProjectUpdate(let body):
+        case .postProjectUpdate(let body, _):
             return body.split(separator: "\n", omittingEmptySubsequences: false).map { "| \($0)" }
         case .closeIssue, .promoteIssue:
             return []

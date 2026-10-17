@@ -57,9 +57,10 @@ private actor FakeLinear: PlanningReading, LinearWriting {
     func labelId(named name: String, teamId: LinearTeam.ID) async throws -> LinearLabel.ID { "label" }
 
     func createIssue(
-        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String, labelIds: [LinearLabel.ID]
-    ) async throws -> JSONValue {
-        written("create \(title) in \(teamId) project=\(projectId?.rawValue ?? "none")")
+        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
+        labelIds: [LinearLabel.ID], stateId: String?
+    ) async throws -> CreatedIssue {
+        CreatedIssue(id: "new", identifier: "NEW-1", url: nil, response: written("create \(title) in \(teamId) project=\(projectId?.rawValue ?? "none")"))
     }
 
     func updateIssueDescription(id: LinearIssue.ID, description: String) async throws -> JSONValue {
@@ -218,37 +219,6 @@ struct PlanningTests {
         defer { try? FileManager.default.removeItem(at: empty) }
         let elsewhere = PlanningGatherer(workspace: try workspace(repoPath: empty.path), linear: linear)
         await #expect(throws: PlanningError.self) { try await elsewhere.trigger(history: [ran]) }
-    }
-
-    @Test("The standup offers a job when none has run, or something changed since the last")
-    func standupOffer() async throws {
-        let repo = try FixtureRepository()
-        defer { repo.remove() }
-        let head = try repo.commit("one")
-        let linear = FakeLinear(issues: issues, teams: [team])
-        let now = Date()
-        let on = try workspace(#", "planning": {"enabled": true}"#, repoPath: repo.path)
-        func offer(_ workspace: WorkspaceConfig, state: WorkspaceState = WorkspaceState(), planning: WorkspacePlanning = WorkspacePlanning()) async -> String? {
-            await PlanCommand.standupOffer(workspace, state: state, planning: planning, linear: linear, now: now)
-        }
-        #expect(await offer(try workspace(repoPath: repo.path)) == nil)
-        #expect(await offer(on)?.contains("yet") == true)
-
-        var planning = WorkspacePlanning()
-        planning.runs = [record("s", startedAt: now.addingTimeInterval(-6 * 3600), endedAt: now.addingTimeInterval(-6 * 3600), head: head)]
-        #expect(await offer(on, planning: planning) == nil)
-
-        var state = WorkspaceState()
-        var run = record("t", startedAt: now.addingTimeInterval(-14 * 3600), endedAt: now.addingTimeInterval(-14 * 3600), head: head)
-        run.usage = AgentUsage(inputTokens: 1_000_000, outputTokens: 200_000)
-        state.planningRuns = [run]
-        await linear.complete("SPL-3", at: now.addingTimeInterval(-3600))
-        let text = try #require(await offer(on, state: state))
-        #expect(text.contains("14h 0m ago"))
-        #expect(text.contains("tokens"))
-        #expect(text.contains("SPL-3 was completed"))
-        // The newest job of the two is the one the offer speaks of.
-        #expect(await offer(on, state: state, planning: planning)?.contains("6h 0m ago") == true)
     }
 
     @Test("`plan` takes a workspace and a config")
@@ -556,7 +526,7 @@ struct PlanningTests {
             "promote issue-2",
         ])
         // The same proposal again is pending already.
-        guard case .skip = try await engine.screen(result.drafts[0], existing: [Proposal(result.drafts[0], trust: .standup)]) else {
+        guard case .skip = try await engine.screen(result.drafts[0], existing: [Proposal(result.drafts[0], trust: .review)]) else {
             Issue.record("A duplicate was stored")
             return
         }
@@ -599,8 +569,8 @@ struct PlanningTests {
     func takeIn() {
         let now = Date()
         let draft = ingest([item("closeIssue") { $0.issue = "SPL-3" }]).drafts[0]
-        let fresh = Proposal(draft, trust: .standup, id: "p1", now: now)
-        let old = Proposal(draft, trust: .standup, id: "p0", now: now.addingTimeInterval(-WorkspacePlanning.retention - 1))
+        let fresh = Proposal(draft, trust: .review, id: "p1", now: now)
+        let old = Proposal(draft, trust: .review, id: "p0", now: now.addingTimeInterval(-WorkspacePlanning.retention - 1))
         var planning = WorkspacePlanning()
         planning.proposals = [old, fresh]
         var state = State()

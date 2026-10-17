@@ -28,8 +28,9 @@ actor Daemon {
     /// Until when a GitHub rate limit is used up. Polls skip their GitHub
     /// work until then.
     private var gitHubPausedUntil: Date?
-    /// What standups decided, read again at each poll.
-    private var standups: StandupRecord
+    /// The Linear user of each workspace's API key, whose reactions answer
+    /// proposals, once looked up.
+    private var linearViewers: [String: String] = [:]
     /// Whether each workspace's repository is private, once looked up. Only
     /// private ones are stopped by the GitHub Actions spending limit.
     private var repositoryPrivate: [String: Bool] = [:]
@@ -57,7 +58,6 @@ actor Daemon {
     init(config: Config) {
         self.config = config
         self.state = State.load()
-        self.standups = StandupRecord.load()
         self.planning = PlanningRecord.load()
     }
 
@@ -250,14 +250,8 @@ actor Daemon {
         while processes.count + watchers.count < config.maxConcurrentAgents {
             let queued = state.workspaces.flatMap { name, workspaceState in
                 workspaceState.inFlight.values.map { (name, $0) }
-            }.filter { name, run in
-                // A standup's hold keeps an agent from starting on a new issue,
-                // but not from going on with one it started.
-                workspace(named: name) != nil && !(run.isFresh && standups[name].held[LinearIssue.ID(rawValue: run.issueId)] != nil)
-            }
-            guard let (name, run) = AgentRunner.nextQueued(queued, rank: { self.standups[$0].rank(of: LinearIssue.ID(rawValue: $1.issueId)) }),
-                  let workspace = workspace(named: name)
-            else { break }
+            }.filter { name, _ in workspace(named: name) != nil }
+            guard let (name, run) = AgentRunner.nextQueued(queued), let workspace = workspace(named: name) else { break }
             guard launch(run, workspace: workspace) else { break }
         }
         let waiting = state.workspaces.values.reduce(0) { $0 + $1.inFlight.values.filter(\.isQueued).count }
@@ -634,10 +628,9 @@ actor Daemon {
         state.handledIssueIds(workspace: workspace)
     }
 
-    /// Issues waiting on blockers, a human or a standup's hold, which each
-    /// poll checks again.
+    /// Issues waiting on blockers or a human, which each poll checks again.
     func waitingIssueIds(workspace: String) -> Set<LinearIssue.ID> {
-        (state.workspaces[workspace]?.waitingIssueIds ?? []).union(standups[workspace].held.keys)
+        state.workspaces[workspace]?.waitingIssueIds ?? []
     }
 
     /// Records the issues the latest poll found waiting, logging those that
@@ -698,25 +691,16 @@ actor Daemon {
         save()
     }
 
-    // MARK: - Standups
+    // MARK: - Planning file
 
-    /// Reads the planning and standup files again, and takes in the
-    /// proposals `superlinear plan` stored, then what standups decided about
-    /// the workspace's proposals.
-    func takeInStandups(workspace: String) {
-        standups = StandupRecord.load()
+    /// Reads the planning file again, and takes in the proposals
+    /// `superlinear plan` stored for the workspace.
+    func takeInPlanning(workspace: String) {
         planning = PlanningRecord.load()
-        let before = state.proposals(workspace: workspace)
         if state.takeIn(planning[workspace], workspace: workspace, now: Date()) {
             log("Took in proposals from `superlinear plan`", workspace: workspace)
+            save()
         }
-        state.takeIn(standups[workspace], workspace: workspace)
-        if state.proposals(workspace: workspace) != before { save() }
-    }
-
-    /// The workspace's latest standup decisions.
-    func standup(workspace: String) -> WorkspaceStandup {
-        standups[workspace]
     }
 
     func forgetLinkedPullRequests(issueId: String, workspace: String) {
@@ -814,18 +798,135 @@ actor Daemon {
         return result
     }
 
-    func expireProposals(workspace: WorkspaceConfig) {
-        let expired = state.expireProposals(olderThanDays: workspace.proposalExpiryDays, workspace: workspace.name)
-        guard !expired.isEmpty else { return }
-        log("Expired \(expired.count) proposal(s) pending over \(workspace.proposalExpiryDays) days", workspace: workspace.name)
-        save()
-    }
-
     private func proposalEngine(_ workspace: WorkspaceConfig) -> ProposalEngine {
         ProposalEngine(
             workspace: workspace.name, autonomy: workspace.autonomy,
             linear: LinearClient(apiKey: workspace.apiKey), audit: AuditLog()
         )
+    }
+
+    // MARK: - Proposals in Linear
+
+    /// Puts the workspace's pending proposals in Linear, reads the owner's
+    /// answers to those there and applies or rejects them, and expires those
+    /// unanswered for `proposalExpiryDays`. Pending `auto` proposals, whose
+    /// write failed before, are tried again. A proposal from before proposals
+    /// were reviewed in Linear is put there like any other.
+    func reviewProposals(_ workspace: WorkspaceConfig, now: Date) async {
+        let name = workspace.name
+        let client = LinearClient(apiKey: workspace.apiKey)
+        let poster = ProposalPoster(
+            linear: client,
+            specTeamId: { try await client.proposalTeamId(teamIds: workspace.teamIds) },
+            specDocumentId: workspace.planning.specDocumentId, specDocumentURL: workspace.planning.specDocumentURL,
+            expiryDays: workspace.proposalExpiryDays)
+
+        for var proposal in state.proposals(workspace: name) where proposal.status == .pending && proposal.post == nil {
+            if proposal.trust == .auto {
+                proposal = await applyProposal(proposal, workspace: workspace)
+                // Sent back for review, it goes to Linear like the rest.
+                guard proposal.status == .pending, proposal.trust == .review, proposal.lastError == nil else { continue }
+            }
+            await post(proposal, poster: poster, workspace: workspace, now: now)
+        }
+
+        let posted = state.proposals(workspace: name).filter(\.isPosted)
+        if !posted.isEmpty {
+            do {
+                let viewer = try await viewerId(workspace: workspace, client: client)
+                let ids = Array(Set(posted.compactMap { $0.post?.issueId })).sorted()
+                let snapshots = Dictionary(
+                    try await client.proposalIssues(ids: ids).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                for proposal in posted {
+                    guard let post = proposal.post else { continue }
+                    let snapshot = snapshots[post.issueId]
+                    switch ProposalAnswer.read(proposal, snapshot: snapshot, viewerId: viewer) {
+                    case .none:
+                        continue
+                    case .approve:
+                        log("Approved in Linear: \(proposal.kind.rawValue) \(proposal.id)", workspace: name)
+                        let result = await applyProposal(proposal, workspace: workspace)
+                        // A write that failed is tried again next poll, as the answer stands.
+                        guard result.lastError == nil else { continue }
+                        await settle(result, poster: poster, workspace: workspace, now: now)
+                    case .reject(let reason):
+                        state.rejectProposal(id: proposal.id, reason: reason, workspace: name, now: now)
+                        save()
+                        log("Rejected in Linear: \(proposal.kind.rawValue) \(proposal.id) (\(reason))", workspace: name)
+                        if snapshot != nil, let rejected = state.proposals(workspace: name).first(where: { $0.id == proposal.id }) {
+                            await settle(rejected, poster: poster, workspace: workspace, now: now)
+                        }
+                    }
+                }
+            } catch {
+                if firstReport("[\(name)] answers: \(error)") {
+                    log("Could not read the answers to proposals in Linear, trying again each poll: \(error) (logged once)", workspace: name)
+                }
+            }
+        }
+
+        let expired = state.expireProposals(olderThanDays: workspace.proposalExpiryDays, workspace: name, now: now)
+        guard !expired.isEmpty else { return }
+        log("Expired \(expired.count) proposal(s) in Linear over \(workspace.proposalExpiryDays) days", workspace: name)
+        save()
+        for proposal in expired {
+            await settle(proposal, poster: poster, workspace: workspace, now: now)
+        }
+    }
+
+    /// Puts one proposal in Linear and records where. A failure is logged
+    /// once, and the proposal tried again at the next poll.
+    private func post(_ proposal: Proposal, poster: ProposalPoster, workspace: WorkspaceConfig, now: Date) async {
+        let name = workspace.name
+        do {
+            let posted = try await poster.post(proposal, now: now)
+            for warning in posted.warnings where firstReport("[\(name)] \(warning)") {
+                log(warning + " (logged once)", workspace: name)
+            }
+            state.recordProposal(posted.proposal, workspace: name)
+            save()
+            if let post = posted.proposal.post {
+                let form = post.form == .comment ? "a comment on \(post.issueIdentifier ?? post.issueId.rawValue)" : "issue \(post.issueIdentifier ?? post.issueId.rawValue)"
+                log("Put \(proposal.kind.rawValue) \(proposal.id) in Linear as \(form)" + (post.url.map { ": \($0)" } ?? ""), workspace: name)
+            } else if posted.proposal.status == .rejected {
+                log("Rejected \(proposal.kind.rawValue) \(proposal.id): \(posted.proposal.rejectionReason ?? "no reason")", workspace: name)
+            }
+        } catch {
+            if firstReport("[\(name)] post \(proposal.id): \(error)") {
+                log("Could not put \(proposal.kind.rawValue) \(proposal.id) in Linear, trying again each poll: \(error) (logged once)", workspace: name)
+            }
+        }
+    }
+
+    /// Marks a decided proposal in Linear, or asks again for one sent back
+    /// for review, and records its new post.
+    private func settle(_ proposal: Proposal, poster: ProposalPoster, workspace: WorkspaceConfig, now: Date) async {
+        let name = workspace.name
+        let othersPending = state.proposals(workspace: name).contains {
+            $0.id != proposal.id && $0.isPosted && $0.post?.issueId == proposal.post?.issueId
+        }
+        do {
+            let settled = try await poster.settle(proposal, othersPending: othersPending, now: now)
+            if settled != proposal {
+                state.recordProposal(settled, workspace: name)
+                save()
+            }
+            if settled.status == .pending, let post = settled.post {
+                log("Asked again in Linear for \(proposal.kind.rawValue) \(proposal.id)" + (post.url.map { ": \($0)" } ?? ""), workspace: name)
+            }
+        } catch {
+            if firstReport("[\(name)] settle \(proposal.id) \(proposal.status.rawValue): \(error)") {
+                log("Could not mark \(proposal.kind.rawValue) \(proposal.id) as \(proposal.status.rawValue) in Linear: \(error) (logged once)", workspace: name)
+            }
+        }
+    }
+
+    /// The Linear user of the workspace's API key, looked up once.
+    private func viewerId(workspace: WorkspaceConfig, client: LinearClient) async throws -> String {
+        if let viewer = linearViewers[workspace.name] { return viewer }
+        let viewer = try await client.viewerId()
+        linearViewers[workspace.name] = viewer
+        return viewer
     }
 
     // MARK: - Planning

@@ -161,7 +161,7 @@ struct WorkflowRun: Decodable, Sendable, Equatable {
     var headSha: String? = nil
     var createdAt: Date? = nil
 
-    static let jsonFields = "headBranch,status,startedAt,updatedAt"
+    static let jsonFields = "headBranch,status,startedAt,updatedAt,conclusion,workflowName,url"
 
     init(
         headBranch: String, status: String, startedAt: Date?, updatedAt: Date?, workflowName: String? = nil,

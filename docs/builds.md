@@ -10,7 +10,7 @@ Each agent opens its pull request with `/armcknight-claude:pr --autonomous`, whi
 superlinear itself reads CI in two places:
 
 - `superlinear status` shows each open pull request's CI state, and the CI time of each task, from `gh run list`: see [Status](operations.md#status).
-- The [standup](planning.md#standup) lists CI failing on the default branch under Risks.
+- [`superlinear status`](operations.md#status) lists CI failing on the default branch under Risks.
 
 The CI workflows a project runs are its own, or the shared ones its [components](bootstrap.md#components) bring. An Apple app calls `ios-ci.yml` from [armcknight/workflows](https://github.com/armcknight/workflows) at its major tag, `@4`. On each pull request it runs the shared `test` lane. Before it builds, it writes the app's Arkana keys to `.env` from the repository's secrets, runs Arkana and runs XcodeGen, so the app needs both.
 

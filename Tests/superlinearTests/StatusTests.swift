@@ -213,7 +213,7 @@ struct StatusTests {
         """)
     }
 
-    @Test("A pull request whose review an agent addresses says so under Awaiting review")
+    @Test("A pull request whose review an agent addresses says so under Waiting on you")
     func awaitingAgent() {
         let pullRequest = ReviewablePullRequest(
             number: 4, url: "https://github.com/o/r/pull/4", title: "Four", headRefName: "linear/sl-1",
@@ -227,7 +227,7 @@ struct StatusTests {
         )
         #expect(report.rendered() == """
         w
-          Awaiting review
+          Waiting on you
             SL-1  #4 Four
                   agent addressing review · no CI · https://github.com/o/r/pull/4
           Addressing review
