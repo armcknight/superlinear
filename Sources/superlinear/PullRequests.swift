@@ -14,16 +14,19 @@ struct PendingMerge: Codable, Sendable, Equatable {
     /// The last agent set to resolve the pull request's conflicts with its
     /// base branch, if that was the last agent on the issue.
     var conflictAttempt: ConflictAttempt?
+    /// The pull request this one is stacked on, if any.
+    var stack: StackBase?
 
     init(
         issueId: String, identifier: LinearIssue.Identifier, branchName: String,
-        reviewsHandledThrough: Date? = nil, conflictAttempt: ConflictAttempt? = nil
+        reviewsHandledThrough: Date? = nil, conflictAttempt: ConflictAttempt? = nil, stack: StackBase? = nil
     ) {
         self.issueId = issueId
         self.identifier = identifier
         self.branchName = branchName
         self.reviewsHandledThrough = reviewsHandledThrough
         self.conflictAttempt = conflictAttempt
+        self.stack = stack
     }
 
     /// The watch that follows a run once its agent ends. Reviews from after
@@ -36,7 +39,8 @@ struct PendingMerge: Codable, Sendable, Equatable {
         self.init(
             issueId: run.issueId, identifier: run.identifier, branchName: run.branchName,
             reviewsHandledThrough: run.conflict.map { $0.reviewsHandledThrough ?? started } ?? started,
-            conflictAttempt: run.conflict?.attempt
+            conflictAttempt: run.conflict?.attempt,
+            stack: run.stack
         )
     }
 }
@@ -112,6 +116,8 @@ struct PullRequest: Codable, Sendable, Equatable {
     /// works it out in the background after the base or branch moves, and
     /// says `UNKNOWN` until it has.
     var mergeable: String? = nil
+    /// Its checks, when the listing asked.
+    var statusCheckRollup: [ReviewablePullRequest.Check]? = nil
 
     /// Whether GitHub found that it conflicts with its base branch.
     var conflicts: Bool { mergeable == "CONFLICTING" }
@@ -195,6 +201,31 @@ struct PullRequestChecker: Sendable {
     static let listAllArguments = [
         "gh", "pr", "list", "--state", "all", "--limit", "1000", "--json", "number,url,state,headRefName,mergedAt",
     ]
+
+    static func stackBaseArguments(branch: String) -> [String] {
+        [
+            "gh", "pr", "list", "--head", branch, "--state", "open", "--limit", "1", "--json",
+            "number,url,state,headRefName,headRefOid,baseRefName,isDraft,statusCheckRollup",
+        ]
+    }
+
+    /// The open pull request from `branch`, with what decides whether an
+    /// issue may stack on it: its draft flag and checks. One call per branch,
+    /// asked only for the few blockers of issues that could stack.
+    func stackBase(branch: String, repoPath: String) async throws -> PullRequest? {
+        try Self.decodePullRequests(try await run(Self.stackBaseArguments(branch: branch), in: repoPath)).first
+    }
+
+    /// Makes the pull request a draft, or ready for review.
+    func setDraft(_ draft: Bool, number: PullRequest.Number, repoPath: String) async throws {
+        _ = try await run(["gh", "pr", "ready", "\(number)"] + (draft ? ["--undo"] : []), in: repoPath)
+    }
+
+    /// Points the pull request at `base`, as GitHub does on its own when the
+    /// branch it targeted is deleted after its merge.
+    func retarget(number: PullRequest.Number, base: String, repoPath: String) async throws {
+        _ = try await run(["gh", "pr", "edit", "\(number)", "--base", base], in: repoPath)
+    }
 
     /// The repository's pull requests, newest 1,000, with their branches.
     func allPullRequests(repoPath: String) async throws -> [PullRequest] {
@@ -302,6 +333,11 @@ actor PullRequestListing {
             .flatMap { _ in Git.run(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/\(branch)^{commit}"], in: repoPath) }
         remoteHeads[branch] = head
         return head
+    }
+
+    /// Forgets the head of `branch`, after the daemon pushed to it.
+    func forgetRemoteHead(of branch: String) {
+        remoteHeads[branch] = nil
     }
 
     private static func result(_ body: @Sendable () async throws -> [PullRequest]) async -> Result<[PullRequest], Error> {

@@ -82,9 +82,10 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
     }
 
     /// `run` is the issue's record in the state file, if it is still in
-    /// flight; `running` whether that run's process is alive.
+    /// flight; `running` whether that run's process is alive; `pending` its
+    /// merge watch, if its agent has ended.
     static func of(
-        run: AgentRun?, running: Bool, issue: LinearIssueStatus?, pullRequest: PullRequest?
+        run: AgentRun?, running: Bool, issue: LinearIssueStatus?, pullRequest: PullRequest?, pending: PendingMerge? = nil
     ) -> TaskCategory {
         if let run {
             // Interrupted, it resumes like any other run.
@@ -93,6 +94,9 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
             if run.isQueued { return .queued }
             return running ? .running : .interrupted
         }
+        // Stacked on a pull request closed without a merge: back to blocked,
+        // its own pull request a draft, until the owner decides.
+        if pullRequest?.state == .open, pending?.stack?.drafted == true { return .blocked }
         switch pullRequest?.state {
         case .open: return .openPullRequest
         case .merged: return issue?.isCompleted == true ? .completed : .merged
@@ -115,6 +119,8 @@ struct TaskEntry: Sendable, Equatable {
     var usage: AgentUsage? = nil
     /// Time the branch's finished CI runs took, if CI runs were listed.
     var ciTime: TimeInterval? = nil
+    /// The pull request its own is stacked on, if any.
+    var stack: StackBase? = nil
 }
 
 /// What `superlinear status` prints for one workspace.
@@ -155,18 +161,20 @@ struct WorkspaceReport: Sendable {
             let run = state.inFlight[id]
             guard run != nil || (issue != nil && pullRequests != nil) else { return nil }
 
-            let branch = issue?.branchName ?? run?.branchName ?? ""
+            let pending = state.pendingMerges[id]
+            let branch = issue?.branchName ?? run?.branchName ?? pending?.branchName ?? ""
             let pullRequest = pullRequests.flatMap { PullRequest.best(for: branch, among: $0) }
             let running = run.map(isRunning) ?? false
-            let category = TaskCategory.of(run: run, running: running, issue: issue, pullRequest: pullRequest)
+            let category = TaskCategory.of(run: run, running: running, issue: issue, pullRequest: pullRequest, pending: pending)
 
             return TaskEntry(
                 identifier: issue?.identifier ?? run?.identifier ?? LinearIssue.Identifier(rawValue: id),
                 title: issue?.title ?? "",
                 category: category,
-                detail: detail(for: category, run: run, issue: issue, pullRequest: pullRequest, runner: runner),
+                detail: detail(for: category, run: run, issue: issue, pullRequest: pullRequest, pending: pending, runner: runner),
                 branch: branch,
-                pullRequest: pullRequest
+                pullRequest: pullRequest,
+                stack: run?.stack ?? pending?.stack
             )
         }
         // As of the daemon's last poll, so they need neither Linear nor GitHub.
@@ -191,7 +199,7 @@ struct WorkspaceReport: Sendable {
 
     private static func detail(
         for category: TaskCategory, run: AgentRun?, issue: LinearIssueStatus?,
-        pullRequest: PullRequest?, runner: AgentRunner
+        pullRequest: PullRequest?, pending: PendingMerge?, runner: AgentRunner
     ) -> String? {
         let linearState = issue.map { "Linear: \($0.state.name)" }
         switch category {
@@ -211,12 +219,18 @@ struct WorkspaceReport: Sendable {
             if run?.usageLimited == true { return "stopped at the Claude usage limit; resumes first when the pause ends" }
             guard let run, run.resumes > 0 else { return nil }
             return "to resume, attempt \(run.resumes + 1)"
-        case .blocked, .needsHuman:
-            // Waiting issues have entries of their own.
+        case .blocked:
+            // Waiting issues have entries of their own; this one is stacked
+            // on a pull request closed without a merge.
+            guard let stack = pending?.stack, let pullRequest else { return nil }
+            return "blocked by \(stack.identifier): its pull request \(stack.url) was closed without a merge, "
+                + "so \(pullRequest.url) is a draft until you decide"
+        case .needsHuman:
             return nil
         case .openPullRequest:
             guard let pullRequest else { return nil }
-            return pullRequest.isDraft == true ? "\(pullRequest.url) (draft)" : pullRequest.url
+            let stacked = (run?.stack ?? pending?.stack).map { ", stacked on #\($0.number)" } ?? ""
+            return (pullRequest.isDraft == true ? "\(pullRequest.url) (draft)" : pullRequest.url) + stacked
         case .merged:
             return [pullRequest?.url, linearState].compactMap { $0 }.joined(separator: ", ")
         case .completed:
@@ -252,19 +266,30 @@ struct WorkspaceReport: Sendable {
             }
         }
 
+        // Drafts whose pull request below was closed without a merge.
+        var closedBases: [String: StackBase] = [:]
+        for entry in entries where entry.category == .blocked {
+            if let url = entry.pullRequest?.url, let stack = entry.stack { closedBases[url] = stack }
+        }
         for (heading, drafts) in [("Awaiting review", false), ("Draft pull requests", true)] {
-            let section = reviews.filter { $0.pullRequest.isDraft == drafts }
+            let section = Self.byStack(reviews.filter { $0.pullRequest.isDraft == drafts })
             guard !section.isEmpty else { continue }
             lines.append("  \(heading)")
-            for review in section {
+            for (review, stackedOn, level) in section {
                 let pullRequest = review.pullRequest
+                let nested = String(repeating: "  ", count: level)
                 let padded = review.issue.identifier.rawValue.padding(toLength: width, withPad: " ", startingAt: 0)
-                lines.append("    \(padded)  #\(pullRequest.number) \(pullRequest.title)".trimmingTrailingWhitespace())
+                lines.append("    \(nested)\(padded)  #\(pullRequest.number) \(pullRequest.title)".trimmingTrailingWhitespace())
+                var notes: [String] = []
+                if let stackedOn { notes.append("stacked on #\(stackedOn)") }
+                if let closed = closedBases[pullRequest.url] {
+                    notes.append("stacked on #\(closed.number), closed without a merge: decide what becomes of it")
+                }
                 let reviewState = agentAt[review.issue.identifier] ?? pullRequest.reviewState.rawValue
                 let state = drafts ? [] : [reviewState]
                 let conflicts = pullRequest.mergeable == "CONFLICTING" ? ["conflicts with \(pullRequest.baseRefName ?? "base")"] : []
                 let checks = pullRequest.checkState(stoppedBranches: ciStoppedBranches).rawValue
-                lines.append(indent + (state + conflicts + [checks, pullRequest.url]).joined(separator: " · "))
+                lines.append(indent + nested + (notes + state + conflicts + [checks, pullRequest.url]).joined(separator: " · "))
             }
         }
 
@@ -289,6 +314,37 @@ struct WorkspaceReport: Sendable {
             }
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// The entries by stack: each pull request after the one it targets, with
+    /// that one's number and how deep it is. Pull requests on no listed
+    /// branch come in the given order, each followed by its stack.
+    static func byStack(_ entries: [ReviewEntry]) -> [(entry: ReviewEntry, stackedOn: PullRequest.Number?, level: Int)] {
+        let byHead = Dictionary(entries.map { ($0.pullRequest.headRefName, $0) }, uniquingKeysWith: { a, _ in a })
+        func parent(_ entry: ReviewEntry) -> ReviewEntry? {
+            entry.pullRequest.baseRefName.flatMap { byHead[$0] }.flatMap { $0.pullRequest.number == entry.pullRequest.number ? nil : $0 }
+        }
+        var children: [PullRequest.Number: [ReviewEntry]] = [:]
+        for entry in entries {
+            if let parent = parent(entry) { children[parent.pullRequest.number, default: []].append(entry) }
+        }
+        var ordered: [(entry: ReviewEntry, stackedOn: PullRequest.Number?, level: Int)] = []
+        var placed: Set<PullRequest.Number> = []
+        func place(_ entry: ReviewEntry, stackedOn: PullRequest.Number?, level: Int) {
+            guard placed.insert(entry.pullRequest.number).inserted else { return }
+            ordered.append((entry, stackedOn, level))
+            for child in children[entry.pullRequest.number] ?? [] {
+                place(child, stackedOn: entry.pullRequest.number, level: level + 1)
+            }
+        }
+        for entry in entries where parent(entry) == nil {
+            place(entry, stackedOn: nil, level: 0)
+        }
+        // Pull requests in a cycle of bases have no bottom; list them alone.
+        for entry in entries where !placed.contains(entry.pullRequest.number) {
+            place(entry, stackedOn: nil, level: 0)
+        }
+        return ordered
     }
 
     /// Gathers the report for one workspace from the state file, Linear and

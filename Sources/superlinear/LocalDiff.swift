@@ -76,22 +76,28 @@ enum Git {
     /// Runs git in `repoPath` and returns its trimmed output, or nil when it
     /// exits non-zero.
     static func run(_ arguments: [String], in repoPath: String) -> String? {
+        let result = result(arguments, in: repoPath)
+        return result.status == 0 ? result.output : nil
+    }
+
+    /// Runs git in `repoPath` and returns its exit status with its trimmed
+    /// output, standard error included, so a failure can say why.
+    static func result(_ arguments: [String], in repoPath: String) -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["git", "-C", repoPath] + arguments
         let output = Pipe()
         process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
+        process.standardError = output
         process.standardInput = FileHandle.nullDevice
         do {
             try process.run()
         } catch {
-            return nil
+            return (-1, "\(error)")
         }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (process.terminationStatus, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// The branch `origin/HEAD` names, or nil when it names none.

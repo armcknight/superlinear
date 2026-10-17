@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Stacks: dependent work on open pull requests. With the workspace key
+  `stacking`, an issue whose one unmerged blocker has an open pull request
+  from an agent, not a draft, with CI passing, starts on top of it: its
+  branch is created from the blocker's branch, and its pull request
+  targets that branch, within `maxStackDepth` pull requests, 3 by default.
+  GitHub's native stacks are not used, as they rebase and force-push the
+  pull requests above a merged one: a watched pull request is never
+  rewritten. Each poll keeps stacks current, bottom-up: a lower branch
+  that moved is merged into the pull requests above it with a merge commit
+  and pushed, a conflict goes to a conflict agent, a merged lower pull
+  request has the next base retargeted and merged in, and one closed
+  without a merge makes the pull requests above it drafts, their issues
+  back to Blocked, for a decision at the standup. `superlinear status`
+  lists each pull request under the one it stacks on.
 - Pause and resume at the provider limits. When a Claude session ends at
   the Claude plan's usage limit, every Claude session pauses, in all
   workspaces, until the reset time in the message, or for an hour when it

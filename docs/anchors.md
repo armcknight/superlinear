@@ -20,6 +20,11 @@ Rules:
 | [`lifecycle.md#pull-request`](lifecycle.md#pull-request) | The pull request, and how the daemon follows it. |
 | [`lifecycle.md#reviews`](lifecycle.md#reviews) | Reviews that bring an agent back. |
 | [`lifecycle.md#conflicts`](lifecycle.md#conflicts) | Conflicts with the base branch. |
+| [`lifecycle.md#stacks`](lifecycle.md#stacks) | Stacks: dependent work on open pull requests. |
+| [`lifecycle.md#stackable`](lifecycle.md#stackable) | Which issues stack. |
+| [`lifecycle.md#no-native-stacks`](lifecycle.md#no-native-stacks) | Why GitHub's native stacks are not used. |
+| [`lifecycle.md#never-rewritten`](lifecycle.md#never-rewritten) | Reviewed pull requests are never rewritten. |
+| [`lifecycle.md#keeping-stacks-current`](lifecycle.md#keeping-stacks-current) | Keeping a stack current. |
 | [`lifecycle.md#limits`](lifecycle.md#limits) | Usage and spending limits: pausing and resuming. |
 | [`lifecycle.md#claude-usage-limit`](lifecycle.md#claude-usage-limit) | The Claude usage limit, and `superlinear resume`. |
 | [`lifecycle.md#spending-limit`](lifecycle.md#spending-limit) | The GitHub Actions spending limit. |
@@ -81,6 +86,8 @@ Rules:
 | [`configuration.md#autonomy`](configuration.md#autonomy) | `autonomy` |
 | [`configuration.md#proposal-expiry-days`](configuration.md#proposal-expiry-days) | `proposalExpiryDays` |
 | [`configuration.md#planning`](configuration.md#planning) | `planning` |
+| [`configuration.md#stacking`](configuration.md#stacking) | `stacking` |
+| [`configuration.md#max-stack-depth`](configuration.md#max-stack-depth) | `maxStackDepth` |
 | [`configuration.md#config-changes`](configuration.md#config-changes) | Changing the config. |
 | [`configuration.md#files`](configuration.md#files) | The files superlinear reads and writes. |
 
