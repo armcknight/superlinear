@@ -165,6 +165,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agents that the Claude usage limit stopped while a daemon from before the
+  pause ran are found again: a started issue with no pull request whose
+  agent log ends at the limit is queued first and resumes its worktree's
+  newest Claude session, and a pull request whose review agent stopped
+  there gets one more agent for your latest change request.
 - A pull request already attached to its Linear issue, as by hand or before
   the daemon kept records of its links, is recorded as linked. Linear refuses
   to attach it again, so the daemon tried and failed every poll.

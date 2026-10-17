@@ -66,6 +66,17 @@ struct PullRequestReview: Codable, Sendable, Equatable {
     }
 
     /// The reviews by `login`, submitted after `date`, that ask for changes.
+    /// Whether `login`'s latest review asks for changes and came before the
+    /// last agent's log was written: the agent that the usage limit stopped
+    /// was answering it.
+    static func stoppedAtUsageLimit(_ reviews: [PullRequestReview], by login: String, logWrittenAt: Date?) -> Bool {
+        guard let logWrittenAt else { return false }
+        let latest = reviews.filter { $0.author?.login == login && $0.submittedAt != nil }
+            .max { $0.submittedAt! < $1.submittedAt! }
+        guard let latest, latest.asksForChanges, let submittedAt = latest.submittedAt else { return false }
+        return submittedAt <= logWrittenAt
+    }
+
     static func unaddressed(_ reviews: [PullRequestReview], by login: String, after date: Date) -> [PullRequestReview] {
         reviews.filter { review in
             guard review.author?.login == login, review.asksForChanges,

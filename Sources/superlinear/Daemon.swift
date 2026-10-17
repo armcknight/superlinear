@@ -131,6 +131,36 @@ actor Daemon {
         fillSlots()
     }
 
+    /// Queues again an issue whose agent the Claude usage limit stopped before
+    /// the daemon could pause it. It goes first, as a run the limit stopped
+    /// does, resumes `sessionId` when that session exists, and is not a new
+    /// start: the issue is not moved in Linear again.
+    func requeueStoppedAtUsageLimit(_ issue: LinearIssueStatus, sessionId: String?, workspace: WorkspaceConfig) {
+        guard state.workspaces[workspace.name]?.inFlight[issue.id] == nil,
+              state.workspaces[workspace.name]?.pendingMerges[issue.id] == nil
+        else { return }
+        let now = Date()
+        var run = AgentRun(
+            issueId: issue.id,
+            identifier: issue.identifier,
+            branchName: issue.branchName,
+            sessionId: sessionId ?? UUID().uuidString.lowercased(),
+            queuedAt: now
+        )
+        run.launchedAt = now
+        run.usageLimited = true
+        state.recordRun(run, workspace: workspace.name)
+        let how = sessionId.map { "resumes session \($0)" } ?? "starts a new session"
+        log("\(issue.identifier) stopped at the Claude usage limit before it could be paused; queued again, it \(how)", workspace: workspace.name)
+        save()
+        fillSlots()
+    }
+
+    /// Issues the daemon queued an agent for.
+    func processedIssueIds(workspace: String) -> Set<String> {
+        state.workspaces[workspace]?.processedIssueIds ?? []
+    }
+
     /// Queues an agent to address new reviews on the pull request of an issue
     /// awaiting its merge. It works in the issue's existing worktree, under a
     /// new Claude session, and the issue awaits its merge again once it ends.

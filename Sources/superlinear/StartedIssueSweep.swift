@@ -23,6 +23,21 @@ enum StartedIssueSweep {
         }
     }
 
+    /// Started issues whose agent the Claude usage limit stopped before the
+    /// daemon could pause it, as a daemon from before the pause did: issues it
+    /// processed and follows through no run or merge watch, with no pull
+    /// request from their branch, whose last agent log ends at the limit.
+    static func stoppedAtUsageLimit(
+        issues: [LinearIssueStatus], pullRequests: [PullRequest], processed: Set<String>, tracked: Set<String>,
+        stopped: (LinearIssue.Identifier) -> Bool
+    ) -> [LinearIssueStatus] {
+        let branches = Set(pullRequests.compactMap(\.headRefName))
+        return issues.filter { issue in
+            processed.contains(issue.id) && !tracked.contains(issue.id) && !branches.contains(issue.branchName)
+                && stopped(issue.identifier)
+        }
+    }
+
     /// The merge that completes the issue: none while a pull request is still
     /// open, as for follow-up work, nor one from before the issue last moved
     /// into a started state, so an issue reopened after its merge is left

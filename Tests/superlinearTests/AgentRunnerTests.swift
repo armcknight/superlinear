@@ -106,6 +106,40 @@ struct AgentRunnerTests {
         #expect(!runner.claudeSessionExists("other"))
     }
 
+    @Test("The latest Claude session of a worktree is found by its project directory")
+    func latestClaudeSession() throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let runner = AgentRunner(home: home, environment: [:])
+        let worktree = "/Users/me/repo/worktrees/linear/spl-1-a.b"
+        #expect(AgentRunner.claudeProjectName(worktree) == "-Users-me-repo-worktrees-linear-spl-1-a-b")
+        #expect(runner.latestClaudeSession(inWorktree: worktree) == nil)
+
+        let project = "\(home)/.claude/projects/-Users-me-repo-worktrees-linear-spl-1-a-b"
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: "\(project)/new", withIntermediateDirectories: true)
+        fm.createFile(atPath: "\(project)/old.jsonl", contents: Data())
+        fm.createFile(atPath: "\(project)/new.jsonl", contents: Data())
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 100)], ofItemAtPath: "\(project)/old.jsonl")
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 200)], ofItemAtPath: "\(project)/new.jsonl")
+        #expect(runner.latestClaudeSession(inWorktree: worktree) == "new")
+    }
+
+    @Test("The usage limit is read from the end of an issue's agent log")
+    func usageLimitFromLog() throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let runner = AgentRunner(home: home, environment: [:])
+        let logs = runner.logsDirectory
+        try FileManager.default.createDirectory(atPath: logs, withIntermediateDirectories: true)
+        try "You've hit your session limit · resets 4:30pm (America/Anchorage)\n".write(
+            toFile: "\(logs)/SPL-1.log", atomically: true, encoding: .utf8)
+        try "All done.\n".write(toFile: "\(logs)/SPL-2.log", atomically: true, encoding: .utf8)
+        #expect(runner.usageLimitHit(identifier: "SPL-1", now: Date()) != nil)
+        #expect(runner.usageLimitHit(identifier: "SPL-2", now: Date()) == nil)
+        #expect(runner.usageLimitHit(identifier: "SPL-3", now: Date()) == nil)
+    }
+
     // Runs the real wrapper against a stand-in `work`, to check that the exit
     // status reaches both the status file and the exit handler.
     @Test("A launched agent reports work's exit status")
