@@ -13,7 +13,7 @@ struct WorkspaceConfig: Decodable, Sendable {
     static let defaultReadyStates: [LinearStateType] = [.unstarted]
     static let defaultHumanLabels = ["Needs human", "Spike"]
     static let defaultProposalExpiryDays = 7
-    static let defaultMaxStackDepth = 3
+    static let defaultMaxStackDepth: StackBase.Depth = 3
 
     let name: String
     let apiKey: String
@@ -39,7 +39,7 @@ struct WorkspaceConfig: Decodable, Sendable {
     /// starts on top of that pull request's branch.
     let stacking: Bool
     /// How many pull requests a stack may hold, the bottom one included.
-    let maxStackDepth: Int
+    let maxStackDepth: StackBase.Depth
 
     enum CodingKeys: String, CodingKey {
         case name, apiKey, repoPath, teamIds, pollIntervalSeconds, selection, readyStates, humanLabels
@@ -72,8 +72,8 @@ struct WorkspaceConfig: Decodable, Sendable {
         let expiry = try container.decodeIfPresent(Int.self, forKey: .proposalExpiryDays) ?? Self.defaultProposalExpiryDays
         proposalExpiryDays = max(1, expiry)
         planning = try container.decodeIfPresent(PlanningConfig.self, forKey: .planning) ?? PlanningConfig()
-        stacking = try container.decodeIfPresent(Bool.self, forKey: .stacking) ?? false
-        let depth = try container.decodeIfPresent(Int.self, forKey: .maxStackDepth) ?? Self.defaultMaxStackDepth
+        stacking = try container.decodeIfPresent(Bool.self, forKey: .stacking) ?? true
+        let depth = try container.decodeIfPresent(StackBase.Depth.self, forKey: .maxStackDepth) ?? Self.defaultMaxStackDepth
         maxStackDepth = max(1, depth)
     }
 

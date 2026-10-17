@@ -19,7 +19,7 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
       "selection": "ready",
       "readyStates": ["unstarted"],
       "humanLabels": ["Needs human", "Spike"],
-      "stacking": false
+      "stacking": true
     }
   ]
 }
@@ -51,7 +51,7 @@ Each workspace entry is one Linear-account-to-repository pairing. List several t
 | <a id="autonomy"></a>`autonomy` | no | The trust level of each kind of proposal: a map from kind to `"auto"`, `"standup"` or `"never"`. Kinds left out keep their defaults. An unknown kind or level is a config error, so a misspelt kind does not leave its default in force unseen. See [Proposals and trust levels](planning.md#proposals). |
 | <a id="proposal-expiry-days"></a>`proposalExpiryDays` | no | Days after which a pending proposal expires, counted from the first standup that showed it. Defaults to `7`. |
 | <a id="planning"></a>`planning` | no | Planning settings. `planning.enabled` turns on the [planning job](planning.md#daily-planning); it defaults to `false`. `planning.specDocumentURL` is the URL of the Linear document holding the project's spec; the planning job reads it, and decisions entered at a [standup](planning.md#standup-needs-human) are added to it. |
-| <a id="stacking"></a>`stacking` | no | Whether an issue whose one unmerged blocker has an open pull request from an agent, not a draft, with CI passing, starts on top of that pull request's branch, as a pull request that targets it. See [Stacks](lifecycle.md#stacks). Defaults to `false`. |
+| <a id="stacking"></a>`stacking` | no | Whether an issue whose one unmerged blocker has an open pull request from an agent, not a draft, with CI passing, starts on top of that pull request's branch, as a pull request that targets it. See [Stacks](lifecycle.md#stacks). Defaults to `true`. |
 | <a id="max-stack-depth"></a>`maxStackDepth` | no | How many pull requests a stack may hold, the bottom one included; an issue that would make a stack deeper waits for a merge. At least `1`, which stacks nothing. Defaults to `3`. |
 
 For example, to apply new issues at once and never post project updates:

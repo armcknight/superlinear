@@ -11,7 +11,7 @@
       "readyStates": ["unstarted"],
       "humanLabels": ["Needs human", "Spike"],
       "planning": { "enabled": false },
-      "stacking": false
+      "stacking": true
     }
   ]
 }

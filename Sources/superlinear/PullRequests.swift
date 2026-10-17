@@ -19,7 +19,7 @@ struct PendingMerge: Codable, Sendable, Equatable {
 
     init(
         issueId: String, identifier: LinearIssue.Identifier, branchName: String,
-        reviewsHandledThrough: Date? = nil, conflictAttempt: ConflictAttempt? = nil, stack: StackBase? = nil
+        reviewsHandledThrough: Date?, conflictAttempt: ConflictAttempt?, stack: StackBase?
     ) {
         self.issueId = issueId
         self.identifier = identifier

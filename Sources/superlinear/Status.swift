@@ -85,7 +85,7 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
     /// flight; `running` whether that run's process is alive; `pending` its
     /// merge watch, if its agent has ended.
     static func of(
-        run: AgentRun?, running: Bool, issue: LinearIssueStatus?, pullRequest: PullRequest?, pending: PendingMerge? = nil
+        run: AgentRun?, running: Bool, issue: LinearIssueStatus?, pullRequest: PullRequest?, pending: PendingMerge?
     ) -> TaskCategory {
         if let run {
             // Interrupted, it resumes like any other run.

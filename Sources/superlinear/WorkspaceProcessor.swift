@@ -12,7 +12,7 @@ struct WorkspaceProcessor: Sendable {
         await daemon.takeInStandups(workspace: workspace.name)
         let candidates = try await fetchCandidates(client: client)
         let handled = await daemon.handledIssueIds(workspace: workspace.name)
-        var plan = IssueSelection.plan(candidates, workspace: workspace, handled: handled)
+        var plan = IssueSelection.plan(candidates, workspace: workspace, handled: handled, stackBases: [:])
         // Each step checks first, as one hitting the rate limit pauses the rest.
         let listing = PullRequestListing(repoPath: NSString(string: workspace.repoPath).expandingTildeInPath)
         if workspace.stacking, !plan.blocked.isEmpty, await daemon.gitHubAvailable() {
@@ -58,7 +58,7 @@ struct WorkspaceProcessor: Sendable {
     /// stays within `maxStackDepth`. One `gh` call per such blocker.
     private func stackBases(for plan: IssueSelectionPlan, listing: PullRequestListing) async -> [LinearIssue.Identifier: StackBase] {
         let watched = await daemon.pendingMergesByIdentifier(workspace: workspace.name)
-        let blockers = Set(plan.blocked.values.compactMap { $0.blockers.count == 1 ? $0.blockers[0] : nil })
+        let blockers = Set(plan.blocked.values.compactMap { $0.blockers.count == 1 ? $0.blockers.first : nil })
         var bases: [LinearIssue.Identifier: StackBase] = [:]
         for blocker in blockers.sorted() {
             guard let pending = watched[blocker] else { continue }
@@ -457,13 +457,13 @@ struct WorkspaceProcessor: Sendable {
         let repoPath = listing.repoPath
         let lower: [PullRequest]
         do {
-            lower = try await listing.pullRequests(branch: stack.branch)
+            lower = try await listing.pullRequests(branch: stack.branch.rawValue)
         } catch {
             _ = await pausedForRateLimit(error, repoPath: repoPath)
             return .unchanged
         }
-        let defaultBranch = Git.defaultBranch(in: repoPath) ?? "main"
-        let lowerHead = await listing.remoteHead(of: stack.branch)
+        let defaultBranch = GitBranch.Name(rawValue: Git.defaultBranch(in: repoPath) ?? "main")
+        let lowerHead = await listing.remoteHead(of: stack.branch.rawValue).map { GitCommit.SHA(rawValue: $0) }
         let action = Stacking.action(
             for: stack, pullRequest: pullRequest, lower: lower, lowerHead: lowerHead, defaultBranch: defaultBranch)
         let checker = listing.checker
@@ -477,7 +477,7 @@ struct WorkspaceProcessor: Sendable {
             log("\(stack.identifier)'s pull request merged; \(pending.identifier)'s \(pullRequest.url) now targets \(base)")
             if retarget {
                 do {
-                    try await checker.retarget(number: pullRequest.number, base: base, repoPath: repoPath)
+                    try await checker.retarget(number: pullRequest.number, base: base.rawValue, repoPath: repoPath)
                 } catch {
                     if await pausedForRateLimit(error, repoPath: repoPath) { return .unchanged }
                     await logOnce("Could not retarget \(pullRequest.url) to \(base): \(error)")
@@ -485,12 +485,12 @@ struct WorkspaceProcessor: Sendable {
                 }
             }
             // The next pull request down, or none on the default branch.
-            var next: StackBase? = nil
-            if base != defaultBranch, let below = await daemon.pendingMerge(branch: base, workspace: workspace.name),
-               let lowerPullRequest = try? await listing.pullRequests(branch: base).first(where: { $0.state == .open }) {
+            var next: StackBase?
+            if base != defaultBranch, let below = await daemon.pendingMerge(branch: base.rawValue, workspace: workspace.name),
+               let lowerPullRequest = try? await listing.pullRequests(branch: base.rawValue).first(where: { $0.state == .open }) {
                 next = StackBase(
                     identifier: below.identifier, branch: base, number: lowerPullRequest.number, url: lowerPullRequest.url,
-                    depth: below.stackDepth, drafted: stack.drafted)
+                    depth: below.stackDepth, baseHead: nil, drafted: stack.drafted)
             }
             if stack.drafted == true, next?.drafted != true {
                 await setDraft(false, of: pullRequest, identifier: pending.identifier, repoPath: repoPath)
@@ -536,7 +536,7 @@ struct WorkspaceProcessor: Sendable {
     /// on afterwards, with the base's head once merged in. A conflict goes
     /// to a conflict agent, as with any base.
     private func mergeBase(
-        _ base: String, into pending: inout PendingMerge, stack: StackBase?, pullRequest: PullRequest, listing: PullRequestListing
+        _ base: GitBranch.Name, into pending: inout PendingMerge, stack: StackBase?, pullRequest: PullRequest, listing: PullRequestListing
     ) async -> StackOutcome {
         let repoPath = listing.repoPath
         guard let worktree = FollowUpFile.worktree(branch: pending.branchName, repoPath: repoPath) else {
@@ -550,7 +550,7 @@ struct WorkspaceProcessor: Sendable {
             await logOnce("Could not merge \(base) into \(pending.identifier)'s branch: \(error)")
             return .unchanged
         }
-        func record(_ stack: StackBase?, baseHead: String?) async {
+        func record(_ stack: StackBase?, baseHead: GitCommit.SHA?) async {
             var stack = stack
             stack?.baseHead = baseHead
             pending.stack = stack
@@ -558,7 +558,7 @@ struct WorkspaceProcessor: Sendable {
         }
         switch outcome {
         case .merged(let head, let baseHead):
-            log("  Merged \(base) into \(pending.branchName) and pushed \(String(head.prefix(7)))")
+            log("  Merged \(base) into \(pending.branchName) and pushed \(head.short)")
             await listing.forgetRemoteHead(of: pending.branchName)
             await record(stack, baseHead: baseHead)
             await daemon.recordActivity(
@@ -569,12 +569,12 @@ struct WorkspaceProcessor: Sendable {
             await record(stack, baseHead: baseHead)
             return .unchanged
         case .conflicted:
-            guard let head = pullRequest.headRefOid, let baseHead = await listing.remoteHead(of: base) else { return .unchanged }
+            guard let head = pullRequest.headRefOid, let baseHead = await listing.remoteHead(of: base.rawValue) else { return .unchanged }
             let attempt = ConflictAttempt(head: head, base: baseHead)
             // The watch after the agent keeps following the same base, which
             // the agent merges in; the base's head is taken as merged, so
             // that one that keeps conflicting is not retried each poll.
-            await record(stack, baseHead: baseHead)
+            await record(stack, baseHead: GitCommit.SHA(rawValue: baseHead))
             guard attempt != pending.conflictAttempt else {
                 await logOnce("\(pending.identifier)'s branch still conflicts with \(base) after an agent tried; "
                     + "waiting for either branch to move: \(pullRequest.url)")
@@ -582,7 +582,7 @@ struct WorkspaceProcessor: Sendable {
             }
             log("  \(base) conflicts with \(pending.branchName); queuing an agent to resolve it")
             await daemon.enqueueConflictResolution(
-                of: pending, pullRequest: pullRequest, baseBranch: base, attempt: attempt, workspace: workspace)
+                of: pending, pullRequest: pullRequest, baseBranch: base.rawValue, attempt: attempt, workspace: workspace)
             return .conflicted
         }
     }

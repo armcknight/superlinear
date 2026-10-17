@@ -24,7 +24,7 @@ extension IssueSelection {
     /// two or more open blockers waits whatever their pull requests.
     static func plan(
         _ candidates: [LinearIssue], workspace: WorkspaceConfig, handled: Set<LinearIssue.ID>,
-        stackBases: [LinearIssue.Identifier: StackBase] = [:]
+        stackBases: [LinearIssue.Identifier: StackBase]
     ) -> IssueSelectionPlan {
         var plan = IssueSelectionPlan()
         var seen: Set<LinearIssue.ID> = []
@@ -40,7 +40,7 @@ extension IssueSelection {
                 continue
             }
             let blockers = issue.openBlockers
-            if blockers.count == 1, let base = stackBases[blockers[0]] {
+            if blockers.count == 1, let firstBlocker = blockers.first, let base = stackBases[firstBlocker] {
                 plan.stacked[issue.id] = base
             } else if !blockers.isEmpty {
                 plan.blocked[issue.id] = WaitingIssue(issue, blockers: blockers)

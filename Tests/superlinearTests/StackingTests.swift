@@ -7,12 +7,12 @@ import Testing
 // waiting, so the rules for when to stack and how to keep up are strict.
 @Suite("Stacking")
 struct StackingTests {
-    private func workspace(_ extra: String = "") throws -> WorkspaceConfig {
+    private func workspace(_ extra: String) throws -> WorkspaceConfig {
         let json = #"{"workspaces": [{"name": "w", "apiKey": "k", "repoPath": "~/r"\#(extra)}]}"#
         return try #require(try Config.decoded(from: Data(json.utf8)).workspaces.first)
     }
 
-    private func issue(_ identifier: LinearIssue.Identifier, blockers: [(LinearIssue.Identifier, String)] = []) -> LinearIssue {
+    private func issue(_ identifier: LinearIssue.Identifier, blockers: [(LinearIssue.Identifier, String)]) -> LinearIssue {
         LinearIssue(
             id: "id-\(identifier)", identifier: identifier, title: "Title \(identifier)", branchName: "b-\(identifier)",
             createdAt: Date(timeIntervalSince1970: 0), team: .init(id: "t", key: "SL"),
@@ -24,9 +24,8 @@ struct StackingTests {
     }
 
     private func pullRequest(
-        _ number: PullRequest.Number, state: PullRequest.State = .open, branch: String = "b-SL-1", base: String = "main",
-        draft: Bool = false, checks: [ReviewablePullRequest.Check]? = [.init(status: "COMPLETED", conclusion: "SUCCESS")],
-        head: String = "aaa"
+        _ number: PullRequest.Number, state: PullRequest.State, branch: String, base: String, draft: Bool,
+        checks: [ReviewablePullRequest.Check]?, head: String
     ) -> PullRequest {
         PullRequest(
             number: number, url: "https://github.com/o/r/pull/\(number)", state: state, headRefName: branch, isDraft: draft,
@@ -34,28 +33,35 @@ struct StackingTests {
         )
     }
 
-    private let blocker = PendingMerge(issueId: "id-SL-1", identifier: "SL-1", branchName: "b-SL-1")
-    private let base = StackBase(identifier: "SL-1", branch: "b-SL-1", number: 1, url: "https://github.com/o/r/pull/1", depth: 1, baseHead: "aaa")
+    private let passing: [ReviewablePullRequest.Check] = [.init(status: "COMPLETED", conclusion: "SUCCESS")]
+    /// The blocker's pull request, open on the default branch with CI passing.
+    private var lower: PullRequest {
+        pullRequest(1, state: .open, branch: "b-SL-1", base: "main", draft: false, checks: passing, head: "aaa")
+    }
+    private let blocker = PendingMerge(
+        issueId: "id-SL-1", identifier: "SL-1", branchName: "b-SL-1", reviewsHandledThrough: nil, conflictAttempt: nil, stack: nil)
+    private let base = StackBase(
+        identifier: "SL-1", branch: "b-SL-1", number: 1, url: "https://github.com/o/r/pull/1", depth: 1, baseHead: "aaa", drafted: nil)
 
     // MARK: Selection
 
-    @Test("Config: stacking is off by default, and the depth defaults to 3 and cannot go below 1")
+    @Test("Config: stacking is on by default, and the depth defaults to 3 and cannot go below 1")
     func config() throws {
-        let byDefault = try workspace()
-        #expect(byDefault.stacking == false)
+        let byDefault = try workspace("")
+        #expect(byDefault.stacking)
         #expect(byDefault.maxStackDepth == 3)
-        let configured = try workspace(#", "stacking": true, "maxStackDepth": 0"#)
-        #expect(configured.stacking)
+        let configured = try workspace(#", "stacking": false, "maxStackDepth": 0"#)
+        #expect(configured.stacking == false)
         #expect(configured.maxStackDepth == 1)
     }
 
     @Test("An issue with one open blocker whose pull request can be stacked on starts, stacked")
     func stackable() throws {
-        let found = Stacking.base(on: blocker, pullRequest: pullRequest(1), maxDepth: 3)
+        let found = Stacking.base(on: blocker, pullRequest: lower, maxDepth: 3)
         #expect(try found.get() == base)
         let plan = IssueSelection.plan(
             [issue("SL-2", blockers: [("SL-1", "started"), ("SL-0", "completed")])],
-            workspace: try workspace(), handled: [], stackBases: ["SL-1": base]
+            workspace: try workspace(""), handled: [], stackBases: ["SL-1": base]
         )
         #expect(plan.start.map(\.identifier) == ["SL-2"])
         #expect(plan.stacked["id-SL-2"] == base)
@@ -66,7 +72,7 @@ struct StackingTests {
     func twoBlockersWait() throws {
         let plan = IssueSelection.plan(
             [issue("SL-3", blockers: [("SL-1", "started"), ("SL-2", "started")])],
-            workspace: try workspace(), handled: [], stackBases: ["SL-1": base, "SL-2": base]
+            workspace: try workspace(""), handled: [], stackBases: ["SL-1": base, "SL-2": base]
         )
         #expect(plan.start.isEmpty)
         #expect(plan.blocked["id-SL-3"]?.blockers == ["SL-1", "SL-2"])
@@ -75,21 +81,29 @@ struct StackingTests {
 
     @Test("A draft, failing or running CI, no pull request, and a stack over the limit are not stackable")
     func notStackable() throws {
-        let failing: [ReviewablePullRequest.Check] = [.init(status: "COMPLETED", conclusion: "FAILURE")]
-        let running: [ReviewablePullRequest.Check] = [.init(status: "IN_PROGRESS", conclusion: nil)]
-        #expect(Stacking.base(on: blocker, pullRequest: pullRequest(1, draft: true), maxDepth: 3) == .failure(.draft))
-        #expect(Stacking.base(on: blocker, pullRequest: pullRequest(1, checks: failing), maxDepth: 3) == .failure(.ciNotPassing(.failing)))
-        #expect(Stacking.base(on: blocker, pullRequest: pullRequest(1, checks: running), maxDepth: 3) == .failure(.ciNotPassing(.pending)))
-        #expect(Stacking.base(on: blocker, pullRequest: pullRequest(1, checks: nil), maxDepth: 3) == .failure(.ciNotPassing(.none)))
+        var draft = lower
+        draft.isDraft = true
+        #expect(Stacking.base(on: blocker, pullRequest: draft, maxDepth: 3) == .failure(.draft))
+        var failing = lower
+        failing.statusCheckRollup = [.init(status: "COMPLETED", conclusion: "FAILURE")]
+        #expect(Stacking.base(on: blocker, pullRequest: failing, maxDepth: 3) == .failure(.ciNotPassing(.failing)))
+        var running = lower
+        running.statusCheckRollup = [.init(status: "IN_PROGRESS", conclusion: nil)]
+        #expect(Stacking.base(on: blocker, pullRequest: running, maxDepth: 3) == .failure(.ciNotPassing(.pending)))
+        var noChecks = lower
+        noChecks.statusCheckRollup = nil
+        #expect(Stacking.base(on: blocker, pullRequest: noChecks, maxDepth: 3) == .failure(.ciNotPassing(.none)))
         #expect(Stacking.base(on: blocker, pullRequest: nil, maxDepth: 3) == .failure(.noPullRequest))
-        #expect(Stacking.base(on: blocker, pullRequest: pullRequest(1, state: .merged), maxDepth: 3) == .failure(.noPullRequest))
+        let merged = pullRequest(1, state: .merged, branch: "b-SL-1", base: "main", draft: false, checks: passing, head: "aaa")
+        #expect(Stacking.base(on: blocker, pullRequest: merged, maxDepth: 3) == .failure(.noPullRequest))
         // SL-1 is on main (depth 1); a stack of 2 is the most allowed here.
-        #expect(Stacking.base(on: blocker, pullRequest: pullRequest(1), maxDepth: 2).isSuccess)
+        #expect(Stacking.base(on: blocker, pullRequest: lower, maxDepth: 2).isSuccess)
         var second = blocker
         second.stack = base
         #expect(second.stackDepth == 2)
-        #expect(Stacking.base(on: second, pullRequest: pullRequest(2, branch: "b-SL-2", base: "b-SL-1"), maxDepth: 2) == .failure(.tooDeep(3)))
-        let deeper = Stacking.base(on: second, pullRequest: pullRequest(2, branch: "b-SL-2", base: "b-SL-1"), maxDepth: 3)
+        let secondPullRequest = pullRequest(2, state: .open, branch: "b-SL-2", base: "b-SL-1", draft: false, checks: passing, head: "ccc")
+        #expect(Stacking.base(on: second, pullRequest: secondPullRequest, maxDepth: 2) == .failure(.tooDeep(3)))
+        let deeper = Stacking.base(on: second, pullRequest: secondPullRequest, maxDepth: 3)
         #expect(try deeper.get().depth == 2)
     }
 
@@ -127,41 +141,46 @@ struct StackingTests {
 
     // MARK: Keeping a stack current
 
-    private var upper: PullRequest { pullRequest(2, branch: "b-SL-2", base: "b-SL-1", head: "ccc") }
+    /// The stacked issue's pull request, on the blocker's branch.
+    private var upper: PullRequest {
+        pullRequest(2, state: .open, branch: "b-SL-2", base: "b-SL-1", draft: false, checks: passing, head: "ccc")
+    }
 
     @Test("A push to the lower branch restacks; nothing to do while it stays")
     func lowerMoved() {
-        #expect(Stacking.action(for: base, pullRequest: upper, lower: [pullRequest(1)], lowerHead: "aaa", defaultBranch: "main") == .none)
-        #expect(Stacking.action(for: base, pullRequest: upper, lower: [pullRequest(1)], lowerHead: "bbb", defaultBranch: "main") == .restack(head: "bbb"))
+        #expect(Stacking.action(for: base, pullRequest: upper, lower: [lower], lowerHead: "aaa", defaultBranch: "main") == .none)
+        #expect(Stacking.action(for: base, pullRequest: upper, lower: [lower], lowerHead: "bbb", defaultBranch: "main") == .restack(head: "bbb"))
         // The remote could not be read: wait.
-        #expect(Stacking.action(for: base, pullRequest: upper, lower: [pullRequest(1)], lowerHead: nil, defaultBranch: "main") == .none)
+        #expect(Stacking.action(for: base, pullRequest: upper, lower: [lower], lowerHead: nil, defaultBranch: "main") == .none)
     }
 
     @Test("A merged lower pull request moves the upper one to what the lower targeted, retargeting it unless GitHub did")
     func lowerMerged() {
-        let merged = pullRequest(1, state: .merged, base: "main")
+        let merged = pullRequest(1, state: .merged, branch: "b-SL-1", base: "main", draft: false, checks: passing, head: "aaa")
         #expect(Stacking.action(for: base, pullRequest: upper, lower: [merged], lowerHead: nil, defaultBranch: "main")
             == .lowerMerged(base: "main", retarget: true))
         // Deeper down, the lower one targeted another stacked branch.
-        let deeper = pullRequest(1, state: .merged, base: "b-SL-0")
+        let deeper = pullRequest(1, state: .merged, branch: "b-SL-1", base: "b-SL-0", draft: false, checks: passing, head: "aaa")
         #expect(Stacking.action(for: base, pullRequest: upper, lower: [deeper], lowerHead: nil, defaultBranch: "main")
             == .lowerMerged(base: "b-SL-0", retarget: true))
         // GitHub retargeted it already when the lower branch was deleted.
-        let retargeted = pullRequest(2, branch: "b-SL-2", base: "main")
+        var retargeted = upper
+        retargeted.baseRefName = "main"
         #expect(Stacking.action(for: base, pullRequest: retargeted, lower: [merged], lowerHead: nil, defaultBranch: "main")
             == .lowerMerged(base: "main", retarget: false))
     }
 
     @Test("A lower pull request closed without a merge drafts the upper one once, and reopening undoes it")
     func lowerClosed() {
-        let closed = pullRequest(1, state: .closed)
+        let closed = pullRequest(1, state: .closed, branch: "b-SL-1", base: "main", draft: false, checks: passing, head: "aaa")
         #expect(Stacking.action(for: base, pullRequest: upper, lower: [closed], lowerHead: "aaa", defaultBranch: "main") == .lowerClosed)
         var drafted = base
         drafted.drafted = true
         #expect(Stacking.action(for: drafted, pullRequest: upper, lower: [closed], lowerHead: "aaa", defaultBranch: "main") == .none)
-        #expect(Stacking.action(for: drafted, pullRequest: upper, lower: [pullRequest(1)], lowerHead: "bbb", defaultBranch: "main") == .lowerReopened)
+        #expect(Stacking.action(for: drafted, pullRequest: upper, lower: [lower], lowerHead: "bbb", defaultBranch: "main") == .lowerReopened)
         // Closed and opened again as another pull request: open.
-        #expect(Stacking.action(for: base, pullRequest: upper, lower: [closed, pullRequest(3)], lowerHead: "aaa", defaultBranch: "main") == .none)
+        let reopened = pullRequest(3, state: .open, branch: "b-SL-1", base: "main", draft: false, checks: passing, head: "aaa")
+        #expect(Stacking.action(for: base, pullRequest: upper, lower: [closed, reopened], lowerHead: "aaa", defaultBranch: "main") == .none)
         // Not in the listing at all: a gap, not a close.
         #expect(Stacking.action(for: base, pullRequest: upper, lower: [], lowerHead: "aaa", defaultBranch: "main") == .none)
     }
@@ -170,11 +189,14 @@ struct StackingTests {
     func statusAfterClose() throws {
         var drafted = base
         drafted.drafted = true
-        let pending = PendingMerge(issueId: "id-SL-2", identifier: "SL-2", branchName: "b-SL-2", stack: drafted)
-        let draft = pullRequest(2, branch: "b-SL-2", base: "b-SL-1", draft: true)
+        let pending = PendingMerge(
+            issueId: "id-SL-2", identifier: "SL-2", branchName: "b-SL-2", reviewsHandledThrough: nil, conflictAttempt: nil, stack: drafted)
+        var draft = upper
+        draft.isDraft = true
         #expect(TaskCategory.of(run: nil, running: false, issue: nil, pullRequest: draft, pending: pending) == .blocked)
         // Not once the owner decided.
-        let plain = PendingMerge(issueId: "id-SL-2", identifier: "SL-2", branchName: "b-SL-2", stack: base)
+        let plain = PendingMerge(
+            issueId: "id-SL-2", identifier: "SL-2", branchName: "b-SL-2", reviewsHandledThrough: nil, conflictAttempt: nil, stack: base)
         #expect(TaskCategory.of(run: nil, running: false, issue: nil, pullRequest: draft, pending: plain) == .openPullRequest)
 
         var workspaceState = WorkspaceState()
@@ -190,7 +212,7 @@ struct StackingTests {
 
     @Test("The status lists each pull request under the one it stacks on")
     func statusStacks() {
-        func reviewable(_ number: PullRequest.Number, branch: String, base: String, draft: Bool = false) -> ReviewablePullRequest {
+        func reviewable(_ number: PullRequest.Number, branch: String, base: String, draft: Bool) -> ReviewablePullRequest {
             ReviewablePullRequest(
                 number: number, url: "https://github.com/o/r/pull/\(number)", title: "PR \(number)", headRefName: branch,
                 isDraft: draft, reviewDecision: "", latestReviews: nil, statusCheckRollup: nil, baseRefName: base
@@ -203,10 +225,10 @@ struct StackingTests {
             name: "w",
             entries: [],
             reviews: [
-                ReviewEntry(issue: issue("SL-1", branch: "b-1"), pullRequest: reviewable(1, branch: "b-1", base: "main")),
-                ReviewEntry(issue: issue("SL-3", branch: "b-3"), pullRequest: reviewable(3, branch: "b-3", base: "b-2")),
-                ReviewEntry(issue: issue("SL-4", branch: "b-4"), pullRequest: reviewable(4, branch: "b-4", base: "main")),
-                ReviewEntry(issue: issue("SL-2", branch: "b-2"), pullRequest: reviewable(2, branch: "b-2", base: "b-1")),
+                ReviewEntry(issue: issue("SL-1", branch: "b-1"), pullRequest: reviewable(1, branch: "b-1", base: "main", draft: false)),
+                ReviewEntry(issue: issue("SL-3", branch: "b-3"), pullRequest: reviewable(3, branch: "b-3", base: "b-2", draft: false)),
+                ReviewEntry(issue: issue("SL-4", branch: "b-4"), pullRequest: reviewable(4, branch: "b-4", base: "main", draft: false)),
+                ReviewEntry(issue: issue("SL-2", branch: "b-2"), pullRequest: reviewable(2, branch: "b-2", base: "b-1", draft: false)),
             ],
             warnings: []
         )
@@ -229,7 +251,8 @@ struct StackingTests {
         var drafted = base
         drafted.drafted = true
         var state = WorkspaceState()
-        state.pendingMerges = ["id-SL-2": PendingMerge(issueId: "id-SL-2", identifier: "SL-2", branchName: "b-SL-2", stack: drafted)]
+        state.pendingMerges = ["id-SL-2": PendingMerge(
+            issueId: "id-SL-2", identifier: "SL-2", branchName: "b-SL-2", reviewsHandledThrough: nil, conflictAttempt: nil, stack: drafted)]
         let draft = ReviewablePullRequest(
             number: 2, url: "https://github.com/o/r/pull/2", title: "Two", headRefName: "b-SL-2", isDraft: true,
             reviewDecision: "", latestReviews: nil, statusCheckRollup: nil, baseRefName: "b-SL-1")
@@ -280,7 +303,7 @@ struct StackingTests {
         }
 
         /// Commits `file` with `text` on `branch` in `other` and pushes it.
-        func push(_ branch: String, file: String, text: String, from base: String? = nil) throws -> String {
+        func push(_ branch: String, file: String, text: String, from base: String?) throws -> String {
             if let base {
                 try git("fetch", "--quiet", "origin", base, in: other)
                 try git("checkout", "--quiet", "-B", branch, "origin/\(base)", in: other)
@@ -302,10 +325,10 @@ struct StackingTests {
         let repos = try Repos()
         defer { repos.remove() }
         let lowerHead = try repos.push("lower", file: "a.txt", text: "a", from: "main")
-        #expect(try Stacking.createBranch("upper", from: "lower", repoPath: repos.clone) == lowerHead)
+        #expect(try Stacking.createBranch("upper", from: "lower", repoPath: repos.clone) == GitCommit.SHA(rawValue: lowerHead))
         #expect(try repos.git("rev-parse", "refs/heads/upper", in: repos.clone) == lowerHead)
         // Exists already, as after a resume: left alone, even when the lower branch moved.
-        _ = try repos.push("lower", file: "b.txt", text: "b")
+        _ = try repos.push("lower", file: "b.txt", text: "b", from: nil)
         #expect(try Stacking.createBranch("upper", from: "lower", repoPath: repos.clone) == nil)
         #expect(try repos.git("rev-parse", "refs/heads/upper", in: repos.clone) == lowerHead)
         #expect(throws: StackingError.self) { try Stacking.createBranch("another", from: "missing", repoPath: repos.clone) }
@@ -324,23 +347,23 @@ struct StackingTests {
         try repos.git("worktree", "add", "--quiet", "--track", "-b", "upper", worktree, "origin/upper", in: repos.clone)
 
         let lowerHead = try repos.git("rev-parse", "refs/heads/lower", in: repos.other)
-        #expect(try Stacking.mergeBase("lower", into: "upper", worktree: worktree) == .upToDate(baseHead: lowerHead))
+        #expect(try Stacking.mergeBase("lower", into: "upper", worktree: worktree) == .upToDate(baseHead: GitCommit.SHA(rawValue: lowerHead)))
 
-        let moved = try repos.push("lower", file: "b.txt", text: "b")
+        let moved = try repos.push("lower", file: "b.txt", text: "b", from: nil)
         let outcome = try Stacking.mergeBase("lower", into: "upper", worktree: worktree)
         guard case .merged(let head, let baseHead) = outcome else { Issue.record("not merged: \(outcome)"); return }
-        #expect(baseHead == moved)
+        #expect(baseHead.rawValue == moved)
         try repos.git("fetch", "--quiet", "origin", "upper", in: repos.other)
-        #expect(try repos.git("rev-parse", "refs/remotes/origin/upper", in: repos.other) == head)
+        #expect(try repos.git("rev-parse", "refs/remotes/origin/upper", in: repos.other) == head.rawValue)
         #expect(try repos.git("rev-list", "--count", "--merges", "\(upperCommit)..\(head)", in: repos.other) == "1")
-        #expect(try repos.git("merge-base", "--is-ancestor", moved, head, in: repos.other) == "")
-        #expect(try repos.git("merge-base", "--is-ancestor", upperCommit, head, in: repos.other) == "")
+        #expect(try repos.git("merge-base", "--is-ancestor", moved, head.rawValue, in: repos.other) == "")
+        #expect(try repos.git("merge-base", "--is-ancestor", upperCommit, head.rawValue, in: repos.other) == "")
 
         // A conflicting push is aborted and left to an agent; the worktree is as it was.
-        _ = try repos.push("lower", file: "u.txt", text: "lower's u")
+        _ = try repos.push("lower", file: "u.txt", text: "lower's u", from: nil)
         #expect(try Stacking.mergeBase("lower", into: "upper", worktree: worktree) == .conflicted)
         #expect(try repos.git("status", "--porcelain", in: worktree) == "")
-        #expect(try repos.git("rev-parse", "HEAD", in: worktree) == head)
+        #expect(try repos.git("rev-parse", "HEAD", in: worktree) == head.rawValue)
     }
 
     // After a squash merge the upper branch still holds the lower branch's
@@ -364,9 +387,9 @@ struct StackingTests {
         let outcome = try Stacking.mergeBase("main", into: "upper", worktree: worktree)
         guard case .merged(let head, _) = outcome else { Issue.record("not merged: \(outcome)"); return }
         try repos.git("fetch", "--quiet", "origin", in: repos.other)
-        #expect(try repos.git("rev-parse", "refs/remotes/origin/upper", in: repos.other) == head)
+        #expect(try repos.git("rev-parse", "refs/remotes/origin/upper", in: repos.other) == head.rawValue)
         // Only the upper branch's own file differs from main now.
-        #expect(try repos.git("diff", "--name-only", "origin/main", head, in: repos.other) == "u.txt")
+        #expect(try repos.git("diff", "--name-only", "origin/main", head.rawValue, in: repos.other) == "u.txt")
     }
 }
 

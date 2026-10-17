@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Stacks: dependent work on open pull requests. With the workspace key
-  `stacking`, an issue whose one unmerged blocker has an open pull request
+  `stacking`, on by default, an issue whose one unmerged blocker has an open pull request
   from an agent, not a draft, with CI passing, starts on top of it: its
   branch is created from the blocker's branch, and its pull request
   targets that branch, within `maxStackDepth` pull requests, 3 by default.

@@ -93,7 +93,7 @@ Each conflict gets one agent. The daemon records the heads of the branch and of 
 <a id="stacks"></a>
 ## Stacks
 
-When an issue's blocker has an open pull request that waits for your review, its dependents wait too, although the code they need exists. With the workspace key [`stacking`](configuration.md#stacking), off by default, dependent work starts on top of the blocker's branch, as a pull request that targets that branch. You review and merge bottom-up; superlinear never merges.
+When an issue's blocker has an open pull request that waits for your review, its dependents wait too, although the code they need exists. With the workspace key [`stacking`](configuration.md#stacking), on by default, dependent work starts on top of the blocker's branch, as a pull request that targets that branch. You review and merge bottom-up; superlinear never merges.
 
 <a id="stackable"></a>
 ### Which issues stack

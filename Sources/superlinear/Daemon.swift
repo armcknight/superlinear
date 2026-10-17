@@ -116,7 +116,7 @@ actor Daemon {
     /// issue counts as processed from the moment it is queued, so no later poll
     /// queues it twice, and the poll does not wait for its agent. Issues queued
     /// at once start in the order of their `queuedAt`.
-    func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig, queuedAt: Date = Date(), stack: StackBase? = nil) {
+    func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig, queuedAt: Date, stack: StackBase?) {
         let run = AgentRun(
             issueId: issue.id.rawValue,
             identifier: issue.identifier,
