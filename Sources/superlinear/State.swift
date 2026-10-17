@@ -35,6 +35,9 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// The number of the GitHub issue the agent works on, when the run comes
     /// from GitHub rather than Linear.
     var gitHubIssue: Int? = nil
+    /// Set when the run's session stopped at the Claude usage limit, until it
+    /// launches again. Such a run waits out the pause, then goes first.
+    var usageLimited: Bool?
 
     /// Waiting for a free slot: recorded, but not launched, or launched and
     /// since requeued after an interruption.
@@ -43,6 +46,17 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// Queued for a new issue and never launched, so a standup may hold it
     /// back or move it in the queue.
     var isFresh: Bool { isQueued && launchedAt == nil && resumes == 0 && review == nil && conflict == nil }
+
+    /// The run put back in the queue after its session stopped at the Claude
+    /// usage limit. It is interrupted, not failed: it keeps its session ID,
+    /// its place in the queue, and its counts of resumes and failed launches.
+    func stoppedByUsageLimit() -> AgentRun {
+        var run = self
+        run.pid = nil
+        run.processStartedAt = nil
+        run.usageLimited = true
+        return run
+    }
 }
 
 /// A pull request with reviews for an agent to address.
@@ -120,6 +134,13 @@ struct WorkspaceState: Codable, Sendable {
     var proposals: [Proposal]
     /// What the daemon did on its own, oldest first, for the standup.
     var activity: [ActivityEvent]
+    /// The repository's CI runs the GitHub Actions spending limit stopped,
+    /// while there are any.
+    var spendingLimit: SpendingLimitStop?
+    /// The planning job the daemon is running, if any.
+    var planningRun: PlanningRun?
+    /// The planning jobs the daemon ran, oldest first.
+    var planningRuns: [PlanningRunRecord]
 
     init() {
         processedIssueIds = []
@@ -131,13 +152,15 @@ struct WorkspaceState: Codable, Sendable {
         needsHuman = [:]
         proposals = []
         activity = []
+        planningRuns = []
     }
 
     // State files written before runs were tracked have no `inFlight`, those
     // written before pull requests were watched have no `pendingMerges` or
     // `linkedPullRequests`, and those written before blockers and human labels
     // were followed have no `blocked` or `needsHuman`. Those from before
-    // proposals have none, and those from before the standup no activity.
+    // proposals have none, those from before the standup no activity, and
+    // those from before the planning job no planning runs.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         processedIssueIds = try container.decode(Set<String>.self, forKey: .processedIssueIds)
@@ -151,6 +174,9 @@ struct WorkspaceState: Codable, Sendable {
         gitHubIssuesSince = try container.decodeIfPresent(Date.self, forKey: .gitHubIssuesSince)
         proposals = try container.decodeIfPresent([Proposal].self, forKey: .proposals) ?? []
         activity = try container.decodeIfPresent([ActivityEvent].self, forKey: .activity) ?? []
+        spendingLimit = try container.decodeIfPresent(SpendingLimitStop.self, forKey: .spendingLimit)
+        planningRun = try container.decodeIfPresent(PlanningRun.self, forKey: .planningRun)
+        planningRuns = try container.decodeIfPresent([PlanningRunRecord].self, forKey: .planningRuns) ?? []
     }
 
     /// Issues an agent may not start on yet.
@@ -187,6 +213,9 @@ struct PollRecord: Codable, Sendable, Equatable {
 
 struct State: Codable, Sendable {
     var workspaces: [String: WorkspaceState]
+    /// The pause of every Claude session while the usage limit is used up.
+    /// All workspaces share one Claude login, so it is for all of them.
+    var claudePause: ClaudePause?
 
     init() {
         workspaces = [:]
@@ -227,6 +256,20 @@ struct State: Codable, Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(State.self, from: data)
+    }
+
+    /// Ends the Claude pause, as `superlinear resume` does. Returns false when
+    /// there was none.
+    @discardableResult
+    mutating func liftClaudePause() -> Bool {
+        defer { claudePause = nil }
+        return claudePause != nil
+    }
+
+    /// The runs waiting for a slot in every workspace, which a Claude pause
+    /// holds back.
+    var queuedRuns: [AgentRun] {
+        workspaces.values.flatMap { $0.inFlight.values.filter(\.isQueued) }
     }
 
     mutating func markProcessed(_ issueId: String, workspace: String) {
@@ -387,14 +430,48 @@ struct State: Codable, Sendable {
         workspaces[workspace, default: WorkspaceState()].activity = activity
     }
 
-    /// The state file with what standups decided taken in, as the daemon
-    /// takes it in at each poll, so a reader sees the decisions at once.
-    static func loadWithStandups(from url: URL = stateFileURL(), standups: StandupRecord = .load()) -> State {
+    /// The state file with what standups decided, and the proposals of
+    /// `superlinear plan`, taken in, as the daemon takes them in at each
+    /// poll, so a reader sees them at once.
+    static func loadWithStandups(
+        from url: URL = stateFileURL(), standups: StandupRecord = .load(), planning: PlanningRecord = .load()
+    ) -> State {
         var state = load(from: url)
+        for (name, record) in planning.workspaces {
+            state.takeIn(record, workspace: name, now: Date())
+        }
         for (name, standup) in standups.workspaces {
             state.takeIn(standup, workspace: name)
         }
         return state
+    }
+
+    /// Adds the proposals `superlinear plan` stored that the workspace lacks.
+    /// Those older than `WorkspacePlanning.retention` are left out: the state
+    /// file may have dropped them since. Returns whether it added any.
+    @discardableResult
+    mutating func takeIn(_ planning: WorkspacePlanning, workspace: String, now: Date) -> Bool {
+        let known = Set(proposals(workspace: workspace).map(\.id))
+        let cutoff = now.addingTimeInterval(-WorkspacePlanning.retention)
+        let new = planning.proposals.filter { !known.contains($0.id) && $0.createdAt >= cutoff }
+        guard !new.isEmpty else { return false }
+        workspaces[workspace, default: WorkspaceState()].proposals += new
+        return true
+    }
+
+    /// The planning runs of the daemon and of `superlinear plan`, oldest first.
+    func planningRuns(workspace: String, planning: WorkspacePlanning) -> [PlanningRunRecord] {
+        ((workspaces[workspace]?.planningRuns ?? []) + planning.runs).sorted { $0.startedAt < $1.startedAt }
+    }
+
+    mutating func startPlanning(_ run: PlanningRun, workspace: String) {
+        workspaces[workspace, default: WorkspaceState()].planningRun = run
+    }
+
+    mutating func finishPlanning(_ record: PlanningRunRecord, workspace: String) {
+        workspaces[workspace, default: WorkspaceState()].planningRun = nil
+        let runs = workspaces[workspace]?.planningRuns ?? []
+        workspaces[workspace]?.planningRuns = PlanningHistory.appending(record, to: runs)
     }
 
     /// Takes in what standups decided about the workspace's proposals: the

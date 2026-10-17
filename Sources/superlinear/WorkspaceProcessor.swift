@@ -36,6 +36,7 @@ struct WorkspaceProcessor: Sendable {
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
         await daemon.expireProposals(workspace: workspace)
+        await daemon.planIfDue(workspace, now: Date())
 
         // Each step checks first, as one hitting the rate limit pauses the rest.
         if workspace.githubIssues, await daemon.gitHubAvailable() { await pollGitHubIssues() }
@@ -43,6 +44,160 @@ struct WorkspaceProcessor: Sendable {
         if await daemon.gitHubAvailable() { await linkRunningAgentsPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await checkPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await sweepStartedIssues(client: client, listing: listing) }
+        if await daemon.gitHubAvailable() { await checkSpendingLimit(listing: listing) }
+        if await daemon.gitHubAvailable() { await checkDefaultBranchWorkflows(client: client, repoPath: listing.repoPath) }
+    }
+
+    /// Finds the CI runs of open pull requests and of the default branch that
+    /// the GitHub Actions spending limit stopped, in a private repository. While
+    /// there are any, reruns the failed jobs of one each hour; once its jobs
+    /// start, or those of a run the owner reran by hand, the limit was raised,
+    /// and the others are rerun too.
+    private func checkSpendingLimit(listing: PullRequestListing) async {
+        let repoPath = listing.repoPath
+        do {
+            guard try await daemon.repositoryIsPrivate(workspace: workspace.name, repoPath: repoPath) else { return }
+            var stop = await daemon.spendingLimitStop(workspace: workspace.name)
+            let runs = try SpendingLimit.listRuns(in: repoPath)
+
+            // A stopped run rerun since the last poll, by the daemon or by the
+            // owner, tells whether the limit was raised. The probe is read
+            // first, and waited for; the others only count once they ran.
+            for watched in stop?.watched ?? [] {
+                let current = runs.first { $0.databaseId == watched.id }
+                let result = await SpendingLimit.probeResult(current, rerunFrom: watched.attempt) {
+                    guard let current else { return nil }
+                    return try? await wasStopped(current, repoPath: repoPath)
+                }
+                let isProbe = watched.id == stop?.probe?.id
+                switch result {
+                case .pending where isProbe:
+                    return
+                case .pending:
+                    break
+                case .started:
+                    let who = isProbe ? "The rerun of" : "A rerun by hand of"
+                    log("\(who) CI run \(watched.id) on \(watched.branch) started its jobs, so the spending limit was raised")
+                    for other in stop?.othersToRerun(after: watched) ?? [] {
+                        do {
+                            try SpendingLimit.rerunFailedJobs(runId: other.id, in: repoPath)
+                            log("  Reran the failed jobs of CI run \(other.id) on \(other.branch)")
+                        } catch {
+                            log("  Could not rerun CI run \(other.id) on \(other.branch): \(error)")
+                        }
+                    }
+                    await daemon.recordSpendingLimitStop(nil, workspace: workspace.name)
+                    return
+                case .stillStopped where isProbe:
+                    stop?.probe = nil
+                case .stillStopped:
+                    break
+                }
+            }
+
+            let openBranches = try await listing.allPullRequests().filter { $0.state == .open }.compactMap(\.headRefName)
+            let defaultBranch = Git.defaultBranch(in: repoPath)
+            var stopped: [StoppedRun] = []
+            for run in SpendingLimit.failingRuns(runs, branches: Set(openBranches + [defaultBranch].compactMap { $0 })) {
+                if try await wasStopped(run, repoPath: repoPath) { stopped.append(StoppedRun(run)) }
+            }
+            let now = Date()
+            stop = SpendingLimitStop.updated(stop, stopped: stopped, now: now)
+            if var current = stop, let probe = current.runToProbe(now: now) {
+                try SpendingLimit.rerunFailedJobs(runId: probe.id, in: repoPath)
+                log("Reran the failed jobs of CI run \(probe.id) on \(probe.branch) to see whether the spending limit was raised")
+                current.probe = probe
+                current.lastRerunAt = now
+                stop = current
+            }
+            await daemon.recordSpendingLimitStop(stop, workspace: workspace.name)
+        } catch {
+            if await pausedForRateLimit(error, repoPath: repoPath) { return }
+            await logOnce("Could not check CI for the GitHub Actions spending limit: \(error)")
+        }
+    }
+
+    /// Whether the spending limit stopped the run's latest attempt, from its
+    /// annotations, read once per attempt.
+    private func wasStopped(_ run: WorkflowRunSummary, repoPath: String) async throws -> Bool {
+        let key = "\(repoPath)#\(run.databaseId):\(run.attempt ?? 1)"
+        if let known = await daemon.stopClassification(key) { return known }
+        let stopped = try SpendingLimit.wasStopped(runId: run.databaseId, in: repoPath)
+        await daemon.recordStopClassification(stopped, key: key)
+        return stopped
+    }
+
+    /// Proposes an issue for each workflow whose latest run on the default
+    /// branch failed. Each failed run is screened once.
+    private func checkDefaultBranchWorkflows(client: LinearClient, repoPath: String) async {
+        let branch = Git.defaultBranch(in: repoPath) ?? "main"
+        let runs: [WorkflowRun]
+        do {
+            let output = try await PullRequestChecker().run(WorkflowFailures.listArguments(branch: branch), in: repoPath)
+            runs = try WorkflowFailures.decodeRuns(output)
+        } catch {
+            if await pausedForRateLimit(error, repoPath: repoPath) { return }
+            await logOnce("Could not list the workflow runs on \(branch): \(error)")
+            return
+        }
+        // A run the spending limit stopped is not a failure to propose: the
+        // daemon reruns it once the limit is raised.
+        let stopped = Set(await daemon.spendingLimitStop(workspace: workspace.name)?.runs.map(\.id) ?? [])
+        var failing: [WorkflowRun] = []
+        for run in WorkflowFailures.failing(runs) where !WorkflowFailures.isStopped(run, stopped: stopped) {
+            if await daemon.screenWorkflowRun(run.url ?? "") { failing.append(run) }
+        }
+        guard !failing.isEmpty else { return }
+        let teamId: LinearTeam.ID
+        do {
+            teamId = try await client.proposalTeamId(teamIds: workspace.teamIds)
+        } catch {
+            for run in failing { await daemon.unscreenWorkflowRun(run.url ?? "") }
+            await logOnce("Could not find a team for proposals about failing workflows: \(error)")
+            return
+        }
+        for run in failing {
+            log("The \(run.workflowName ?? "unnamed") workflow fails on \(branch): \(run.url ?? "")")
+            do {
+                try await daemon.propose(WorkflowFailures.draft(run, branch: branch, teamId: teamId), workspace: workspace)
+            } catch {
+                await daemon.unscreenWorkflowRun(run.url ?? "")
+                await logOnce("Could not propose an issue for the failing \(run.workflowName ?? "unnamed") workflow: \(error)")
+            }
+        }
+    }
+
+    /// Proposes an issue for each `TODO` or `FIXME` line the merged pull
+    /// request added that names no issue. Tried once, as the watch ends.
+    private func proposeAddedTodos(of pullRequest: PullRequest, pending: PendingMerge, client: LinearClient, repoPath: String) async {
+        let todos: [AddedTodos.Todo]
+        do {
+            let diff = try await PullRequestChecker().run(AddedTodos.diffArguments(number: pullRequest.number), in: repoPath)
+            todos = AddedTodos.parse(diff: String(decoding: diff, as: UTF8.self))
+        } catch {
+            _ = await pausedForRateLimit(error, repoPath: repoPath)
+            log("  Could not read the diff of \(pullRequest.url) for added TODOs: \(error)")
+            return
+        }
+        guard !todos.isEmpty else { return }
+        log("  \(pullRequest.url) added \(todos.count) TODO or FIXME line(s)")
+        let issue: EditableIssue
+        do {
+            issue = try await client.editableIssue(id: LinearIssue.ID(rawValue: pending.issueId))
+        } catch {
+            log("  Could not look up \(pending.identifier) to propose its added TODOs: \(error)")
+            return
+        }
+        for todo in todos {
+            let draft = AddedTodos.draft(
+                todo, pullRequest: pullRequest, agentIssue: pending.identifier, issueId: issue.id, teamId: issue.teamId
+            )
+            do {
+                try await daemon.propose(draft, workspace: workspace)
+            } catch {
+                log("  Could not propose an issue for the \(todo.marker.rawValue) at \(todo.file):\(todo.line): \(error)")
+            }
+        }
     }
 
     /// The issues an agent might start on this poll: in `new` mode, those
@@ -259,6 +414,7 @@ struct WorkspaceProcessor: Sendable {
                     log("  Could not mark \(pending.identifier) done: \(error)")
                     continue
                 }
+                await proposeAddedTodos(of: pr, pending: pending, client: client, repoPath: repoPath)
                 let workLog = AgentRunner().workLog(identifier: pending.identifier)
                 do {
                     try await checker.finishWorktree(branch: pending.branchName, repoPath: repoPath, logFile: workLog)

@@ -86,12 +86,61 @@ extension Tagged where Tag == LinearIssue.IdentifierTag, RawValue == String {
     }
 }
 
-/// Tags for the IDs of Linear objects superlinear has no type for, so that
-/// one kind of ID cannot go where another must.
-enum LinearTeam { typealias ID = Tagged<LinearTeam, String> }
-enum LinearProject { typealias ID = Tagged<LinearProject, String> }
+/// Tags for the IDs and names of Linear objects superlinear has no type for,
+/// so that one kind of ID cannot go where another must, nor a name where an
+/// ID must.
+enum LinearTeam {
+    typealias ID = Tagged<LinearTeam, String>
+    /// The key a person reads at the start of an identifier, as `SPL`.
+    typealias Key = Tagged<KeyTag, String>
+    enum KeyTag {}
+}
+enum LinearProject {
+    typealias ID = Tagged<LinearProject, String>
+    typealias Name = Tagged<NameTag, String>
+    enum NameTag {}
+}
+enum LinearMilestone {
+    typealias Name = Tagged<LinearMilestone, String>
+}
 enum LinearDocument { typealias ID = Tagged<LinearDocument, String> }
-enum LinearLabel { typealias ID = Tagged<LinearLabel, String> }
+enum LinearLabel {
+    typealias ID = Tagged<LinearLabel, String>
+    typealias Name = Tagged<NameTag, String>
+    enum NameTag {}
+}
+
+extension LinearIssue {
+    /// Linear's priority: 0 for none, then 1 (urgent) to 4 (low), as the API
+    /// answers it, a number.
+    typealias Priority = Tagged<PriorityTag, Double>
+    enum PriorityTag {}
+}
+
+/// The types of relation between two issues, as Linear's `IssueRelationType`.
+/// `blocks` and `duplicate` go one way: the issue blocks, or is the duplicate
+/// of, the related one. The others go both ways.
+enum LinearRelationType: String, Codable, Sendable, CaseIterable {
+    case blocks, duplicate, related, similar
+
+    var isDirected: Bool { self == .blocks || self == .duplicate }
+}
+
+/// A commit, for the tag on its SHA.
+enum GitCommit {
+    typealias SHA = Tagged<GitCommit, String>
+}
+
+extension Tagged where Tag == GitCommit, RawValue == String {
+    /// The first 7 characters, as git shows a SHA.
+    var short: String { String(rawValue.prefix(7)) }
+}
+
+/// A Claude Code session, for the tag on its ID. Lowercase, as Claude names
+/// its transcripts.
+enum ClaudeSession {
+    typealias ID = Tagged<ClaudeSession, String>
+}
 
 /// An issue the daemon has already processed, as `superlinear status` reports
 /// it: where it stands in Linear, and the branch its pull request comes from.
@@ -196,7 +245,7 @@ struct LinearClient: Sendable {
     }
 
     /// Runs an `issues` query, following its pages to the end.
-    private func fetchAll<Node: Decodable>(_ query: LinearQuery, variables: [String: Any]) async throws -> [Node] {
+    func fetchAll<Node: Decodable>(_ query: LinearQuery, variables: [String: Any]) async throws -> [Node] {
         var allNodes: [Node] = []
         var cursor: String? = nil
 
@@ -268,6 +317,15 @@ struct LinearClient: Sendable {
 
     private struct GraphQLError: Decodable {
         let message: String
+    }
+
+    /// The team for proposals that belong to no issue: the workspace's first
+    /// configured team, or else the first Linear lists.
+    func proposalTeamId(teamIds: [String]) async throws -> LinearTeam.ID {
+        if let first = teamIds.first { return LinearTeam.ID(rawValue: first) }
+        let teams = try await execute(.firstTeam, variables: [:], as: LinearQuery.TeamsData.self).teams.nodes
+        guard let team = teams.first else { throw LinearClientError.invalidResponse }
+        return team.id
     }
 
     func execute<T: Decodable>(_ query: LinearQuery, variables: [String: Any], as type: T.Type) async throws -> T {

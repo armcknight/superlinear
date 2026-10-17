@@ -41,6 +41,19 @@ enum LinearQuery: CaseIterable, Sendable {
     case changeProjectSpec
     case changeDocumentSpec
     case postProjectUpdate
+    /// Open issues with what the planning job looks at, in any team.
+    case planningIssues
+    /// Open issues with what the planning job looks at, in some teams.
+    case planningIssuesInTeams
+    /// The projects with some IDs, with their descriptions and milestones.
+    case planningProjects
+    /// Issues in the watched teams completed after a time, for the planning
+    /// job's trigger and its context.
+    case completedIssuesSince
+    case completedIssuesSinceInTeams
+    case teams
+    /// The workspace's first team, for proposals that belong to no issue.
+    case firstTeam
 
     var text: String {
         switch self {
@@ -247,8 +260,87 @@ enum LinearQuery: CaseIterable, Sendable {
               projectUpdateCreate(input: { projectId: $projectId, body: $body }) { success projectUpdate { id url } }
             }
             """
+        case .planningIssues: """
+            query PlanningIssues($cursor: String) {
+              issues(filter: { state: { type: { nin: ["completed", "canceled"] } } }, first: 25, after: $cursor) {
+            \(Self.planningIssueFields)
+              }
+            }
+            """
+        case .planningIssuesInTeams: """
+            query PlanningIssues($teamIds: [ID!], $cursor: String) {
+              issues(
+                filter: { state: { type: { nin: ["completed", "canceled"] } }, team: { id: { in: $teamIds } } }
+                first: 25
+                after: $cursor
+              ) {
+            \(Self.planningIssueFields)
+              }
+            }
+            """
+        case .planningProjects: """
+            query PlanningProjects($ids: [ID!]) {
+              projects(filter: { id: { in: $ids } }, first: 50) {
+                nodes {
+                  id
+                  name
+                  content
+                  updatedAt
+                  projectMilestones(first: 25) { nodes { name } }
+                }
+              }
+            }
+            """
+        case .completedIssuesSince: """
+            query CompletedIssues($after: DateComparator, $cursor: String) {
+              issues(filter: { completedAt: $after }, orderBy: updatedAt, first: 50, after: $cursor) {
+                nodes { identifier completedAt }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+            """
+        case .completedIssuesSinceInTeams: """
+            query CompletedIssues($after: DateComparator, $teamIds: [ID!], $cursor: String) {
+              issues(
+                filter: { completedAt: $after, team: { id: { in: $teamIds } } }
+                orderBy: updatedAt
+                first: 50
+                after: $cursor
+              ) {
+                nodes { identifier completedAt }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+            """
+        case .teams: """
+            query Teams {
+              teams(first: 100) { nodes { id key name } }
+            }
+            """
+        case .firstTeam: """
+            query FirstTeam { teams(first: 1) { nodes { id } } }
+            """
         }
     }
+
+    private static let planningIssueFields = """
+        nodes {
+          id
+          identifier
+          title
+          description
+          priority
+          updatedAt
+          state { name type }
+          team { id key }
+          project { id name }
+          projectMilestone { name }
+          labels(first: 20) { nodes { name } }
+          relations(first: 20) { nodes { type relatedIssue { identifier } } }
+          inverseRelations(first: 20) { nodes { type issue { identifier } } }
+        }
+        pageInfo { hasNextPage endCursor }
+    """
 
     /// What it takes to decide whether, and in what order, an agent starts
     /// on an issue. Pages are smaller than elsewhere, as the nested labels and
@@ -422,6 +514,120 @@ extension LinearQuery {
 
     struct DocumentSpecData: Decodable {
         let document: SpecNode
+    }
+
+    /// An open issue as the planning query answers with it.
+    struct PlanningIssueNode: Decodable {
+        let id: LinearIssue.ID
+        let identifier: LinearIssue.Identifier
+        let title: String
+        let description: String?
+        let priority: LinearIssue.Priority?
+        let updatedAt: Date
+        let state: State
+        let team: Team
+        let project: Project?
+        let projectMilestone: Milestone?
+        let labels: Nodes<Label>
+        let relations: Nodes<Relation>
+        let inverseRelations: Nodes<InverseRelation>
+
+        struct State: Decodable {
+            let name: String
+            let type: LinearStateType
+        }
+
+        struct Team: Decodable {
+            let id: LinearTeam.ID
+            let key: LinearTeam.Key
+        }
+
+        struct Project: Decodable {
+            let id: LinearProject.ID
+            let name: LinearProject.Name
+        }
+
+        struct Milestone: Decodable {
+            let name: LinearMilestone.Name
+        }
+
+        struct Label: Decodable {
+            let name: LinearLabel.Name
+        }
+
+        struct Relation: Decodable {
+            let type: LinearRelationType
+            let relatedIssue: Related
+        }
+
+        struct InverseRelation: Decodable {
+            let type: LinearRelationType
+            let issue: Related
+        }
+
+        struct Related: Decodable {
+            let identifier: LinearIssue.Identifier
+        }
+
+        var planningIssue: PlanningIssue {
+            PlanningIssue(
+                id: id, identifier: identifier, title: title, description: description ?? "",
+                stateName: state.name, stateType: state.type, priority: priority, teamId: team.id, teamKey: team.key,
+                projectId: project?.id, projectName: project?.name, milestone: projectMilestone?.name,
+                labels: labels.nodes.map(\.name),
+                relations: relations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.relatedIssue.identifier, direction: .outgoing) }
+                    + inverseRelations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.issue.identifier, direction: .incoming) },
+                updatedAt: updatedAt
+            )
+        }
+    }
+
+    struct Nodes<Node: Decodable>: Decodable {
+        let nodes: [Node]
+    }
+
+    struct PlanningProjectsData: Decodable {
+        let projects: Nodes<Project>
+
+        struct Project: Decodable {
+            let id: LinearProject.ID
+            let name: LinearProject.Name
+            let content: String?
+            let updatedAt: Date
+            let projectMilestones: Nodes<Milestone>
+        }
+
+        struct Milestone: Decodable {
+            let name: LinearMilestone.Name
+        }
+    }
+
+    struct PlanningTeamsData: Decodable {
+        let teams: Nodes<Team>
+
+        struct Team: Decodable {
+            let id: LinearTeam.ID
+            let key: LinearTeam.Key
+            let name: String
+        }
+    }
+
+    /// An issue as the completed-issues query answers with it.
+    struct CompletedIssueNode: Decodable {
+        let identifier: LinearIssue.Identifier
+        let completedAt: Date
+    }
+
+    struct TeamsData: Decodable {
+        let teams: Teams
+
+        struct Teams: Decodable {
+            let nodes: [Team]
+        }
+
+        struct Team: Decodable {
+            let id: LinearTeam.ID
+        }
     }
 
     /// The part of a mutation's answer that says whether it worked.

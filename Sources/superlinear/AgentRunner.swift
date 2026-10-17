@@ -1,6 +1,21 @@
 import Darwin
 import Foundation
 
+/// What every agent does with work it finds outside its issue. The daemon
+/// reads the file when the agent exits and proposes each entry.
+let followUpInstructions = """
+When you find a bug or missing work outside this issue, do not fix it and do not create Linear \
+issues. Instead, add an entry to the JSON array in `\(FollowUpFile.directory)/\(FollowUpFile.name)` at \
+the root of the worktree, and create the file and its directory if they do not exist. Git ignores \
+the file; do not commit it. Each entry is an object with these keys:
+- `title`: a short title for a new issue.
+- `description`: what is wrong or missing, and why it matters.
+- `kind`: one of \(FollowUp.Kind.allCases.map { "`\($0.rawValue)`" }.joined(separator: ", ")).
+- `evidence`: the file and line, the failing command, or a log excerpt that shows it.
+- `relatedIssue`: optional; the identifier, such as `ABC-12`, of an issue it blocks or relates to.
+When you exit, superlinear proposes a Linear issue for each entry.
+"""
+
 private let autonomousPrompt = """
 You are working autonomously on a Linear issue. Do not ask for confirmation at any step — \
 proceed through the entire workflow without pausing.
@@ -13,6 +28,11 @@ Your task:
 
 Work autonomously. Do not pause to ask questions. If you encounter ambiguity, make a reasonable \
 decision and document it in the PR description.
+
+If CI jobs did not start because of GitHub's spending limit or a billing problem, that is not a \
+failure to fix: do not change code for it, stop monitoring CI, and say so in the pull request description.
+
+\(followUpInstructions)
 """
 
 /// The prompt for an agent on GitHub issue `number`, which has no Linear
@@ -61,9 +81,14 @@ func reviewPrompt(for review: ReviewRequest, gitHubIssue: Int? = nil) -> String 
     5. Update the pull request description with `gh pr edit` if the changes make it out of date.
     6. Monitor CI until all checks pass, fixing breakages as they come.
 
+    If CI jobs did not start because of GitHub's spending limit or a billing problem, that is not a \
+    failure to fix: do not change code for it, stop monitoring CI, and say so in the pull request description.
+
     Do not reply to the review or post comments on GitHub. If every point is already addressed, \
     stop. If you encounter ambiguity, make a reasonable decision and document it in the pull \
     request description.
+
+    \(followUpInstructions)
     """
 }
 
@@ -97,9 +122,14 @@ func conflictPrompt(for conflict: ConflictRequest, gitHubIssue: Int? = nil) -> S
     6. Update the pull request description with `gh pr edit` if the merge makes it out of date.
     7. Monitor CI until all checks pass, fixing breakages as they come.
 
+    If CI jobs did not start because of GitHub's spending limit or a billing problem, that is not a \
+    failure to fix: do not change code for it, stop monitoring CI, and say so in the pull request description.
+
     Do not post comments on GitHub. If the branch already merges cleanly with `origin/\(base)`, \
     stop. If you encounter ambiguity, make a reasonable decision and document it in the pull \
     request description.
+
+    \(followUpInstructions)
     """
 }
 
@@ -275,12 +305,15 @@ struct AgentRunner: Sendable {
         claudeSessionExists(run.sessionId) ? .resume : .start
     }
 
-    /// The waiting run to launch next: the new issue a standup moved
-    /// furthest up, by `rank`, then the run queued longest ago.
+    /// The waiting run to launch next: one the Claude usage limit stopped,
+    /// then the new issue a standup moved furthest up, by `rank`, then the
+    /// run queued longest ago.
     static func nextQueued<Key>(
         _ runs: [(Key, AgentRun)], rank: (Key, AgentRun) -> Int? = { _, _ in nil }
     ) -> (Key, AgentRun)? {
         runs.filter { $0.1.isQueued }.min { a, b in
+            let (limitedA, limitedB) = (a.1.usageLimited == true, b.1.usageLimited == true)
+            if limitedA != limitedB { return limitedA }
             let rankA = (a.1.isFresh ? rank(a.0, a.1) : nil) ?? .max
             let rankB = (b.1.isFresh ? rank(b.0, b.1) : nil) ?? .max
             if rankA != rankB { return rankA < rankB }
@@ -309,6 +342,21 @@ struct AgentRunner: Sendable {
         return source
     }
 
+    /// The Claude usage limit message the run's session ended with, if it
+    /// did: the end of its log, written by `work`, which starts the log
+    /// afresh for a new session and appends to it for a resumed one.
+    func usageLimitHit(for run: AgentRun, now: Date) -> ClaudeUsageLimit.Hit? {
+        guard let handle = FileHandle(forReadingAtPath: agentLog(for: run)) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > Self.logTailSize ? size - Self.logTailSize : 0)
+        guard let data = try? handle.readToEnd() else { return nil }
+        return ClaudeUsageLimit.hit(in: String(decoding: data, as: UTF8.self), now: now, timeZone: .current)
+    }
+
+    /// How much of the end of an agent's log is searched for the usage limit.
+    static let logTailSize: UInt64 = 8 * 1024
+
     /// Removes the files a finished run leaves behind.
     func cleanUp(_ run: AgentRun) {
         try? FileManager.default.removeItem(atPath: statusFile(for: run))
@@ -323,9 +371,11 @@ struct AgentRunner: Sendable {
     /// Whether the run's process is alive and is the one that was launched,
     /// rather than an unrelated process that reused its pid.
     static func isRunning(_ run: AgentRun) -> Bool {
-        guard let pid = run.pid, let recorded = run.processStartedAt,
-              let actual = startTime(of: pid)
-        else { return false }
+        isRunning(pid: run.pid, startedAt: run.processStartedAt)
+    }
+
+    static func isRunning(pid: Int32?, startedAt recorded: Date?) -> Bool {
+        guard let pid, let recorded, let actual = startTime(of: pid) else { return false }
         return abs(actual.timeIntervalSince(recorded)) < 1
     }
 

@@ -30,11 +30,35 @@ actor Daemon {
     private var gitHubPausedUntil: Date?
     /// What standups decided, read again at each poll.
     private var standups: StandupRecord
+    /// Whether each workspace's repository is private, once looked up. Only
+    /// private ones are stopped by the GitHub Actions spending limit.
+    private var repositoryPrivate: [String: Bool] = [:]
+    /// Whether each failed CI run attempt was stopped by the spending limit,
+    /// by repository, run ID and attempt, so its annotations are read once.
+    private var stopClassifications: [String: Bool] = [:]
+    /// How often the daemon looks at the Claude pause, to check whether the
+    /// limit was lifted and to end it at the reset time.
+    private static let claudePauseTick: TimeInterval = 60
+    /// What `superlinear plan` did, read again at each poll.
+    private var planning: PlanningRecord
+    private let planningRunner = PlanningRunner()
+    /// Planning jobs this daemon launched, by workspace, kept so their
+    /// termination handlers fire.
+    private var planningProcesses: [String: Process] = [:]
+    /// Watches on planning jobs an earlier daemon launched, by workspace.
+    private var planningWatchers: [String: DispatchSourceProcess] = [:]
+    /// Workspaces whose planning job is being gathered or its proposals
+    /// stored, so that no second job starts meanwhile.
+    private var planningBusy: Set<String> = []
+    /// Failed workflow runs already screened for a proposal, so that each is
+    /// screened once rather than searched for in Linear every poll.
+    private var screenedWorkflowRuns: Set<String> = []
 
     init(config: Config) {
         self.config = config
         self.state = State.load()
         self.standups = StandupRecord.load()
+        self.planning = PlanningRecord.load()
     }
 
     func run() async throws {
@@ -48,6 +72,9 @@ actor Daemon {
                 group.addTask {
                     await self.runWorkspaceLoop(workspace)
                 }
+            }
+            group.addTask {
+                await self.runClaudePauseLoop()
             }
             try await group.waitForAll()
         }
@@ -184,6 +211,14 @@ actor Daemon {
                 }
                 recover(run, workspace: workspace)
             }
+            if let run = workspaceState.planningRun {
+                guard let workspace = workspace(named: name) else {
+                    log("Dropping the planning job: workspace is no longer configured", workspace: name)
+                    state.workspaces[name]?.planningRun = nil
+                    continue
+                }
+                recoverPlanning(run, workspace: workspace)
+            }
         }
         recovering = false
         save()
@@ -221,8 +256,10 @@ actor Daemon {
     }
 
     /// Launches queued runs, oldest first, until the agent limit is reached.
+    /// None launches while the Claude usage limit pauses sessions; queued runs
+    /// keep their places until it ends.
     private func fillSlots() {
-        guard !recovering else { return }
+        guard !recovering, claudeAvailable(now: Date()) else { return }
         if let until = launchesPausedUntil {
             guard Date() >= until else { return }
             launchesPausedUntil = nil
@@ -253,16 +290,27 @@ actor Daemon {
     private func launch(_ run: AgentRun, workspace: WorkspaceConfig) -> Bool {
         let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
         let mode = runner.launchMode(for: run)
+        // A run stopped by the usage limit before Claude saved its session
+        // starts it again, but the issue started already.
+        let firstLaunch = run.launchedAt == nil
+        do {
+            try FollowUpFile.ignore(repoPath: repoPath)
+        } catch {
+            if firstReport("ignore \(repoPath)") {
+                log("Could not add \(FollowUpFile.excludeLine) to git's info/exclude in \(repoPath): \(error)", workspace: workspace.name)
+            }
+        }
         do {
             var run = run
             run.launchedAt = run.launchedAt ?? Date()
+            run.usageLimited = nil
             let (launched, process) = try runner.launch(run, mode: mode, repoPath: repoPath) { [run] status in
                 Task { await self.finish(run, status: status, workspace: workspace.name) }
             }
             processes[run.issueId] = process
             state.recordRun(launched, workspace: workspace.name)
             log(mode == .resume ? "Resuming \(run.identifier)" : "Starting \(run.identifier)", workspace: workspace.name)
-            if run.review == nil, run.conflict == nil, mode == .start, run.resumes == 0 {
+            if run.review == nil, run.conflict == nil, mode == .start, run.resumes == 0, firstLaunch {
                 state.recordActivity(
                     ActivityEvent(time: Date(), kind: .agentStarted, identifier: run.identifier), workspace: workspace.name)
                 if workspace.selection == .ready, run.gitHubIssue == nil { markStarted(run, workspace: workspace) }
@@ -332,7 +380,19 @@ actor Daemon {
         processes[run.issueId] = nil
         watchers[run.issueId] = nil
         // A run is finished once; a late duplicate notice finds nothing to do.
-        guard state.workspaces[workspace]?.inFlight[run.issueId]?.sessionId == run.sessionId else { return }
+        guard let current = state.workspaces[workspace]?.inFlight[run.issueId], current.sessionId == run.sessionId
+        else { return }
+
+        if let hit = runner.usageLimitHit(for: run, now: Date()) {
+            // Interrupted, not failed: it resumes in its session once the
+            // pause ends, ahead of the queue, and counts no retry.
+            state.recordRun(current.stoppedByUsageLimit(), workspace: workspace)
+            // A status file left behind would read as finished after a restart.
+            runner.cleanUp(run)
+            log("\(run.identifier) stopped at the Claude usage limit; it resumes when the pause ends", workspace: workspace)
+            pauseClaude(hit, now: Date())
+            return
+        }
 
         switch status {
         case 0?: log("Agent completed for \(run.identifier)", workspace: workspace)
@@ -346,7 +406,71 @@ actor Daemon {
         runner.cleanUp(run)
         save()
         fillSlots()
+        collectFollowUps(of: run, workspace: workspace)
         cleanWorktree(of: run, workspace: workspace)
+    }
+
+    /// Proposes the follow-ups the agent left in its worktree. Those that
+    /// could not be proposed stay in the file for the next agent's exit; a
+    /// malformed file stays for inspection.
+    private func collectFollowUps(of run: AgentRun, workspace name: String) {
+        guard let workspace = workspace(named: name) else { return }
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let pullRequest = run.review?.url ?? run.conflict?.url
+            ?? state.linkedPullRequests(issueId: run.issueId, workspace: name).sorted().last
+        Task.detached {
+            guard let worktree = FollowUpFile.worktree(branch: run.branchName, repoPath: repoPath) else { return }
+            let path = FollowUpFile.path(worktree: worktree)
+            switch FollowUpFile.read(worktree: worktree) {
+            case .none:
+                return
+            case .malformed(let reason):
+                await self.log("Could not read \(run.identifier)'s follow-ups, kept for inspection at \(path): \(reason)", workspace: name)
+            case .entries(let entries):
+                let source = ProposalSource(
+                    kind: .agentSession, value: run.sessionId, issue: run.identifier, pullRequest: pullRequest
+                )
+                let remaining = await self.proposeFollowUps(entries, of: run, source: source, workspace: workspace)
+                do {
+                    try FollowUpFile.keep(remaining, worktree: worktree)
+                } catch {
+                    await self.log("Could not update \(path): \(error)", workspace: name)
+                }
+            }
+        }
+    }
+
+    /// Proposes a new issue for each follow-up, and returns those it could not.
+    private func proposeFollowUps(
+        _ entries: [FollowUp], of run: AgentRun, source: ProposalSource, workspace: WorkspaceConfig
+    ) async -> [FollowUp] {
+        log("\(run.identifier)'s agent reported \(entries.count) follow-up(s)", workspace: workspace.name)
+        let linear = LinearClient(apiKey: workspace.apiKey)
+        let issue: EditableIssue
+        do {
+            issue = try await linear.editableIssue(id: LinearIssue.ID(rawValue: run.issueId))
+        } catch {
+            log("Could not look up \(run.identifier) to propose its follow-ups: \(error)", workspace: workspace.name)
+            return entries
+        }
+        var remaining: [FollowUp] = []
+        for entry in entries {
+            // Linear finds an issue by its identifier too. One it cannot find
+            // is still named in the description.
+            var related = issue.id
+            if let identifier = entry.relatedIssue,
+               let found = try? await linear.editableIssue(id: LinearIssue.ID(rawValue: identifier.rawValue)) {
+                related = found.id
+            }
+            let draft = entry.draft(teamId: issue.teamId, relatedIssueId: related, agentIssue: run.identifier, source: source)
+            do {
+                try await propose(draft, workspace: workspace)
+            } catch {
+                log("Could not propose \(run.identifier)'s follow-up \"\(entry.title)\": \(error)", workspace: workspace.name)
+                remaining.append(entry)
+            }
+        }
+        return remaining
     }
 
     /// Frees the build output of an agent that has ended, as it goes.
@@ -378,6 +502,141 @@ actor Daemon {
                     await self.log(line, workspace: workspace.name)
                 }
             }
+        }
+    }
+
+    // MARK: - Claude usage limit
+
+    /// Pauses every Claude session until the limit resets, or extends the
+    /// pause to a new reset time. Logs and notifies once per pause.
+    private func pauseClaude(_ hit: ClaudeUsageLimit.Hit, now: Date) {
+        if let pause = state.claudePause {
+            state.claudePause = pause.extended(by: hit, now: now)
+        } else {
+            let pause = ClaudePause(hit: hit, now: now)
+            state.claudePause = pause
+            let until = StatusTime.clock(pause.until.rawValue, now: now)
+            print("[\(ISO8601DateFormatter().string(from: now))] The Claude usage limit is reached; pausing Claude sessions "
+                + "in every workspace until \(until), checking every \(Int(ClaudePause.checkInterval / 60)) minutes "
+                + "whether it was lifted sooner")
+            Notifier.post(title: Notifier.title, message: "Claude usage limit reached. Agents are paused until \(until).")
+        }
+        save()
+    }
+
+    /// Whether sessions may start now. Ends a pause whose reset time has passed.
+    private func claudeAvailable(now: Date) -> Bool {
+        guard let pause = state.claudePause else { return true }
+        guard pause.isOver(now: now) else { return false }
+        endClaudePause("its reset time has passed")
+        return true
+    }
+
+    private func endClaudePause(_ reason: String) {
+        guard state.claudePause != nil else { return }
+        state.claudePause = nil
+        save()
+        let waiting = state.queuedRuns.count
+        print("[\(ISO8601DateFormatter().string(from: Date()))] The Claude pause ended: \(reason); "
+            + "resuming \(waiting) waiting session(s)")
+        Notifier.post(title: Notifier.title, message: "Claude usage limit lifted. Agents resume.")
+    }
+
+    /// Ends the Claude pause at once, as `superlinear resume` asks through
+    /// SIGUSR1, and starts the waiting sessions.
+    func resumeClaude() {
+        guard state.claudePause != nil else {
+            print("[superlinear] Asked to resume, but Claude sessions are not paused")
+            return
+        }
+        endClaudePause("superlinear resume")
+        fillSlots()
+    }
+
+    /// While sessions are paused: ends the pause at its reset time, and every
+    /// `ClaudePause.checkInterval` runs a very small session to see whether the
+    /// limit was lifted sooner.
+    private func runClaudePauseLoop() async {
+        while !Task.isCancelled {
+            if let pause = state.claudePause {
+                let now = Date()
+                if pause.isOver(now: now) {
+                    fillSlots()
+                } else if pause.checkDue(now: now) {
+                    await checkClaudePause()
+                }
+            }
+            do {
+                try await Task.sleep(for: .seconds(Self.claudePauseTick))
+            } catch {
+                break
+            }
+        }
+    }
+
+    private func checkClaudePause() async {
+        let check = await ClaudePause.check(environment: ProcessInfo.processInfo.environment)
+        // It may have ended while the check ran.
+        guard let pause = state.claudePause else { return }
+        let now = Date()
+        guard let after = pause.after(check, now: now) else {
+            endClaudePause("a check found the limit lifted before its reset time")
+            fillSlots()
+            return
+        }
+        state.claudePause = after
+        save()
+        let timestamp = ISO8601DateFormatter().string(from: now)
+        switch check {
+        case .limited:
+            print("[\(timestamp)] The Claude usage limit still holds; paused until \(StatusTime.clock(after.until.rawValue, now: now))")
+        case .failed(let message):
+            print("[\(timestamp)] Could not check the Claude usage limit, trying again in "
+                + "\(Int(ClaudePause.checkInterval / 60)) minutes: \(message)")
+        case .lifted:
+            break
+        }
+    }
+
+    // MARK: - GitHub Actions spending limit
+
+    /// Whether the workspace's repository is private, looked up once.
+    func repositoryIsPrivate(workspace: String, repoPath: String) throws -> Bool {
+        if let known = repositoryPrivate[workspace] { return known }
+        let isPrivate = try SpendingLimit.isPrivate(repoPath: repoPath)
+        repositoryPrivate[workspace] = isPrivate
+        return isPrivate
+    }
+
+    func stopClassification(_ key: String) -> Bool? {
+        stopClassifications[key]
+    }
+
+    func recordStopClassification(_ stopped: Bool, key: String) {
+        stopClassifications[key] = stopped
+    }
+
+    func spendingLimitStop(workspace: String) -> SpendingLimitStop? {
+        state.workspaces[workspace]?.spendingLimit
+    }
+
+    /// Records the workspace's CI runs stopped by the spending limit, or nil
+    /// when none are. Logs and notifies when a stop starts or ends.
+    func recordSpendingLimitStop(_ stop: SpendingLimitStop?, workspace: String) {
+        let before = state.workspaces[workspace]?.spendingLimit
+        guard before != stop else { return }
+        state.workspaces[workspace, default: WorkspaceState()].spendingLimit = stop
+        save()
+        switch (before, stop) {
+        case (nil, let stop?):
+            log("CI not started on \(stop.branches.sorted().joined(separator: ", ")): the GitHub Actions spending limit "
+                + "is used up. Rerunning one stopped run each hour until its jobs start", workspace: workspace)
+            Notifier.post(title: Notifier.title, message: "GitHub Actions spending limit reached in \(workspace). CI is not starting.")
+        case (_?, nil):
+            log("CI runs again: the GitHub Actions spending limit no longer stops it", workspace: workspace)
+            Notifier.post(title: Notifier.title, message: "GitHub Actions spending limit lifted in \(workspace). CI runs again.")
+        default:
+            break
         }
     }
 
@@ -470,11 +729,16 @@ actor Daemon {
 
     // MARK: - Standups
 
-    /// Reads the standup file again and takes in what standups decided about
+    /// Reads the planning and standup files again, and takes in the
+    /// proposals `superlinear plan` stored, then what standups decided about
     /// the workspace's proposals.
     func takeInStandups(workspace: String) {
         standups = StandupRecord.load()
+        planning = PlanningRecord.load()
         let before = state.proposals(workspace: workspace)
+        if state.takeIn(planning[workspace], workspace: workspace, now: Date()) {
+            log("Took in proposals from `superlinear plan`", workspace: workspace)
+        }
         state.takeIn(standups[workspace], workspace: workspace)
         if state.proposals(workspace: workspace) != before { save() }
     }
@@ -514,6 +778,17 @@ actor Daemon {
         reported.insert(message).inserted
     }
 
+    /// Whether the failed workflow run at `url` is yet to be screened, and
+    /// marks it screened.
+    func screenWorkflowRun(_ url: String) -> Bool {
+        screenedWorkflowRuns.insert(url).inserted
+    }
+
+    /// Lets the next poll screen the run again, as after Linear failed.
+    func unscreenWorkflowRun(_ url: String) {
+        screenedWorkflowRuns.remove(url)
+    }
+
     func linkedPullRequests(issueId: String, workspace: String) -> Set<String> {
         state.linkedPullRequests(issueId: issueId, workspace: workspace)
     }
@@ -533,16 +808,10 @@ actor Daemon {
     /// Stores a proposed change to Linear, unless the same change is pending
     /// or was rejected, or its kind is set to never. One whose kind is `auto`
     /// is applied at once. Returns the proposal as stored, or nil when none was.
+    /// Throws when Linear could not be searched for duplicates.
     @discardableResult
-    func propose(_ draft: ProposalDraft, workspace: WorkspaceConfig) async -> Proposal? {
-        let engine = proposalEngine(workspace)
-        let screening: ProposalEngine.Screening
-        do {
-            screening = try await engine.screen(draft, existing: state.proposals(workspace: workspace.name))
-        } catch {
-            log("Could not check a \(draft.payload.kind.rawValue) proposal for duplicates: \(error)", workspace: workspace.name)
-            return nil
-        }
+    func propose(_ draft: ProposalDraft, workspace: WorkspaceConfig) async throws -> Proposal? {
+        let screening = try await proposalEngine(workspace).screen(draft, existing: state.proposals(workspace: workspace.name))
         guard case .store(let proposal, let applyNow) = screening else {
             if case .skip(let reason) = screening {
                 log("Not proposing \(draft.payload.kind.rawValue): \(reason)", workspace: workspace.name)
@@ -586,6 +855,131 @@ actor Daemon {
             workspace: workspace.name, autonomy: workspace.autonomy,
             linear: LinearClient(apiKey: workspace.apiKey), audit: AuditLog()
         )
+    }
+
+    // MARK: - Planning
+
+    /// Starts the workspace's planning job when planning is on, none is
+    /// running, the daemon's or `superlinear plan`'s, Claude sessions are
+    /// not paused at the usage limit, and something changed since the last
+    /// one: the default branch moved, or issues were completed. See
+    /// `PlanningGatherer.trigger`.
+    func planIfDue(_ workspace: WorkspaceConfig, now: Date) async {
+        let name = workspace.name
+        guard workspace.planning.enabled, state.workspaces[name]?.planningRun == nil, !planningBusy.contains(name),
+              claudeAvailable(now: now)
+        else { return }
+        let record = planning[name]
+        if let running = record.running, AgentRunner.isRunning(pid: running.pid, startedAt: running.processStartedAt) {
+            return
+        }
+        let history = state.planningRuns(workspace: name, planning: record)
+
+        planningBusy.insert(name)
+        defer { planningBusy.remove(name) }
+        let linear = LinearClient(apiKey: workspace.apiKey)
+        let trigger: PlanningTrigger
+        let run: PlanningRun
+        do {
+            guard let found = try await PlanningGatherer(workspace: workspace, linear: linear).trigger(history: history) else { return }
+            trigger = found
+            run = try await PlanningJob(workspace: workspace, runner: planningRunner)
+                .prepare(history: history, trigger: trigger, linear: linear, now: now)
+        } catch {
+            if firstReport("[\(name)] planning: \(error)") {
+                log("Could not start the planning job, retrying each poll: \(error) (logged once)", workspace: name)
+            }
+            return
+        }
+        log("Starting the planning job: \(trigger)", workspace: name)
+        launchPlanning(run, mode: .start, workspace: workspace)
+    }
+
+    private func launchPlanning(_ run: PlanningRun, mode: LaunchMode, workspace: WorkspaceConfig) {
+        let name = workspace.name
+        do {
+            let (launched, process) = try planningRunner.launch(run, mode: mode, workspace: name) { [run] status in
+                Task { await self.finishPlanning(run, status: status, workspace: workspace) }
+            }
+            planningProcesses[name] = process
+            state.startPlanning(launched, workspace: name)
+            save()
+            log(mode == .resume ? "Resuming the planning job" : "Started the planning job in \(run.worktreePath)", workspace: name)
+            log("  Session: \(run.sessionId)", workspace: name)
+            log("  Log: \(planningRunner.log(workspace: name))", workspace: name)
+        } catch {
+            log("Could not launch the planning job: \(error)", workspace: name)
+            state.finishPlanning(
+                PlanningRunRecord(
+                    sessionId: run.sessionId, startedAt: run.startedAt, endedAt: Date(),
+                    error: "Could not launch Claude: \(error)"),
+                workspace: name)
+            save()
+            planningRunner.cleanUp(run.sessionId)
+        }
+    }
+
+    private func recoverPlanning(_ run: PlanningRun, workspace: WorkspaceConfig) {
+        let name = workspace.name
+        switch planningRunner.recovery(for: run) {
+        case .finished(let status):
+            log("The planning job finished while the daemon was stopped", workspace: name)
+            Task { await finishPlanning(run, status: status, workspace: workspace) }
+        case .adopt:
+            log("The planning job is still running (pid \(run.pid ?? 0)); waiting for it", workspace: name)
+            if let source = planningRunner.watch(run, onExit: { status in
+                Task { await self.finishPlanning(run, status: status, workspace: workspace) }
+            }) {
+                planningWatchers[name] = source
+            }
+        case .waiting, .requeue:
+            log("The planning job was interrupted; resuming it", workspace: name)
+            var resumed = run
+            resumed.pid = nil
+            resumed.processStartedAt = nil
+            resumed.resumes += 1
+            launchPlanning(resumed, mode: planningRunner.launchMode(for: resumed), workspace: workspace)
+        case .abandon:
+            log("Giving up on the planning job after \(run.resumes) resumes", workspace: name)
+            Task { await finishPlanning(run, status: nil, workspace: workspace) }
+        }
+    }
+
+    /// Stores what a planning job proposes, through the proposal store's
+    /// rules, and records the job.
+    private func finishPlanning(_ run: PlanningRun, status: Int32?, workspace: WorkspaceConfig) async {
+        let name = workspace.name
+        planningProcesses[name] = nil
+        planningWatchers[name] = nil
+        // A job is finished once; a late duplicate notice finds nothing to do.
+        guard state.workspaces[name]?.planningRun?.sessionId == run.sessionId else { return }
+        state.workspaces[name]?.planningRun = nil
+        planningBusy.insert(name)
+        defer { planningBusy.remove(name) }
+
+        var (record, ingest) = PlanningJob(workspace: workspace, runner: planningRunner).finish(run, status: status, now: Date())
+        for refusal in ingest.refused {
+            log("Planning job: refused \(refusal)", workspace: name)
+        }
+        for draft in ingest.drafts {
+            do {
+                if try await propose(draft, workspace: workspace) != nil {
+                    record.proposed += 1
+                } else {
+                    record.skipped += 1
+                }
+            } catch {
+                log("Could not check a \(draft.payload.kind.rawValue) proposal for duplicates: \(error)", workspace: name)
+                record.skipped += 1
+            }
+        }
+        var summary = record.error.map { "The planning job failed: \($0)" }
+            ?? "The planning job ended: \(record.proposed) proposed, \(record.skipped) skipped"
+        if let usage = record.usage { summary += ", \(StatusSummary.compact(usage.tokens)) tokens" }
+        log(summary, workspace: name)
+        state.finishPlanning(record, workspace: name)
+        save()
+        planningRunner.cleanUp(run.sessionId)
     }
 
     func updateLastPoll(_ date: Date, workspace: String) {

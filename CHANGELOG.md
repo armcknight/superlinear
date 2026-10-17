@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Pause and resume at the provider limits. When a Claude session ends at
+  the Claude plan's usage limit, every Claude session pauses, in all
+  workspaces, until the reset time in the message, or for an hour when it
+  gives none. The stopped session is recorded as interrupted, keeping its
+  session ID and using no retry, and resumes first when the pause ends.
+  Queued issues keep their places, and GitHub work goes on. Every 15
+  minutes a one-word session with no tools checks whether the limit was
+  lifted early; `superlinear resume`, which the standup offers too, ends
+  the pause at once. In private repositories, CI runs that the GitHub
+  Actions spending limit kept from starting are told apart from failures by
+  their annotations, shown as "CI not started: GitHub spending limit", and
+  not given to agents to fix; one is rerun each hour, and once its jobs
+  start, or those of a run you reran by hand, the others are rerun, newest
+  first, one per branch. `superlinear
+  status` shows a line for each active pause, the standup lists them under
+  Risks, and a macOS notification marks when each starts and ends.
+- The planning job. For each workspace with `planning.enabled`, a poll
+  that finds the default branch moved since the last job, or an issue
+  completed since it ended, runs a headless Claude session in the default
+  branch's worktree, given why it runs, the commits merged since the last
+  job with their pull requests and issues, the issues completed since,
+  the watched teams' open issues with their projects, milestones,
+  relations and labels, and the spec document. The session writes
+  proposals to a JSON file: closures of issues the changes did, edits of
+  managed blocks, relations and duplicates, new issues for gaps, spec
+  changes and promotions to Todo. The daemon checks them against what the
+  session was given, stores them through the proposal store's rules, and
+  records the job's token use. Like an agent, a job survives a daemon
+  restart. `superlinear plan [--workspace W]` runs one now, and the
+  standup offers to when something changed since the last, with that
+  job's token use.
+
 - The superlinear guide, in `docs/`: the life of an issue, planning,
   bootstrap, builds, configuration and operations. The README is now an
   overview that links to it. Each section that other repositories link to
@@ -43,8 +75,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   issue like an open one, or a change rejected before, is not proposed
   again. Each applied change goes in
   `~/.local/share/superlinear/audit/<workspace>.jsonl`, and `superlinear
-  proposals [--workspace W]` lists pending and recent proposals. Nothing
-  makes proposals yet.
+  proposals [--workspace W]` lists pending and recent proposals.
+- Agents' follow-ups become proposals. Every agent prompt tells the agent
+  to leave bugs and missing work outside its issue in
+  `.superlinear/followups.json` in its worktree, which git ignores, rather
+  than fix them or create Linear issues. When the agent exits, each entry
+  becomes a `createIssue` proposal, or an `addRelation` one when an open
+  issue matches, with the agent's session, issue and pull request as its
+  source. A malformed file is logged and kept. Failing CI on the default
+  branch makes one proposal per failing workflow, and `TODO` or `FIXME`
+  lines added by a merged pull request make one each.
 - A `selection` key per workspace: `"new"`, the default, starts agents for
   issues created since the last poll, as before; `"ready"` starts them for
   every open issue in one of the workspace's `readyStates` (default

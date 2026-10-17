@@ -11,6 +11,8 @@ Usage: superlinear [--config <path>]
        superlinear status [--config <path>]
        superlinear proposals [--workspace <name>] [--config <path>]
        superlinear standup [--print] [--workspace <name>] [--config <path>]
+       superlinear plan [--workspace <name>] [--config <path>]
+       superlinear resume
 
 Watches Linear for new issues and starts an autonomous Claude Code agent
 for each one. With no subcommand, runs the daemon in the foreground.
@@ -36,6 +38,16 @@ Subcommands:
               and adjust the plan for today. Applies your decisions at the
               end. --print shows what superlinear did, the proposals, the
               issues needing a human and the plan, without prompts.
+              When the default branch moved or issues were completed
+              since the last planning job, it offers to run one first.
+  plan        Run the planning job now and wait for it: Claude reviews
+              the default branch's new commits, the completed and open
+              issues and the spec, and proposes changes to Linear, which
+              come up at the next standup. Without --workspace, runs it
+              for each workspace with planning on.
+  resume      End the pause of Claude sessions that the Claude usage limit
+              started, at once, as when you bought more usage. The daemon
+              also checks every 15 minutes, and resumes at the reset time.
 
 Options:
   --config <path>   Config file. Default: ~/.config/superlinear/config.json
@@ -90,6 +102,12 @@ case .standup(let path, let workspace, let printOnly):
     Task { exit(await StandupCommand.run(configPath: path, workspace: workspace, printOnly: printOnly)) }
     dispatchMain()
 
+case .plan(let path, let workspace):
+    Task { exit(await PlanCommand.run(configPath: path, workspace: workspace)) }
+    dispatchMain()
+case .resume:
+    exit(ResumeCommand.run())
+
 case .version:
     print(Superlinear.fullVersion)
     exit(0)
@@ -117,8 +135,11 @@ if case .held(let holder) = DaemonLock.acquire(path: "\(stateDirectory)/daemon.l
 // Ignore default signal handlers so DispatchSource can intercept them
 signal(SIGTERM, SIG_IGN)
 signal(SIGINT, SIG_IGN)
+// `superlinear resume` sends SIGUSR1 to end the Claude pause.
+signal(SIGUSR1, SIG_IGN)
 
 var daemonTask: Task<Void, Error>?
+var runningDaemon: Daemon?
 var binaryWatcher: BinaryWatcher?
 var configWatcher: ConfigWatcher?
 
@@ -138,6 +159,13 @@ sigint.setEventHandler {
 }
 sigint.resume()
 
+let sigusr1 = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+sigusr1.setEventHandler {
+    guard let daemon = runningDaemon else { return }
+    Task { await daemon.resumeClaude() }
+}
+sigusr1.resume()
+
 do {
     let path = configPath ?? Config.defaultPath
     let contents = try Data(contentsOf: URL(fileURLWithPath: path))
@@ -154,6 +182,7 @@ do {
         print("[superlinear] Could not write \(DaemonInfo.fileURL().path): \(error)")
     }
     let daemon = Daemon(config: config)
+    runningDaemon = daemon
     daemonTask = Task {
         try await daemon.run()
     }

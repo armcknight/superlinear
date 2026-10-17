@@ -1,8 +1,9 @@
 import Foundation
+import Tagged
 
 /// What an agent's Claude sessions used, read from their transcripts: the
 /// tokens Claude reports for each message, and the time the agent was active.
-struct AgentUsage: Sendable, Equatable {
+struct AgentUsage: Codable, Sendable, Equatable {
     /// Input tokens, cache writes included.
     var inputTokens = 0
     var outputTokens = 0
@@ -106,13 +107,93 @@ struct Transcripts: Sendable {
 }
 
 /// A GitHub Actions workflow run, as `gh run list --json` reports it.
-struct WorkflowRun: Codable, Sendable, Equatable {
+struct WorkflowRun: Decodable, Sendable, Equatable {
+    /// A run's ID, which `gh run list` reports as `databaseId` and `gh run
+    /// rerun` takes.
+    typealias ID = Tagged<WorkflowRun, Int>
+
+    /// Where the run is, as `gh run list` reports it.
+    enum Status: String, Decodable, Sendable {
+        case queued, requested, waiting, pending, completed
+        case inProgress = "in_progress"
+        /// A status GitHub added since.
+        case unknown
+
+        init(from decoder: Decoder) throws {
+            self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+        }
+    }
+
+    /// How a completed run ended, as `gh run list` reports it.
+    enum Conclusion: String, Sendable {
+        case success, failure, neutral, cancelled, skipped, stale
+        case timedOut = "timed_out"
+        case actionRequired = "action_required"
+        case startupFailure = "startup_failure"
+
+        /// `gh`'s text for a conclusion, nil for the empty one it reports
+        /// for a run still going, and for one GitHub added since.
+        static func parse(_ text: String?) -> Conclusion? {
+            text.flatMap(Conclusion.init(rawValue:))
+        }
+
+        /// Whether the run passed, or did nothing to fail.
+        var isPassing: Bool {
+            switch self {
+            case .success, .skipped, .neutral: true
+            case .failure, .cancelled, .stale, .timedOut, .actionRequired, .startupFailure: false
+            @unknown default: false
+            }
+        }
+    }
+
     let headBranch: String
     let status: String
     let startedAt: Date?
     let updatedAt: Date?
+    /// The fields below are present when the listing asked for them, as the
+    /// check for failing workflows does.
+    var workflowName: String? = nil
+    /// How a completed run ended; nil while it runs, or when GitHub reports a
+    /// conclusion this build does not know.
+    var conclusion: Conclusion? = nil
+    var url: String? = nil
+    var headSha: String? = nil
+    var createdAt: Date? = nil
 
     static let jsonFields = "headBranch,status,startedAt,updatedAt"
+
+    init(
+        headBranch: String, status: String, startedAt: Date?, updatedAt: Date?, workflowName: String? = nil,
+        conclusion: Conclusion? = nil, url: String? = nil, headSha: String? = nil, createdAt: Date? = nil
+    ) {
+        self.headBranch = headBranch
+        self.status = status
+        self.startedAt = startedAt
+        self.updatedAt = updatedAt
+        self.workflowName = workflowName
+        self.conclusion = conclusion
+        self.url = url
+        self.headSha = headSha
+        self.createdAt = createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        headBranch = try container.decode(String.self, forKey: .headBranch)
+        status = try container.decode(String.self, forKey: .status)
+        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
+        workflowName = try container.decodeIfPresent(String.self, forKey: .workflowName)
+        conclusion = .parse(try container.decodeIfPresent(String.self, forKey: .conclusion))
+        url = try container.decodeIfPresent(String.self, forKey: .url)
+        headSha = try container.decodeIfPresent(String.self, forKey: .headSha)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case headBranch, status, startedAt, updatedAt, workflowName, conclusion, url, headSha, createdAt
+    }
 
     /// How long a finished run took, start to end. Runs still going count
     /// once they finish.

@@ -21,6 +21,9 @@ Rules:
 | [`lifecycle.md#pull-request`](lifecycle.md#pull-request) | The pull request, and how the daemon follows it. |
 | [`lifecycle.md#reviews`](lifecycle.md#reviews) | Reviews that bring an agent back. |
 | [`lifecycle.md#conflicts`](lifecycle.md#conflicts) | Conflicts with the base branch. |
+| [`lifecycle.md#limits`](lifecycle.md#limits) | Usage and spending limits: pausing and resuming. |
+| [`lifecycle.md#claude-usage-limit`](lifecycle.md#claude-usage-limit) | The Claude usage limit, and `superlinear resume`. |
+| [`lifecycle.md#spending-limit`](lifecycle.md#spending-limit) | The GitHub Actions spending limit. |
 | [`lifecycle.md#merge`](lifecycle.md#merge) | The merge and completion. |
 | [`lifecycle.md#started-issue-sweep`](lifecycle.md#started-issue-sweep) | Started issues the daemon does not follow. |
 | [`lifecycle.md#after-merge`](lifecycle.md#after-merge) | What follows a merge. |
@@ -34,7 +37,7 @@ Rules:
 | [`planning.md#proposal-kinds`](planning.md#proposal-kinds) | The kinds of proposal and their default trust levels. |
 | [`planning.md#proposal-rules`](planning.md#proposal-rules) | The rules for applying a proposal. |
 | [`planning.md#audit-log`](planning.md#audit-log) | The audit log, and `superlinear proposals`. |
-| [`planning.md#daily-planning`](planning.md#daily-planning) | The daily planning job. |
+| [`planning.md#daily-planning`](planning.md#daily-planning) | The planning job. |
 | [`planning.md#follow-ups`](planning.md#follow-ups) | Follow-ups from agents. |
 | [`planning.md#standup`](planning.md#standup) | The standup. |
 | [`planning.md#standup-needs-human`](planning.md#standup-needs-human) | Signing off Needs human issues at the standup. |

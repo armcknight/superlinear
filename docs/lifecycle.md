@@ -99,6 +99,38 @@ Reviews come first: if a review also needs an agent, that agent goes first, and 
 
 Each conflict gets one agent. The daemon records the heads of the branch and of the base when it queues the agent. If the pull request still conflicts with the same heads after the agent ends, the daemon logs that once and starts no other agent until one of the two branches moves. GitHub works out the mergeable state in the background after a push, so a pull request it has not yet checked waits for a later poll.
 
+<a id="limits"></a>
+## Usage and spending limits
+
+superlinear sets no budgets of its own. The limits are the ones you set with the providers: your Claude plan's usage limit, and the GitHub Actions spending limit in your GitHub settings. When one of them stops work, superlinear sees it, stops the work that cannot succeed, loses none, and continues when the limit is lifted. There is no config key for this.
+
+<a id="claude-usage-limit"></a>
+### The Claude usage limit
+
+When a session — an agent for a new issue, a review or a conflict — ends with Claude's usage limit message, such as `You've hit your session limit · resets 2:30am (America/Anchorage)` or `Claude AI usage limit reached|<time>`, the daemon:
+
+- Pauses every Claude session, in all workspaces, as they share one Claude login: until the reset time in the message, or for one hour when it gives none.
+- Records the stopped session as interrupted, not failed. It keeps its session ID, and counts neither as a resume nor as a failed launch.
+- Starts no session while paused, the [planning job](planning.md#daily-planning) included; its trigger holds, so it starts after the pause. Queued, blocked and held issues keep their places and their order. GitHub work that needs no Claude — linking and checking pull requests, reviews, moving issues to Done — goes on.
+- Every 15 minutes while paused, runs one very small session (`claude -p` with a one-word prompt and no tools), at a cost of a few tokens. When it answers, the limit was lifted, as when you bought more usage: the pause ends at once. When it gives the limit message again, the pause goes on, until its new reset time.
+- Ends the pause at once on [`superlinear resume`](operations.md#usage), which the [standup](planning.md#standup) also offers while a pause is active.
+- When the pause ends — at the reset time, after a check, or on `superlinear resume` — resumes the interrupted sessions first, with their session IDs, then the queue in its usual order. A resumed session that hits the limit again at once pauses everything again, until the new reset time; nothing retries in a loop.
+
+<a id="spending-limit"></a>
+### The GitHub Actions spending limit
+
+When the limit is used up, or a payment fails, GitHub starts no jobs in private repositories: their check runs fail at once with an annotation saying the job was not started because of the spending limit or a billing problem. Public repositories' standard runners are free, so this applies only to private ones. At each poll, for a private repository, the daemon reads the annotations of the failed runs of open pull requests' branches and of the default branch, once per run attempt, and, for runs stopped this way:
+
+- Shows the pull request's CI state as "CI not started: GitHub spending limit", not "CI failing", in [`superlinear status`](operations.md#status) and the standup.
+- Proposes no issue for such a run on the default branch, as it does for [failing CI](planning.md#follow-ups).
+- Tells agents, in their prompts, that such CI is not a failure to fix. Agents go on working: the limit stops CI, not Claude, and agents run the tests locally before they push.
+- Once an hour, reruns the failed jobs of the newest stopped run (`gh run rerun <id> --failed`). When its jobs start, you have raised the limit or the month has changed: it reruns the failed jobs of the other stopped runs, newest first, at most one for each branch.
+- Reads the stopped runs again at each poll. A run you rerun by hand that starts its jobs counts like the hourly rerun: the others are rerun, and the stop ends. A run that no longer fails, as after you reran it and it passed, leaves the list; when none is left, the stop ends. Between polls, `superlinear status` shows the last poll's view.
+
+### Where pauses show
+
+`superlinear status` begins with one line for each active pause, such as `Claude usage limit: paused until 15:00 (next check 14:15), 3 sessions waiting` and `GitHub Actions spending limit: CI not started in 2 repositories since 10:12`. A macOS notification is posted when a pause starts, and one when it ends. The standup's Risks section lists the active pauses and the work they hold back. Both pauses are kept in the state file, so a restarted daemon keeps them.
+
 <a id="merge"></a>
 ## The merge and completion
 
@@ -116,5 +148,5 @@ The same goes for started issues the daemon is not following — work done by ha
 
 The merge starts the next part of the project's life:
 
-- The [daily planning job](planning.md#daily-planning) reads the merged changes and proposes what follows from them.
+- The [planning job](planning.md#daily-planning) reads the merged changes and proposes what follows from them.
 - The project's [nightly build](builds.md#nightly-testflight) ships them to testers.
