@@ -20,6 +20,9 @@ Rules:
 | [`lifecycle.md#pull-request`](lifecycle.md#pull-request) | The pull request, and how the daemon follows it. |
 | [`lifecycle.md#reviews`](lifecycle.md#reviews) | Reviews that bring an agent back. |
 | [`lifecycle.md#conflicts`](lifecycle.md#conflicts) | Conflicts with the base branch. |
+| [`lifecycle.md#limits`](lifecycle.md#limits) | Usage and spending limits: pausing and resuming. |
+| [`lifecycle.md#claude-usage-limit`](lifecycle.md#claude-usage-limit) | The Claude usage limit, and `superlinear resume`. |
+| [`lifecycle.md#spending-limit`](lifecycle.md#spending-limit) | The GitHub Actions spending limit. |
 | [`lifecycle.md#merge`](lifecycle.md#merge) | The merge and completion. |
 | [`lifecycle.md#started-issue-sweep`](lifecycle.md#started-issue-sweep) | Started issues the daemon does not follow. |
 | [`lifecycle.md#after-merge`](lifecycle.md#after-merge) | What follows a merge. |

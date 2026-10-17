@@ -30,6 +30,13 @@ enum WorkflowFailures {
             .sorted { ($0.workflowName ?? "") < ($1.workflowName ?? "") }
     }
 
+    /// Whether the run is one of those the spending limit stopped, by the
+    /// run ID that ends its URL.
+    static func isStopped(_ run: WorkflowRun, stopped: Set<WorkflowRun.ID>) -> Bool {
+        guard let id = run.url.flatMap({ URL(string: $0)?.lastPathComponent }).flatMap(Int.init) else { return false }
+        return stopped.contains(WorkflowRun.ID(rawValue: id))
+    }
+
     static func title(workflow: String, branch: String) -> String {
         "CI fails on \(branch): \(workflow)"
     }

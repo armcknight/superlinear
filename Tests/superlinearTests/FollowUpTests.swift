@@ -181,6 +181,12 @@ struct WorkflowFailureTests {
         ])
     }
 
+    @Test("A run the spending limit stopped is not proposed")
+    func spendingLimitStop() {
+        #expect(WorkflowFailures.isStopped(run("CI", .failure, at: 3), stopped: [3]))
+        #expect(!WorkflowFailures.isStopped(run("CI", .failure, at: 3), stopped: [4]))
+    }
+
     @Test("Repeated failures of one workflow make one proposal")
     func oneProposal() async throws {
         let engine = ProposalEngine(

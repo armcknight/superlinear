@@ -37,9 +37,12 @@ superlinear status [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear standup [--print] [--workspace <name>] [--config <path>]
 superlinear plan [--workspace <name>] [--config <path>]
+superlinear resume
 ```
 
 With no subcommand it runs the daemon in the foreground, which is how to test a configuration without registering a launch agent. `--config` overrides the default path, `--version` prints the version, and `--help` prints this.
+
+`superlinear resume` ends a pause of Claude sessions at the usage limit at once, as after you buy more usage or change plans before the reset time. It signals a running daemon, which starts the waiting sessions at once; with no daemon running, it lifts the pause in the state file. See [Usage and spending limits](lifecycle.md#limits).
 
 <a id="restarts"></a>
 ## Restarts
@@ -73,7 +76,7 @@ Agents' builds fill the disk fast: a SwiftPM `.build` directory or an Xcode Deri
 | Addressing review | An agent addresses your review of the issue's pull request, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
 | Resolving conflicts | An agent merges the base branch into the branch of the issue's pull request, which conflicts with it, or is queued to. Shows the pull request, and the pid and log once it runs. |
 | Interrupted | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
-| Queued | Waiting for a free agent slot. |
+| Queued | Waiting for a free agent slot, or for a pause at the Claude usage limit to end. A session the limit stopped says so; it resumes first. |
 | Open pull requests | The agent finished and its pull request is open. Shown only when open pull requests could not be listed for review; otherwise they appear above. |
 | Merged, issue not done | The pull request is merged, but the Linear issue is not in a completed state. |
 | Finished without a pull request | The agent ended, but no pull request is open or merged, and the issue is still open. |
@@ -90,6 +93,8 @@ After the workspaces comes a summary:
 - **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
 
 After the summary, a line gives the time of the last [standup](planning.md#standup), and the numbers of pending proposals and of issues that need a human.
+
+When a [pause](lifecycle.md#limits) is active, the report begins with one line for it.
 
 The report ends with this command's version and binary, then the daemon's: its pid, version, binary and start time, or that it is not running. It warns when the daemon's binary has been replaced since the daemon started. Last, under **Polls**, each workspace shows when its last poll ended, whether it failed, and when the next one is due, or, once that time has passed, that it is polling now. Each workspace polls on its own loop, which waits its `pollIntervalSeconds` after each poll ends, so each has its own times.
 

@@ -32,6 +32,9 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// The pull request whose conflicts with its base branch the run
     /// resolves, for a run started by such a conflict.
     var conflict: ConflictRequest?
+    /// Set when the run's session stopped at the Claude usage limit, until it
+    /// launches again. Such a run waits out the pause, then goes first.
+    var usageLimited: Bool?
 
     /// Waiting for a free slot: recorded, but not launched, or launched and
     /// since requeued after an interruption.
@@ -40,6 +43,17 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// Queued for a new issue and never launched, so a standup may hold it
     /// back or move it in the queue.
     var isFresh: Bool { isQueued && launchedAt == nil && resumes == 0 && review == nil && conflict == nil }
+
+    /// The run put back in the queue after its session stopped at the Claude
+    /// usage limit. It is interrupted, not failed: it keeps its session ID,
+    /// its place in the queue, and its counts of resumes and failed launches.
+    func stoppedByUsageLimit() -> AgentRun {
+        var run = self
+        run.pid = nil
+        run.processStartedAt = nil
+        run.usageLimited = true
+        return run
+    }
 }
 
 /// A pull request with reviews for an agent to address.
@@ -114,6 +128,9 @@ struct WorkspaceState: Codable, Sendable {
     var proposals: [Proposal]
     /// What the daemon did on its own, oldest first, for the standup.
     var activity: [ActivityEvent]
+    /// The repository's CI runs the GitHub Actions spending limit stopped,
+    /// while there are any.
+    var spendingLimit: SpendingLimitStop?
     /// The planning job the daemon is running, if any.
     var planningRun: PlanningRun?
     /// The planning jobs the daemon ran, oldest first.
@@ -150,6 +167,7 @@ struct WorkspaceState: Codable, Sendable {
         needsHuman = try container.decodeIfPresent([LinearIssue.ID: WaitingIssue].self, forKey: .needsHuman) ?? [:]
         proposals = try container.decodeIfPresent([Proposal].self, forKey: .proposals) ?? []
         activity = try container.decodeIfPresent([ActivityEvent].self, forKey: .activity) ?? []
+        spendingLimit = try container.decodeIfPresent(SpendingLimitStop.self, forKey: .spendingLimit)
         planningRun = try container.decodeIfPresent(PlanningRun.self, forKey: .planningRun)
         planningRuns = try container.decodeIfPresent([PlanningRunRecord].self, forKey: .planningRuns) ?? []
     }
@@ -188,6 +206,9 @@ struct PollRecord: Codable, Sendable, Equatable {
 
 struct State: Codable, Sendable {
     var workspaces: [String: WorkspaceState]
+    /// The pause of every Claude session while the usage limit is used up.
+    /// All workspaces share one Claude login, so it is for all of them.
+    var claudePause: ClaudePause?
 
     init() {
         workspaces = [:]
@@ -228,6 +249,20 @@ struct State: Codable, Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(State.self, from: data)
+    }
+
+    /// Ends the Claude pause, as `superlinear resume` does. Returns false when
+    /// there was none.
+    @discardableResult
+    mutating func liftClaudePause() -> Bool {
+        defer { claudePause = nil }
+        return claudePause != nil
+    }
+
+    /// The runs waiting for a slot in every workspace, which a Claude pause
+    /// holds back.
+    var queuedRuns: [AgentRun] {
+        workspaces.values.flatMap { $0.inFlight.values.filter(\.isQueued) }
     }
 
     mutating func markProcessed(_ issueId: String, workspace: String) {

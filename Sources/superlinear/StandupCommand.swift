@@ -361,7 +361,10 @@ enum StandupCommand {
 
         for (index, workspace) in workspaces.enumerated() {
             let workspaceState = state.workspaces[workspace.name] ?? WorkspaceState()
-            let view = await gather(workspace, state: workspaceState, standup: record[workspace.name], full: !printOnly)
+            let now = Date()
+            let view = await gather(
+                workspace, state: workspaceState, standup: record[workspace.name], full: !printOnly,
+                pauses: Standup.Pauses(state: state, workspace: workspace.name, now: now), now: now)
             if printOnly {
                 io.say((index > 0 ? "\n" : "") + view.rendered(sections: StandupView.printedSections))
                 continue
@@ -392,13 +395,28 @@ enum StandupCommand {
             io.say("\nSummary for \(workspace.name)")
             io.say((summary.isEmpty ? ["Nothing changed"] : summary).map { "  " + $0 }.joined(separator: "\n"))
         }
+        if !printOnly {
+            offerResume(state: state, io: io, resume: { ResumeCommand.resume(state: $0).0 }, now: Date())
+        }
         return 0
+    }
+
+    /// Offers to end the Claude pause, as `superlinear resume` does, when one
+    /// is active: once, as it is for all workspaces.
+    static func offerResume(state: State, io: any StandupIO, resume: (State) -> String, now: Date) {
+        guard let pause = state.claudePause, !pause.isOver(now: now) else { return }
+        let answer = io.ask(
+            "\nClaude sessions are paused at the usage limit until \(StatusTime.clock(pause.until.rawValue, now: now)). "
+                + "Resume them now, as after buying more usage? [y/N] ")
+        guard answer?.trimmingCharacters(in: .whitespaces).lowercased() == "y" else { return }
+        io.say(resume(state))
     }
 
     /// The view of one workspace. `full` adds what only the interactive
     /// standup shows: pull requests waiting on the owner, the backlog, and risks.
     static func gather(
-        _ workspace: WorkspaceConfig, state: WorkspaceState, standup: WorkspaceStandup, full: Bool, now: Date = Date()
+        _ workspace: WorkspaceConfig, state: WorkspaceState, standup: WorkspaceStandup, full: Bool,
+        pauses: Standup.Pauses, now: Date
     ) async -> StandupView {
         let client = LinearClient(apiKey: workspace.apiKey)
         var warnings: [String] = []
@@ -437,11 +455,11 @@ enum StandupCommand {
         } catch {
             view.warnings.append("Could not list open pull requests: \(error)")
         }
-        view.risks = risks(repoPath: repoPath, now: now, warnings: &view.warnings)
+        view.risks = risks(repoPath: repoPath, pauses: pauses, now: now, warnings: &view.warnings)
         return view
     }
 
-    private static func risks(repoPath: String, now: Date, warnings: inout [String]) -> [String] {
+    private static func risks(repoPath: String, pauses: Standup.Pauses, now: Date, warnings: inout [String]) -> [String] {
         let branch = Git.defaultBranch(in: repoPath)
         var latest: Standup.DefaultBranchRun?
         if let branch {
@@ -460,7 +478,7 @@ enum StandupCommand {
         } catch {
             warnings.append("Could not check GitHub's rate limit: \(error)")
         }
-        return Standup.risks(defaultBranch: branch, latestRun: latest, rateLimit: rateLimit, now: now)
+        return Standup.risks(defaultBranch: branch, latestRun: latest, rateLimit: rateLimit, pauses: pauses, now: now)
     }
 
     /// The GraphQL limit, which `gh pr list` spends, from `gh api rate_limit`.
