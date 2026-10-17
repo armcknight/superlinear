@@ -9,7 +9,7 @@ The guide's sections here describe work that is planned. Each one that is not bu
 
 A component is a reusable part of a project: `apple-app`, and later `swift-cli`, `vapor-fly`, `supabase` and `web-frontend`. A project can use more than one, such as an Apple app and a Vapor server in one repository.
 
-Components live in the [armcknight/templates](https://github.com/armcknight/templates) repository. Each component has a directory, `components/<name>/`, with:
+Components live in the [armcknight/templatr](https://github.com/armcknight/templatr) repository. Each component has a directory, `components/<name>/`, with:
 
 - `component.toml`, its [manifest](#manifests);
 - `scaffold/`, files copied one time into a project, never over a file that exists, including a README with the generated "How this project is built" section's markers;
@@ -31,7 +31,7 @@ Each component's `component.toml` says:
 - `shared`: the shared pieces the component uses, with their repositories, paths and tags.
 - `docs`: the anchors in this guide that explain the component, from [Anchors](anchors.md).
 
-The [templates repository's README](https://github.com/armcknight/templates/blob/main/README.md#the-manifest) describes each field, and [its JSON Schema](https://github.com/armcknight/templates/blob/main/schema/component.schema.json) is the full format.
+The [templates repository's README](https://github.com/armcknight/templatr/blob/main/README.md#the-manifest) describes each field, and [its JSON Schema](https://github.com/armcknight/templatr/blob/main/schema/component.schema.json) is the full format.
 
 <a id="secrets"></a>
 ## Secrets and where they come from

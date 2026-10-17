@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restart. `superlinear plan [--workspace W]` runs one now, and the
   standup offers to when something changed since the last, with that
   job's token use.
-- The [`armcknight/templates`](https://github.com/armcknight/templates)
+- The [`armcknight/templatr`](https://github.com/armcknight/templatr)
   repository: the component manifest format
   (`component.toml`) with its JSON Schema and a validator, and the first
   component, `apple-app`, with shared `test` and `beta` fastlane lanes for
