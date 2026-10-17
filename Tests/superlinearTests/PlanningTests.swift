@@ -9,7 +9,13 @@ private actor FakeLinear: PlanningReading, LinearWriting {
     var projects: [PlanningProject]
     var teams: [PlanningTeam]
     var specs: [String: SpecText]
+    var completed: [Completion] = []
     var writes: [String] = []
+
+    struct Completion {
+        var identifier: LinearIssue.Identifier
+        var at: Date
+    }
 
     init(issues: [PlanningIssue], projects: [PlanningProject] = [], teams: [PlanningTeam], specs: [String: SpecText] = [:]) {
         self.issues = issues
@@ -18,9 +24,17 @@ private actor FakeLinear: PlanningReading, LinearWriting {
         self.specs = specs
     }
 
-    func planningIssues(teamIds: [String]) async throws -> [PlanningIssue] { issues }
+    func complete(_ identifier: LinearIssue.Identifier, at: Date) {
+        completed.append(Completion(identifier: identifier, at: at))
+    }
+
+    func planningIssues(teamIds: [LinearTeam.ID]) async throws -> [PlanningIssue] { issues }
     func planningProjects(ids: [LinearProject.ID]) async throws -> [PlanningProject] { projects.filter { ids.contains($0.id) } }
-    func planningTeams(ids: [String]) async throws -> [PlanningTeam] { teams }
+    func planningTeams(ids: [LinearTeam.ID]) async throws -> [PlanningTeam] { teams }
+
+    func completedIssues(teamIds: [LinearTeam.ID], after: Date) async throws -> [LinearIssue.Identifier] {
+        completed.filter { $0.at > after }.sorted { $0.at < $1.at }.map(\.identifier)
+    }
 
     func spec(of target: ProposalTarget) async throws -> SpecText {
         guard let spec = specs[target.rawID] else { throw LinearClientError.apiError(["Entity not found"]) }
@@ -36,7 +50,7 @@ private actor FakeLinear: PlanningReading, LinearWriting {
         guard let issue = issues.first(where: { $0.id == id }) else { throw LinearClientError.apiError(["Entity not found"]) }
         return EditableIssue(
             id: issue.id, identifier: issue.identifier.rawValue, description: issue.description, updatedAt: issue.updatedAt,
-            labels: issue.labels, stateType: issue.stateType, teamId: issue.teamId)
+            labels: issue.labels.map(\.rawValue), stateType: issue.stateType, teamId: issue.teamId)
     }
 
     func openIssues(like title: String, teamId: LinearTeam.ID) async throws -> [IssueMatch] { [] }
@@ -72,7 +86,7 @@ private let updated = Date(timeIntervalSince1970: 1_700_000_000)
 private let team = PlanningTeam(id: "team-1", key: "SPL", name: "Superlinear")
 private let project = PlanningProject(
     id: "project-1", name: "Planning", content: "Exit criteria: a daily job.", updatedAt: updated,
-    milestones: [.init(name: "Beta", targetDate: "2026-11-01")])
+    milestones: [.init(name: "Beta")])
 
 private func issue(
     _ number: Int, state: LinearStateType = .unstarted, description: String = "", labels: [String] = [],
@@ -82,12 +96,13 @@ private func issue(
         id: LinearIssue.ID(rawValue: "issue-\(number)"), identifier: LinearIssue.Identifier(rawValue: "SPL-\(number)"),
         title: "Issue \(number)", description: description, stateName: state == .backlog ? "Backlog" : "Todo",
         stateType: state, priority: 2, teamId: team.id, teamKey: team.key, projectId: project?.id,
-        projectName: project?.name, milestone: nil, labels: labels, relations: relations, updatedAt: updated)
+        projectName: project?.name, milestone: nil, labels: labels.map { LinearLabel.Name(rawValue: $0) }, relations: relations,
+        updatedAt: updated)
 }
 
 private let issues = [
     issue(1, description: "Mine.\n\n<!-- superlinear -->\nOld notes\n<!-- /superlinear -->", project: project),
-    issue(2, state: .backlog, relations: [PlanningRelation(type: "blocks", identifier: "SPL-3", outgoing: false)]),
+    issue(2, state: .backlog, relations: [PlanningRelation(type: .blocks, identifier: "SPL-3", direction: .incoming)]),
     issue(3),
     issue(4, labels: ["superlinear: hands off"]),
     issue(5, description: "All superlinear's.", labels: ["superlinear"]),
@@ -102,9 +117,10 @@ private let directCommit = PlanningCommit(
 
 private func context(commits: [PlanningCommit] = [mergedCommit, directCommit]) -> PlanningContext {
     PlanningContext(
-        workspace: "w", defaultBranch: "main", worktreePath: "/repo", head: "ccccccc3333333333333333333333333333333333",
-        since: "0000000444444444444444444444444444444444", commits: commits, issues: issues, projects: [project],
-        teams: [team], spec: PlanningSpec(id: "spec0123", url: "https://linear.app/t/document/spec-spec0123", content: "Spec v1", updatedAt: updated))
+        workspace: "w", trigger: "a test asked", defaultBranch: "main", worktreePath: "/repo",
+        head: "ccccccc3333333333333333333333333333333333", since: "0000000444444444444444444444444444444444",
+        commits: commits, completedIssues: ["SPL-7"], issues: issues, projects: [project], teams: [team],
+        spec: PlanningSpec(id: "spec0123", url: "https://linear.app/t/document/spec-spec0123", content: "Spec v1", updatedAt: updated))
 }
 
 private func item(_ kind: String, _ fill: (inout PlanningOutput.Item) -> Void = { _ in }) -> PlanningOutput.Item {
@@ -122,9 +138,15 @@ private func scratch() -> URL {
     FileManager.default.temporaryDirectory.appendingPathComponent("superlinear-\(UUID().uuidString)")
 }
 
-private func workspace(_ extra: String = "") throws -> WorkspaceConfig {
-    let json = #"{"workspaces": [{"name": "w", "apiKey": "k", "repoPath": "/repo""# + extra + "}]}"
+private func workspace(_ extra: String = "", repoPath: String = "/repo") throws -> WorkspaceConfig {
+    let json = #"{"workspaces": [{"name": "w", "apiKey": "k", "repoPath": ""# + repoPath + #"""# + extra + "}]}"
     return try Config.decoded(from: Data(json.utf8)).workspaces[0]
+}
+
+private func record(
+    _ session: ClaudeSession.ID, startedAt: Date, endedAt: Date, head: GitCommit.SHA?, error: String? = nil
+) -> PlanningRunRecord {
+    PlanningRunRecord(sessionId: session, startedAt: startedAt, endedAt: endedAt, head: head, error: error)
 }
 
 @Suite("Planning")
@@ -140,47 +162,93 @@ struct PlanningTests {
         #expect(on.planning.specDocumentURL == nil)
     }
 
-    @Test("A job is due when none ran, or the last started a day ago or more")
-    func schedule() {
+    @Test("The next job starts from the last successful head, polls compare against the last head, and 30 jobs are kept")
+    func history() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        func record(hoursAgo: Double, error: String? = nil, head: String? = "h\(Int.random(in: 0..<1000))") -> PlanningRunRecord {
-            let start = now.addingTimeInterval(-hoursAgo * 3600)
-            return PlanningRunRecord(sessionId: "s", startedAt: start, endedAt: start, head: head, error: error)
+        func run(hoursAgo: Double, error: String? = nil, head: GitCommit.SHA? = "h\(Int.random(in: 0..<1000))") -> PlanningRunRecord {
+            record("s", startedAt: now.addingTimeInterval(-hoursAgo * 3600), endedAt: now.addingTimeInterval(-hoursAgo * 3600), head: head, error: error)
         }
-        #expect(PlanningSchedule.isDue(last: nil, now: now))
-        #expect(!PlanningSchedule.isDue(last: record(hoursAgo: 23), now: now))
-        #expect(PlanningSchedule.isDue(last: record(hoursAgo: 24), now: now))
-        #expect(PlanningSchedule.isDue(last: record(hoursAgo: 13), now: now, interval: PlanningSchedule.standupOffer))
+        let good = run(hoursAgo: 48, head: "good")
+        let failed = run(hoursAgo: 24, error: "boom", head: "failed")
+        #expect(PlanningHistory.since([good, failed]) == "good")
+        #expect(PlanningHistory.last([good, failed]) == failed)
+        #expect(PlanningHistory.lastHead([good, failed]) == "failed")
+        // A job that never launched has no head; the branch is compared against the last that did.
+        #expect(PlanningHistory.lastHead([good, run(hoursAgo: 1, error: "no claude", head: nil)]) == "good")
 
-        let good = record(hoursAgo: 48, head: "good")
-        let failed = record(hoursAgo: 24, error: "boom", head: "failed")
-        #expect(PlanningSchedule.since([good, failed]) == "good")
-        #expect(PlanningSchedule.last([good, failed]) == failed)
-
-        let many = (0..<40).map { record(hoursAgo: Double($0)) }
-        let kept = PlanningSchedule.appending(record(hoursAgo: 0), to: many)
-        #expect(kept.count == PlanningSchedule.retainedRuns)
+        let many = (0..<40).map { run(hoursAgo: Double($0)) }
+        let kept = PlanningHistory.appending(run(hoursAgo: 0), to: many)
+        #expect(kept.count == PlanningHistory.retainedRuns)
         #expect(kept.last?.startedAt == now)
     }
 
-    @Test("The standup offers a job when planning is on and the last is 12 hours old")
-    func standupOffer() throws {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let on = try workspace(#", "planning": {"enabled": true}"#)
-        #expect(PlanCommand.standupOffer(try workspace(), state: WorkspaceState(), planning: WorkspacePlanning(), now: now) == nil)
-        #expect(PlanCommand.standupOffer(on, state: WorkspaceState(), planning: WorkspacePlanning(), now: now)?.contains("yet") == true)
+    @Test("A job is due for a workspace's first, when the default branch moves, and when issues are completed")
+    func trigger() async throws {
+        let repo = try FixtureRepository()
+        defer { repo.remove() }
+        let first = try repo.commit("one")
+        let linear = FakeLinear(issues: issues, teams: [team])
+        let gatherer = PlanningGatherer(workspace: try workspace(#", "planning": {"enabled": true}"#, repoPath: repo.path), linear: linear)
+        let now = Date()
+
+        #expect(try await gatherer.trigger(history: []) == .firstJob)
+        let ran = record("s", startedAt: now.addingTimeInterval(-3600), endedAt: now.addingTimeInterval(-3000), head: first)
+        #expect(try await gatherer.trigger(history: [ran]) == nil)
+
+        let second = try repo.commit("two")
+        #expect(try await gatherer.trigger(history: [ran]) == .newCommits(second))
+        // A failed job's head counts: the branch has to move again.
+        let failed = record("t", startedAt: now.addingTimeInterval(-600), endedAt: now.addingTimeInterval(-500), head: second, error: "boom")
+        #expect(try await gatherer.trigger(history: [ran, failed]) == nil)
+
+        // Completions before the last job ended were its to see.
+        await linear.complete("SPL-8", at: now.addingTimeInterval(-550))
+        #expect(try await gatherer.trigger(history: [ran, failed]) == nil)
+        await linear.complete("SPL-9", at: now.addingTimeInterval(-400))
+        await linear.complete("SPL-10", at: now.addingTimeInterval(-300))
+        let trigger = try await gatherer.trigger(history: [ran, failed])
+        #expect(trigger == .completedIssues(["SPL-9", "SPL-10"]))
+        #expect(trigger?.description == "SPL-9 and SPL-10 were completed")
+        #expect(PlanningTrigger.completedIssues(["SPL-9"]).description == "SPL-9 was completed")
+        #expect(PlanningTrigger.newCommits(second).description == "the default branch moved to \(second.rawValue.prefix(7))")
+
+        // Without a default branch, the check fails rather than answering.
+        let empty = scratch()
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: empty) }
+        let elsewhere = PlanningGatherer(workspace: try workspace(repoPath: empty.path), linear: linear)
+        await #expect(throws: PlanningError.self) { try await elsewhere.trigger(history: [ran]) }
+    }
+
+    @Test("The standup offers a job when none has run, or something changed since the last")
+    func standupOffer() async throws {
+        let repo = try FixtureRepository()
+        defer { repo.remove() }
+        let head = try repo.commit("one")
+        let linear = FakeLinear(issues: issues, teams: [team])
+        let now = Date()
+        let on = try workspace(#", "planning": {"enabled": true}"#, repoPath: repo.path)
+        func offer(_ workspace: WorkspaceConfig, state: WorkspaceState = WorkspaceState(), planning: WorkspacePlanning = WorkspacePlanning()) async -> String? {
+            await PlanCommand.standupOffer(workspace, state: state, planning: planning, linear: linear, now: now)
+        }
+        #expect(await offer(try workspace(repoPath: repo.path)) == nil)
+        #expect(await offer(on)?.contains("yet") == true)
 
         var planning = WorkspacePlanning()
-        planning.runs = [PlanningRunRecord(
-            sessionId: "s", startedAt: now.addingTimeInterval(-6 * 3600), endedAt: now, usage: AgentUsage(inputTokens: 1_000, outputTokens: 500))]
-        #expect(PlanCommand.standupOffer(on, state: WorkspaceState(), planning: planning, now: now) == nil)
+        planning.runs = [record("s", startedAt: now.addingTimeInterval(-6 * 3600), endedAt: now.addingTimeInterval(-6 * 3600), head: head)]
+        #expect(await offer(on, planning: planning) == nil)
+
         var state = WorkspaceState()
-        state.planningRuns = [PlanningRunRecord(
-            sessionId: "t", startedAt: now.addingTimeInterval(-14 * 3600), endedAt: now,
-            usage: AgentUsage(inputTokens: 1_000_000, outputTokens: 200_000))]
-        let offer = try #require(PlanCommand.standupOffer(on, state: state, planning: WorkspacePlanning(), now: now))
-        #expect(offer.contains("14h 0m ago"))
-        #expect(offer.contains("tokens"))
+        var run = record("t", startedAt: now.addingTimeInterval(-14 * 3600), endedAt: now.addingTimeInterval(-14 * 3600), head: head)
+        run.usage = AgentUsage(inputTokens: 1_000_000, outputTokens: 200_000)
+        state.planningRuns = [run]
+        await linear.complete("SPL-3", at: now.addingTimeInterval(-3600))
+        let text = try #require(await offer(on, state: state))
+        #expect(text.contains("14h 0m ago"))
+        #expect(text.contains("tokens"))
+        #expect(text.contains("SPL-3 was completed"))
+        // The newest job of the two is the one the offer speaks of.
+        #expect(await offer(on, state: state, planning: planning)?.contains("6h 0m ago") == true)
     }
 
     @Test("`plan` takes a workspace and a config")
@@ -207,19 +275,23 @@ struct PlanningTests {
         #expect(PlanningGit.worktree(of: "other", repoPath: repo.path) == nil)
         #expect(PlanningGit.ref(of: "main", repoPath: repo.path) == "refs/heads/main")
 
+        // With no remote, the head is the local branch's.
+        #expect(PlanningGit.head(of: "main", repoPath: repo.path) == last)
+
         let all = PlanningGit.commits(repoPath: repo.path, since: nil, through: "main", notBefore: Date().addingTimeInterval(-3600))
         #expect(all.map(\.subject) == ["fix: tidy", "feat(planning): add the job (#7)", "feat: start"])
         let later = PlanningGit.commits(repoPath: repo.path, since: first, through: "main", notBefore: .distantFuture)
-        #expect(later.map(\.sha.count) == [40, 40])
+        #expect(later.map(\.sha.rawValue.count) == [40, 40])
         #expect(later.first?.sha == last)
         #expect(later.last?.body == "Refs SPL-3 and UTF-8")
         // A head git no longer has falls back to the time.
         let unknown = PlanningGit.commits(
-            repoPath: repo.path, since: String(repeating: "0", count: 40), through: "main", notBefore: Date().addingTimeInterval(3600))
+            repoPath: repo.path, since: GitCommit.SHA(rawValue: String(repeating: "0", count: 40)), through: "main",
+            notBefore: Date().addingTimeInterval(3600))
         #expect(unknown.isEmpty)
 
         let linear = FakeLinear(issues: issues, projects: [project], teams: [team], specs: ["spec0123": SpecText(content: "Spec v1", updatedAt: updated)])
-        let config = try Config.decoded(from: Data(#"{"workspaces": [{"name": "w", "apiKey": "k", "repoPath": "\#(repo.path)", "planning": {"enabled": true, "specDocumentURL": "https://linear.app/t/document/spec-spec0123"}}]}"#.utf8)).workspaces[0]
+        let config = try workspace(#", "planning": {"enabled": true, "specDocumentURL": "https://linear.app/t/document/spec-spec0123"}"#, repoPath: repo.path)
         let merged = try #require(later.last)
         var gatherer = PlanningGatherer(workspace: config, linear: linear)
         gatherer.fetch = false
@@ -229,10 +301,16 @@ struct PlanningTests {
                 number: 7, title: "Add the job", url: "https://github.com/o/r/pull/7", headRefName: "linear/spl-2-add-the-job",
                 mergeCommit: .init(oid: merged.sha))]
         }
-        let gathered = try await gatherer.gather(since: first)
+        let now = Date()
+        let previous = record("s", startedAt: now.addingTimeInterval(-7200), endedAt: now.addingTimeInterval(-3600), head: first)
+        await linear.complete("SPL-6", at: now.addingTimeInterval(-7000))
+        await linear.complete("SPL-7", at: now.addingTimeInterval(-1800))
+        let gathered = try await gatherer.gather(history: [previous], trigger: .newCommits(last), now: now)
+        #expect(gathered.trigger == "the default branch moved to \(last.rawValue.prefix(7))")
         #expect(gathered.defaultBranch == "main")
         #expect(gathered.head == last)
         #expect(gathered.since == first)
+        #expect(gathered.completedIssues == ["SPL-7"])
         #expect(gathered.commits.count == 2)
         #expect(gathered.commits.last?.pullRequest?.number == 7)
         // From the branch first, then the body; UTF-8 is no team's.
@@ -241,7 +319,12 @@ struct PlanningTests {
         #expect(gathered.issues.count == issues.count)
         #expect(gathered.projects == [project])
         #expect(gathered.spec?.content == "Spec v1")
-        #expect(gathered.range == "\(first.prefix(7))..\(last.prefix(7))")
+        #expect(gathered.range == "\(first.short)..\(last.short)")
+        // The first job looks back a day for commits and completions alike.
+        let fresh = try await gatherer.gather(history: [], trigger: .firstJob, now: now)
+        #expect(fresh.since == nil)
+        #expect(fresh.commits.count == 3)
+        #expect(fresh.completedIssues == ["SPL-6", "SPL-7"])
     }
 
     @Test("A worktree with the default branch behind is fast-forwarded when clean")
@@ -254,7 +337,7 @@ struct PlanningTests {
         #expect(Git.run(["worktree", "add", "--quiet", "--detach", worktree], in: repo.path) != nil)
         let ahead = try repo.commit("two")
         #expect(PlanningGit.fastForward(worktree: worktree, to: "refs/heads/main") == nil)
-        #expect(Git.run(["rev-parse", "HEAD"], in: worktree) == ahead)
+        #expect(Git.run(["rev-parse", "HEAD"], in: worktree) == ahead.rawValue)
         try repo.commit("three")
         try "dirty".write(toFile: worktree + "/file", atomically: true, encoding: .utf8)
         #expect(PlanningGit.fastForward(worktree: worktree, to: "refs/heads/main")?.contains("uncommitted") == true)
@@ -266,13 +349,15 @@ struct PlanningTests {
     func prompt() {
         let text = PlanningPrompt.render(context(), outputPath: "/runs/out.json")
         #expect(text.contains("/runs/out.json"))
+        #expect(text.contains("because a test asked"))
         #expect(text.contains("aaaaaaa feat: done (#7)"))
+        #expect(text.contains("## Issues completed since the last job\n\nSPL-7."))
         #expect(text.contains("https://github.com/o/r/pull/7"))
         #expect(text.contains("### SPL-2: Issue 2"))
         #expect(text.contains("blocked by SPL-3"))
         #expect(text.contains("Current managed block: \nOld notes"))
         #expect(text.contains("Exit criteria: a daily job."))
-        #expect(text.contains("Beta (due 2026-11-01)"))
+        #expect(text.contains("Milestones: Beta"))
         #expect(text.contains("## Spec document"))
         for kind in PlanningPrompt.kinds { #expect(text.contains(kind.rawValue)) }
     }
@@ -303,12 +388,12 @@ struct PlanningTests {
         #expect(ingest.drafts.count == 1)
         #expect(ingest.drafts.first?.source == ProposalSource(kind: .pullRequest, value: "https://github.com/o/r/pull/7"))
 
-        let (failed, nothing) = job.finish(run, status: 1)
+        let (failed, nothing) = job.finish(run, status: 1, now: updated)
         #expect(failed.error?.contains("exited 1") == true)
         #expect(nothing.drafts.isEmpty)
 
         try FileManager.default.removeItem(atPath: runner.outputFile("s1"))
-        #expect(job.finish(run, status: 0).0.error?.contains("no proposals file") == true)
+        #expect(job.finish(run, status: 0, now: updated).0.error?.contains("no proposals file") == true)
         runner.cleanUp("s1")
         #expect(!FileManager.default.fileExists(atPath: runner.contextFile("s1")))
     }
@@ -498,6 +583,14 @@ struct PlanningTests {
         #expect(issue.projectName == "Planning")
         #expect(issue.milestone == "Beta")
         #expect(issue.relations.map(\.rendered) == ["related to SPL-5", "blocked by SPL-3"])
+        #expect(issue.priority == 1)
+        #expect(issue.teamKey == "SPL")
+
+        let completed = try decoder.decode(LinearQuery.IssuesData<LinearQuery.CompletedIssueNode>.self, from: Data(#"""
+            {"issues": {"nodes": [{"identifier": "SPL-3", "completedAt": "2026-10-16T22:02:10Z"}],
+             "pageInfo": {"hasNextPage": false, "endCursor": null}}}
+            """#.utf8))
+        #expect(completed.issues.nodes.map(\.identifier) == ["SPL-3"])
     }
 
     // MARK: Taking in `superlinear plan`'s proposals
@@ -536,7 +629,7 @@ private struct FixtureRepository {
     }
 
     @discardableResult
-    func commit(_ subject: String, body: String? = nil) throws -> String {
+    func commit(_ subject: String, body: String? = nil) throws -> GitCommit.SHA {
         var arguments = [
             "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
             "commit", "--quiet", "--allow-empty", "-m", subject,
@@ -545,7 +638,7 @@ private struct FixtureRepository {
         guard Git.run(arguments, in: path) != nil, let sha = Git.run(["rev-parse", "HEAD"], in: path) else {
             throw FixtureError.git("commit")
         }
-        return sha
+        return GitCommit.SHA(rawValue: sha)
     }
 
     func remove() {

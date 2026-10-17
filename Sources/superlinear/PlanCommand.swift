@@ -1,7 +1,7 @@
 import Foundation
 
 /// `superlinear plan`: runs the planning job now, in the foreground, rather
-/// than waiting for the daemon's daily run.
+/// than waiting for the daemon to find a change that calls for one.
 enum PlanCommand {
     static func run(configPath: String?, workspace: String?) async -> Int32 {
         let config: Config
@@ -47,11 +47,11 @@ enum PlanCommand {
 
         let job = PlanningJob(workspace: workspace, runner: runner)
         let linear = LinearClient(apiKey: workspace.apiKey)
-        let runs = state.planningRuns(workspace: name, planning: planning[name])
+        let history = state.planningRuns(workspace: name, planning: planning[name])
         say("[\(name)] Gathering commits and issues")
         let run: PlanningRun
         do {
-            run = try await job.prepare(since: PlanningSchedule.since(runs), linear: linear)
+            run = try await job.prepare(history: history, trigger: .onDemand, linear: linear, now: Date())
         } catch {
             say("[\(name)] Could not start the planning job: \(error)")
             return false
@@ -79,7 +79,7 @@ enum PlanCommand {
         for await exit in exits { status = exit }
         withExtendedLifetime(process) {}
 
-        var (record, ingest) = job.finish(run, status: status)
+        var (record, ingest) = job.finish(run, status: status, now: Date())
         for refusal in ingest.refused { say("  Refused \(refusal)") }
         let engine = ProposalEngine(workspace: name, autonomy: workspace.autonomy, linear: linear, audit: AuditLog())
         var existing = state.proposals(workspace: name)
@@ -107,9 +107,9 @@ enum PlanCommand {
         // Read again, in case another `plan` wrote it meanwhile.
         planning = PlanningRecord.load()
         planning[name].running = nil
-        planning[name].runs = PlanningSchedule.appending(record, to: planning[name].runs)
+        planning[name].runs = PlanningHistory.appending(record, to: planning[name].runs)
         planning[name].proposals += stored
-        planning[name].prune()
+        planning[name].prune(now: Date())
         do {
             try planning.save()
         } catch {
@@ -141,19 +141,21 @@ enum PlanCommand {
     }
 
     /// What the standup says before offering to run the job, or nil when it
-    /// does not offer: planning is off, a job is running, or the last started
-    /// less than `PlanningSchedule.standupOffer` ago.
+    /// does not offer: planning is off, a job is running, nothing changed
+    /// since the last job, or the check failed.
     static func standupOffer(
-        _ workspace: WorkspaceConfig, state: WorkspaceState, planning: WorkspacePlanning, now: Date = Date()
-    ) -> String? {
+        _ workspace: WorkspaceConfig, state: WorkspaceState, planning: WorkspacePlanning, linear: any PlanningReading, now: Date
+    ) async -> String? {
         guard workspace.planning.enabled, busy(state, planning: planning) == nil else { return nil }
-        let runs = (state.planningRuns + planning.runs).sorted { $0.startedAt < $1.startedAt }
-        guard let last = PlanningSchedule.last(runs) else {
+        let history = (state.planningRuns + planning.runs).sorted { $0.startedAt < $1.startedAt }
+        guard let trigger = try? await PlanningGatherer(workspace: workspace, linear: linear).trigger(history: history) else {
+            return nil
+        }
+        guard let last = PlanningHistory.last(history) else {
             return "No planning job has run for \(workspace.name) yet."
         }
-        guard PlanningSchedule.isDue(last: last, now: now, interval: PlanningSchedule.standupOffer) else { return nil }
         let age = StatusTime.relative(Int(last.startedAt.timeIntervalSince(now).rounded()))
         let cost = last.usage.map { ", and used \(StatusSummary.compact($0.tokens)) tokens" } ?? ""
-        return "The last planning job for \(workspace.name) ran \(age)\(cost)."
+        return "Since the last planning job for \(workspace.name), which ran \(age)\(cost), \(trigger)."
     }
 }

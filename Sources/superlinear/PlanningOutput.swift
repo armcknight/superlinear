@@ -10,10 +10,10 @@ enum PlanningPrompt {
     static func render(_ context: PlanningContext, outputPath: String) -> String {
         var lines: [String] = [
             """
-            You are superlinear's daily planning job for the Linear workspace "\(context.workspace)". You run \
-            headless: do not ask questions. You are in a worktree of the repository with its default branch, \
-            `\(context.defaultBranch)`, checked out at \(context.head.prefix(7)). Read the code with Read, Grep, \
-            Glob and `git log`, `git show` and `git diff` as you need.
+            You are superlinear's planning job for the Linear workspace "\(context.workspace)". This job runs \
+            because \(context.trigger). You run headless: do not ask questions. You are in a worktree of the \
+            repository with its default branch, `\(context.defaultBranch)`, checked out at \(context.head.short). \
+            Read the code with Read, Grep, Glob and `git log`, `git show` and `git diff` as you need.
 
             Do not change Linear, the repository or anything else. Your only output is a JSON file of proposed \
             changes, written with the Write tool to:
@@ -65,12 +65,19 @@ enum PlanningPrompt {
         lines.append("\n## Commits on \(context.defaultBranch) since the last run (\(context.range))\n")
         if context.commits.isEmpty { lines.append("None.") }
         for commit in context.commits {
-            var line = "- \(commit.sha.prefix(7)) \(commit.subject) (\(commit.author), \(ISO8601DateFormatter().string(from: commit.date)))"
+            var line = "- \(commit.sha.short) \(commit.subject) (\(commit.author), \(ISO8601DateFormatter().string(from: commit.date)))"
             if let pullRequest = commit.pullRequest { line += " — pull request #\(pullRequest.number) \(pullRequest.url)" }
             if !commit.issues.isEmpty { line += " — issues \(commit.issues.map(\.rawValue).joined(separator: ", "))" }
             lines.append(line)
             if !commit.body.isEmpty { lines.append(indented(commit.body, by: "    ")) }
         }
+
+        lines.append("\n## Issues completed since the last job\n")
+        lines.append(
+            context.completedIssues.isEmpty
+                ? "None."
+                : "\(context.completedIssues.map(\.rawValue).joined(separator: ", ")). They are no longer among the open issues below; "
+                    + "issues they blocked may now be ready.")
 
         lines.append("\n## Teams\n")
         for team in context.teams { lines.append("- \(team.key): \(team.name)") }
@@ -80,8 +87,7 @@ enum PlanningPrompt {
         for project in context.projects {
             lines.append("### \(project.name) (ID \(project.id))\n")
             if !project.milestones.isEmpty {
-                lines.append("Milestones: " + project.milestones.map { m in m.targetDate.map { "\(m.name) (due \($0))" } ?? m.name }
-                    .joined(separator: ", "))
+                lines.append("Milestones: " + project.milestones.map(\.name.rawValue).joined(separator: ", "))
             }
             lines.append(project.content.isEmpty ? "(No description.)" : project.content)
             lines.append("")
@@ -92,10 +98,10 @@ enum PlanningPrompt {
         for issue in context.issues.sorted(by: { $0.identifier.sortsBefore($1.identifier) }) {
             lines.append("### \(issue.identifier): \(issue.title)\n")
             var facts = ["State: \(issue.stateName) (\(issue.stateType.rawValue))"]
-            if let priority = issue.priority, priority > 0 { facts.append("Priority: \(Int(priority))") }
+            if let priority = issue.priority, priority.rawValue > 0 { facts.append("Priority: \(Int(priority.rawValue))") }
             if let project = issue.projectName { facts.append("Project: \(project)") }
             if let milestone = issue.milestone { facts.append("Milestone: \(milestone)") }
-            if !issue.labels.isEmpty { facts.append("Labels: \(issue.labels.joined(separator: ", "))") }
+            if !issue.labels.isEmpty { facts.append("Labels: \(issue.labels.map(\.rawValue).joined(separator: ", "))") }
             if !issue.relations.isEmpty { facts.append("Relations: \(issue.relations.map(\.rendered).joined(separator: ", "))") }
             lines.append(facts.joined(separator: " · "))
             lines.append("")
@@ -177,11 +183,9 @@ struct PlanningIngest: Sendable, Equatable {
     var drafts: [ProposalDraft] = []
     var refused: [String] = []
 
-    static let relationTypes: Set<String> = ["blocks", "duplicate", "related", "similar"]
-
     init() {}
 
-    init(_ output: PlanningOutput, context: PlanningContext, sessionId: String) {
+    init(_ output: PlanningOutput, context: PlanningContext, sessionId: ClaudeSession.ID) {
         for (index, item) in output.proposals.enumerated() {
             switch Self.draft(item, context: context, sessionId: sessionId) {
             case .success(let draft): drafts.append(draft)
@@ -195,7 +199,7 @@ struct PlanningIngest: Sendable, Equatable {
     }
 
     private static func draft(
-        _ item: PlanningOutput.Item, context: PlanningContext, sessionId: String
+        _ item: PlanningOutput.Item, context: PlanningContext, sessionId: ClaudeSession.ID
     ) -> Result<ProposalDraft, Refusal> {
         func refuse(_ reason: String) -> Result<ProposalDraft, Refusal> { .failure(Refusal(reason: reason)) }
         guard let kind = ProposalKind(rawValue: item.kind), PlanningPrompt.kinds.contains(kind) else {
@@ -245,25 +249,25 @@ struct PlanningIngest: Sendable, Equatable {
                 case .failure(let refusal): return .failure(refusal)
                 }
                 guard related.id != issue.id else { return refuse("an issue cannot relate to itself") }
-                guard let type = item.relationType?.lowercased(), relationTypes.contains(type) else {
-                    return refuse("relationType must be one of \(relationTypes.sorted().joined(separator: ", "))")
+                guard let type = item.relationType.flatMap({ LinearRelationType(rawValue: $0.lowercased()) }) else {
+                    return refuse("relationType must be one of \(LinearRelationType.allCases.map(\.rawValue).joined(separator: ", "))")
                 }
-                // `blocks` and `duplicate` have a direction; the others do not.
-                let directed = ["blocks", "duplicate"].contains(type)
                 let exists = issue.relations.contains {
-                    $0.identifier == related.identifier && $0.type == type && ($0.outgoing || !directed)
+                    $0.identifier == related.identifier && $0.type == type && ($0.direction == .outgoing || !type.isDirected)
                 } || related.relations.contains {
-                    $0.identifier == issue.identifier && $0.type == type && (!$0.outgoing || !directed)
+                    $0.identifier == issue.identifier && $0.type == type && ($0.direction == .incoming || !type.isDirected)
                 }
-                if exists { return refuse("the relation \(issue.identifier) \(type) \(related.identifier) exists already") }
-                return make(.addRelation(relatedIssueId: related.id, type: type), target, nil)
+                if exists { return refuse("the relation \(issue.identifier) \(type.rawValue) \(related.identifier) exists already") }
+                return make(.addRelation(relatedIssueId: related.id, type: type.rawValue), target, nil)
             }
 
         case .createIssue:
             guard let title = nonEmpty(item.title) else { return refuse("it has no title") }
             guard let teamText = nonEmpty(item.team),
-                  let team = context.teams.first(where: { $0.key.caseInsensitiveCompare(teamText) == .orderedSame || $0.id.rawValue == teamText })
-            else { return refuse("its team is not one of \(context.teams.map(\.key).joined(separator: ", "))") }
+                  let team = context.teams.first(where: {
+                      $0.key.rawValue.caseInsensitiveCompare(teamText) == .orderedSame || $0.id.rawValue == teamText
+                  })
+            else { return refuse("its team is not one of \(context.teams.map(\.key.rawValue).joined(separator: ", "))") }
             var projectId: LinearProject.ID?
             if let projectText = nonEmpty(item.project) {
                 guard let project = project(projectText, in: context) else { return refuse("\(projectText) is not a known project") }
@@ -279,7 +283,7 @@ struct PlanningIngest: Sendable, Equatable {
                     teamId: team.id, projectId: projectId, title: title,
                     description: item.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
                     relatedIssueId: relatedId),
-                .team(team.id, name: team.key), nil)
+                .team(team.id, name: team.key.rawValue), nil)
 
         case .changeSpec:
             guard let newText = item.newText?.trimmingCharacters(in: .whitespacesAndNewlines), !newText.isEmpty else {
@@ -297,7 +301,9 @@ struct PlanningIngest: Sendable, Equatable {
             guard newText != project.content.trimmingCharacters(in: .whitespacesAndNewlines) else {
                 return refuse("newText is \(project.name)'s description")
             }
-            return make(.changeSpec(oldText: project.content, newText: newText), .project(project.id, name: project.name), project.updatedAt)
+            return make(
+                .changeSpec(oldText: project.content, newText: newText), .project(project.id, name: project.name.rawValue),
+                project.updatedAt)
 
         case .postProjectUpdate:
             return refuse("not a kind the planning job proposes")
@@ -307,7 +313,7 @@ struct PlanningIngest: Sendable, Equatable {
     /// Where the proposal comes from: the pull request or commit it names,
     /// when the job was given it, or else the job's whole commit range, or
     /// its session when there were no commits.
-    static func source(of item: PlanningOutput.Item, context: PlanningContext, sessionId: String) -> ProposalSource {
+    static func source(of item: PlanningOutput.Item, context: PlanningContext, sessionId: ClaudeSession.ID) -> ProposalSource {
         if let reference = item.pullRequest?.text.trimmingCharacters(in: .whitespaces) {
             let number = Int(reference.trimmingCharacters(in: CharacterSet(charactersIn: "#")))
             if let pullRequest = context.commits.compactMap(\.pullRequest).first(where: {
@@ -317,16 +323,16 @@ struct PlanningIngest: Sendable, Equatable {
             }
         }
         if let sha = nonEmpty(item.commit)?.lowercased(), sha.count >= 7,
-           let commit = context.commits.first(where: { $0.sha.lowercased().hasPrefix(sha) }) {
+           let commit = context.commits.first(where: { $0.sha.rawValue.lowercased().hasPrefix(sha) }) {
             if let pullRequest = commit.pullRequest { return ProposalSource(kind: .pullRequest, value: pullRequest.url) }
-            return ProposalSource(kind: .commitRange, value: String(commit.sha.prefix(7)))
+            return ProposalSource(kind: .commitRange, value: commit.sha.short)
         }
         if !context.commits.isEmpty { return ProposalSource(kind: .commitRange, value: context.range) }
-        return ProposalSource(kind: .agentSession, value: sessionId)
+        return ProposalSource(kind: .agentSession, value: sessionId.rawValue)
     }
 
     private static func project(_ text: String, in context: PlanningContext) -> PlanningProject? {
-        context.projects.first { $0.id.rawValue == text || $0.name.caseInsensitiveCompare(text) == .orderedSame }
+        context.projects.first { $0.id.rawValue == text || $0.name.rawValue.caseInsensitiveCompare(text) == .orderedSame }
     }
 
     private static func nonEmpty(_ text: String?) -> String? {

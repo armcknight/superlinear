@@ -9,19 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The daily planning job. For each workspace with `planning.enabled`, the
-  first poll after the last job is 24 hours old runs a headless Claude
-  session in the default branch's worktree, given the commits merged since
-  the last job with their pull requests and issues, the watched teams'
-  open issues with their projects, milestones, relations and labels, and
-  the spec document. The session writes proposals to a JSON file:
-  closures of issues the changes did, edits of managed blocks, relations
-  and duplicates, new issues for gaps, spec changes and promotions to
-  Todo. The daemon checks them against what the session was given, stores
-  them through the proposal store's rules, and records the job's token
-  use. Like an agent, a job survives a daemon restart. `superlinear plan
-  [--workspace W]` runs one now, and the standup offers to when the last
-  is over 12 hours old, with its token use.
+- The planning job. For each workspace with `planning.enabled`, a poll
+  that finds the default branch moved since the last job, or an issue
+  completed since it ended, runs a headless Claude session in the default
+  branch's worktree, given why it runs, the commits merged since the last
+  job with their pull requests and issues, the issues completed since,
+  the watched teams' open issues with their projects, milestones,
+  relations and labels, and the spec document. The session writes
+  proposals to a JSON file: closures of issues the changes did, edits of
+  managed blocks, relations and duplicates, new issues for gaps, spec
+  changes and promotions to Todo. The daemon checks them against what the
+  session was given, stores them through the proposal store's rules, and
+  records the job's token use. Like an agent, a job survives a daemon
+  restart. `superlinear plan [--workspace W]` runs one now, and the
+  standup offers to when something changed since the last, with that
+  job's token use.
 
 - The superlinear guide, in `docs/`: the life of an issue, planning,
   bootstrap, builds, configuration and operations. The README is now an

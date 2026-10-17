@@ -47,6 +47,10 @@ enum LinearQuery: CaseIterable, Sendable {
     case planningIssuesInTeams
     /// The projects with some IDs, with their descriptions and milestones.
     case planningProjects
+    /// Issues in the watched teams completed after a time, for the planning
+    /// job's trigger and its context.
+    case completedIssuesSince
+    case completedIssuesSinceInTeams
     case teams
     /// The workspace's first team, for proposals that belong to no issue.
     case firstTeam
@@ -282,8 +286,29 @@ enum LinearQuery: CaseIterable, Sendable {
                   name
                   content
                   updatedAt
-                  projectMilestones(first: 25) { nodes { name targetDate } }
+                  projectMilestones(first: 25) { nodes { name } }
                 }
+              }
+            }
+            """
+        case .completedIssuesSince: """
+            query CompletedIssues($after: DateComparator, $cursor: String) {
+              issues(filter: { completedAt: $after }, orderBy: updatedAt, first: 50, after: $cursor) {
+                nodes { identifier completedAt }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+            """
+        case .completedIssuesSinceInTeams: """
+            query CompletedIssues($after: DateComparator, $teamIds: [ID!], $cursor: String) {
+              issues(
+                filter: { completedAt: $after, team: { id: { in: $teamIds } } }
+                orderBy: updatedAt
+                first: 50
+                after: $cursor
+              ) {
+                nodes { identifier completedAt }
+                pageInfo { hasNextPage endCursor }
               }
             }
             """
@@ -497,7 +522,7 @@ extension LinearQuery {
         let identifier: LinearIssue.Identifier
         let title: String
         let description: String?
-        let priority: Double?
+        let priority: LinearIssue.Priority?
         let updatedAt: Date
         let state: State
         let team: Team
@@ -514,29 +539,29 @@ extension LinearQuery {
 
         struct Team: Decodable {
             let id: LinearTeam.ID
-            let key: String
+            let key: LinearTeam.Key
         }
 
         struct Project: Decodable {
             let id: LinearProject.ID
-            let name: String
+            let name: LinearProject.Name
         }
 
         struct Milestone: Decodable {
-            let name: String
+            let name: LinearMilestone.Name
         }
 
         struct Label: Decodable {
-            let name: String
+            let name: LinearLabel.Name
         }
 
         struct Relation: Decodable {
-            let type: String
+            let type: LinearRelationType
             let relatedIssue: Related
         }
 
         struct InverseRelation: Decodable {
-            let type: String
+            let type: LinearRelationType
             let issue: Related
         }
 
@@ -550,8 +575,8 @@ extension LinearQuery {
                 stateName: state.name, stateType: state.type, priority: priority, teamId: team.id, teamKey: team.key,
                 projectId: project?.id, projectName: project?.name, milestone: projectMilestone?.name,
                 labels: labels.nodes.map(\.name),
-                relations: relations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.relatedIssue.identifier, outgoing: true) }
-                    + inverseRelations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.issue.identifier, outgoing: false) },
+                relations: relations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.relatedIssue.identifier, direction: .outgoing) }
+                    + inverseRelations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.issue.identifier, direction: .incoming) },
                 updatedAt: updatedAt
             )
         }
@@ -566,15 +591,14 @@ extension LinearQuery {
 
         struct Project: Decodable {
             let id: LinearProject.ID
-            let name: String
+            let name: LinearProject.Name
             let content: String?
             let updatedAt: Date
             let projectMilestones: Nodes<Milestone>
         }
 
         struct Milestone: Decodable {
-            let name: String
-            let targetDate: String?
+            let name: LinearMilestone.Name
         }
     }
 
@@ -583,9 +607,15 @@ extension LinearQuery {
 
         struct Team: Decodable {
             let id: LinearTeam.ID
-            let key: String
+            let key: LinearTeam.Key
             let name: String
         }
+    }
+
+    /// An issue as the completed-issues query answers with it.
+    struct CompletedIssueNode: Decodable {
+        let identifier: LinearIssue.Identifier
+        let completedAt: Date
     }
 
     struct TeamsData: Decodable {

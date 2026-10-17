@@ -18,6 +18,8 @@ struct WorkspaceConfig: Decodable, Sendable {
     let apiKey: String
     let repoPath: String
     let teamIds: [String]
+    /// `teamIds` as Linear's API takes them.
+    var watchedTeams: [LinearTeam.ID] { teamIds.map { LinearTeam.ID(rawValue: $0) } }
     let pollIntervalSeconds: Int
     let selection: IssueSelection
     /// Linear state types that mean "build this" in `ready` mode.
@@ -77,7 +79,7 @@ struct WorkspaceConfig: Decodable, Sendable {
 
 /// A workspace's `planning` settings.
 struct PlanningConfig: Decodable, Sendable, Equatable {
-    /// Whether the daily planning job runs.
+    /// Whether the planning job runs.
     var enabled = false
     /// The Linear document holding the project's spec. The planning job reads
     /// it, and decisions entered at standup are added to it as well as to

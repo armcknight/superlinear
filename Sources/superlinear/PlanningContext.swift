@@ -6,21 +6,22 @@ struct PlanningIssue: Codable, Sendable, Equatable {
     var identifier: LinearIssue.Identifier
     var title: String
     var description: String
+    /// The name the team gives the state, as "In Review"; teams name their
+    /// own, so only `stateType` is one of a known set.
     var stateName: String
     var stateType: LinearStateType
-    /// 0 for no priority, then 1 (urgent) to 4 (low).
-    var priority: Double?
+    var priority: LinearIssue.Priority?
     var teamId: LinearTeam.ID
-    var teamKey: String
+    var teamKey: LinearTeam.Key
     var projectId: LinearProject.ID?
-    var projectName: String?
-    var milestone: String?
-    var labels: [String]
+    var projectName: LinearProject.Name?
+    var milestone: LinearMilestone.Name?
+    var labels: [LinearLabel.Name]
     var relations: [PlanningRelation]
     var updatedAt: Date
 
-    var createdBySuperlinear: Bool { labels.contains { $0.caseInsensitiveCompare(ProposalEngine.label) == .orderedSame } }
-    var handsOff: Bool { labels.contains { $0.caseInsensitiveCompare(ProposalEngine.handsOffLabel) == .orderedSame } }
+    var createdBySuperlinear: Bool { labels.contains { $0.rawValue.caseInsensitiveCompare(ProposalEngine.label) == .orderedSame } }
+    var handsOff: Bool { labels.contains { $0.rawValue.caseInsensitiveCompare(ProposalEngine.handsOffLabel) == .orderedSame } }
 
     /// The text an edit replaces: the whole description of an issue
     /// superlinear created, otherwise its managed block.
@@ -31,40 +32,45 @@ struct PlanningIssue: Codable, Sendable, Equatable {
 
 /// A relation between an open issue and another.
 struct PlanningRelation: Codable, Sendable, Equatable {
-    /// `blocks`, `duplicate`, `related` or `similar`.
-    var type: String
+    var type: LinearRelationType
     var identifier: LinearIssue.Identifier
-    /// Whether the issue is the relation's subject, as the one that blocks,
-    /// rather than its object.
-    var outgoing: Bool
+    var direction: Direction
+
+    /// Which end of the relation the issue is.
+    enum Direction: String, Codable, Sendable {
+        /// The issue is the relation's subject: the one that blocks, or is
+        /// the duplicate.
+        case outgoing
+        /// The issue is the relation's object: the one blocked, or duplicated.
+        case incoming
+    }
 
     var rendered: String {
-        switch (type, outgoing) {
-        case ("blocks", true): "blocks \(identifier)"
-        case ("blocks", false): "blocked by \(identifier)"
-        case ("duplicate", true): "duplicate of \(identifier)"
-        case ("duplicate", false): "duplicated by \(identifier)"
-        default: "\(type) to \(identifier)"
+        switch (type, direction) {
+        case (.blocks, .outgoing): "blocks \(identifier)"
+        case (.blocks, .incoming): "blocked by \(identifier)"
+        case (.duplicate, .outgoing): "duplicate of \(identifier)"
+        case (.duplicate, .incoming): "duplicated by \(identifier)"
+        default: "\(type.rawValue) to \(identifier)"
         }
     }
 }
 
 struct PlanningProject: Codable, Sendable, Equatable {
     var id: LinearProject.ID
-    var name: String
+    var name: LinearProject.Name
     var content: String
     var updatedAt: Date
     var milestones: [Milestone]
 
     struct Milestone: Codable, Sendable, Equatable {
-        var name: String
-        var targetDate: String?
+        var name: LinearMilestone.Name
     }
 }
 
 struct PlanningTeam: Codable, Sendable, Equatable {
     var id: LinearTeam.ID
-    var key: String
+    var key: LinearTeam.Key
     var name: String
 }
 
@@ -85,7 +91,7 @@ struct PlanningPullRequest: Codable, Sendable, Equatable {
 
 /// A commit on the default branch.
 struct PlanningCommit: Codable, Sendable, Equatable {
-    var sha: String
+    var sha: GitCommit.SHA
     var author: String
     var date: Date
     var subject: String
@@ -99,14 +105,19 @@ struct PlanningCommit: Codable, Sendable, Equatable {
 /// that its output can be checked against it, also after a restart.
 struct PlanningContext: Codable, Sendable, Equatable {
     var workspace: String
+    /// Why the job runs, as `PlanningTrigger` describes it.
+    var trigger: String
     var defaultBranch: String
     var worktreePath: String
     /// The default branch's head on the remote, or locally when there is none.
-    var head: String
+    var head: GitCommit.SHA
     /// The head the last job looked at, when there was one.
-    var since: String?
+    var since: GitCommit.SHA?
     /// The default branch's commits after `since`, newest first.
     var commits: [PlanningCommit]
+    /// The issues completed since the last job ended, which are no longer
+    /// among `issues`.
+    var completedIssues: [LinearIssue.Identifier]
     var issues: [PlanningIssue]
     var projects: [PlanningProject]
     var teams: [PlanningTeam]
@@ -122,9 +133,8 @@ struct PlanningContext: Codable, Sendable, Equatable {
 
     /// The range of commits it covers, as `abc1234..def5678`, or the head alone.
     var range: String {
-        let short = { (sha: String) in String(sha.prefix(7)) }
-        guard let oldest = commits.last else { return short(head) }
-        return "\(short(since ?? oldest.sha))..\(short(head))"
+        guard let oldest = commits.last else { return head.short }
+        return "\((since ?? oldest.sha).short)..\(head.short)"
     }
 }
 
@@ -132,10 +142,13 @@ struct PlanningContext: Codable, Sendable, Equatable {
 /// for real; tests stand in for it.
 protocol PlanningReading: Sendable {
     /// Open issues in the teams, or in every team when `teamIds` is empty.
-    func planningIssues(teamIds: [String]) async throws -> [PlanningIssue]
+    func planningIssues(teamIds: [LinearTeam.ID]) async throws -> [PlanningIssue]
     func planningProjects(ids: [LinearProject.ID]) async throws -> [PlanningProject]
     /// The teams with these IDs, or every team when `ids` is empty.
-    func planningTeams(ids: [String]) async throws -> [PlanningTeam]
+    func planningTeams(ids: [LinearTeam.ID]) async throws -> [PlanningTeam]
+    /// The issues in the teams, or in every team when `teamIds` is empty,
+    /// completed after `after`, oldest first.
+    func completedIssues(teamIds: [LinearTeam.ID], after: Date) async throws -> [LinearIssue.Identifier]
     func spec(of target: ProposalTarget) async throws -> SpecText
 }
 
@@ -143,7 +156,6 @@ enum PlanningError: Error, CustomStringConvertible {
     case noDefaultBranch(String)
     case noWorktree(branch: String, repoPath: String)
     case noHead(String)
-    case alreadyRunning(String)
     case noOutput(String)
 
     var description: String {
@@ -151,7 +163,6 @@ enum PlanningError: Error, CustomStringConvertible {
         case .noDefaultBranch(let repoPath): "Could not find the default branch of \(repoPath)"
         case .noWorktree(let branch, let repoPath): "No worktree of \(repoPath) has \(branch) checked out"
         case .noHead(let ref): "Could not read the head of \(ref)"
-        case .alreadyRunning(let detail): "A planning job is already running: \(detail)"
         case .noOutput(let path): "The session wrote no proposals file at \(path)"
         }
     }
@@ -162,10 +173,8 @@ enum PlanningGit {
     /// The branch `origin/HEAD` points at, or else `main` or `master`,
     /// whichever exists.
     static func defaultBranch(repoPath: String) -> String? {
-        if let ref = Git.run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: repoPath), ref.hasPrefix("origin/") {
-            return String(ref.dropFirst("origin/".count))
-        }
-        return ["main", "master"].first { Git.run(["rev-parse", "--verify", "--quiet", "refs/heads/\($0)"], in: repoPath) != nil }
+        Git.defaultBranch(in: repoPath)
+            ?? ["main", "master"].first { Git.run(["rev-parse", "--verify", "--quiet", "refs/heads/\($0)"], in: repoPath) != nil }
     }
 
     /// The path of the worktree that has `branch` checked out.
@@ -186,6 +195,18 @@ enum PlanningGit {
     static func ref(of branch: String, repoPath: String) -> String {
         let remote = "refs/remotes/origin/\(branch)"
         return Git.run(["rev-parse", "--verify", "--quiet", remote], in: repoPath) != nil ? remote : "refs/heads/\(branch)"
+    }
+
+    /// The head of `branch` on the remote, asked with `git ls-remote` so that
+    /// a poll fetches nothing, or, when the remote cannot be asked, the head
+    /// of `ref(of:)`. Nil when neither is known.
+    static func head(of branch: String, repoPath: String) -> GitCommit.SHA? {
+        if let answer = Git.run(["ls-remote", "--heads", "origin", "refs/heads/\(branch)"], in: repoPath),
+           let sha = answer.split(whereSeparator: { $0 == "\t" || $0 == "\n" }).first, sha.count == 40 {
+            return GitCommit.SHA(rawValue: String(sha))
+        }
+        return Git.run(["rev-parse", "--verify", "--quiet", ref(of: branch, repoPath: repoPath)], in: repoPath)
+            .map { GitCommit.SHA(rawValue: $0) }
     }
 
     /// Moves the worktree's branch up to `ref` when it is clean and behind it,
@@ -209,7 +230,7 @@ enum PlanningGit {
 
     /// The first-parent commits of `ref` after `since`, newest first, or,
     /// with no `since` or one git no longer has, those since `notBefore`.
-    static func commits(repoPath: String, since: String?, through ref: String, notBefore: Date) -> [PlanningCommit] {
+    static func commits(repoPath: String, since: GitCommit.SHA?, through ref: String, notBefore: Date) -> [PlanningCommit] {
         var arguments = ["log", "--first-parent", "-n", "\(commitLimit)", "--format=%H%x1f%an%x1f%aI%x1f%s%x1f%b%x1e"]
         if let since, Git.run(["cat-file", "-e", "\(since)^{commit}"], in: repoPath) != nil {
             arguments.append("\(since)..\(ref)")
@@ -222,7 +243,7 @@ enum PlanningGit {
             let fields = record.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\u{1f}")
             guard fields.count == 5, let date = formatter.date(from: fields[2]) else { return nil }
             return PlanningCommit(
-                sha: fields[0], author: fields[1], date: date, subject: fields[3],
+                sha: GitCommit.SHA(rawValue: fields[0]), author: fields[1], date: date, subject: fields[3],
                 body: fields[4].trimmingCharacters(in: .whitespacesAndNewlines)
             )
         }
@@ -230,8 +251,8 @@ enum PlanningGit {
 
     /// The identifiers of issues in teams with `keys` that `texts` name, as
     /// `SPL-11` or a branch's `spl-11`, in the order first named.
-    static func identifiers(in texts: [String], keys: Set<String>) -> [LinearIssue.Identifier] {
-        let keys = Set(keys.map { $0.uppercased() })
+    static func identifiers(in texts: [String], keys: Set<LinearTeam.Key>) -> [LinearIssue.Identifier] {
+        let keys = Set(keys.map { $0.rawValue.uppercased() })
         let pattern = /(?i)\b([a-z][a-z0-9]*)-([0-9]+)\b/
         var found: [LinearIssue.Identifier] = []
         for text in texts {
@@ -255,7 +276,7 @@ struct MergedPullRequest: Decodable, Sendable, Equatable {
     var mergeCommit: Commit?
 
     struct Commit: Decodable, Sendable, Equatable {
-        var oid: String
+        var oid: GitCommit.SHA
     }
 
     static let jsonFields = "number,title,url,headRefName,mergeCommit"
@@ -268,7 +289,7 @@ struct MergedPullRequest: Decodable, Sendable, Equatable {
     }
 }
 
-/// Gathers what a planning job looks at.
+/// Gathers what a planning job looks at, and finds whether one is due.
 struct PlanningGatherer: Sendable {
     let workspace: WorkspaceConfig
     let linear: any PlanningReading
@@ -277,10 +298,29 @@ struct PlanningGatherer: Sendable {
     /// Whether to fetch the default branch first.
     var fetch = true
 
-    /// The context of a job that starts from the head `since`, or, on the
-    /// first job, from the commits of the last `PlanningSchedule.interval`.
-    func gather(since: String?, now: Date = Date()) async throws -> PlanningContext {
-        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+    private var repoPath: String { NSString(string: workspace.repoPath).expandingTildeInPath }
+
+    /// What makes a job due now, given the workspace's jobs so far, or nil
+    /// when nothing changed since the last: the default branch's head is not
+    /// the one it looked at, or issues were completed since it ended. Asks
+    /// the remote for the head and Linear for the completions, so it is
+    /// cheap enough for every poll.
+    func trigger(history: [PlanningRunRecord]) async throws -> PlanningTrigger? {
+        guard let last = PlanningHistory.last(history) else { return .firstJob }
+        guard let branch = PlanningGit.defaultBranch(repoPath: repoPath) else { throw PlanningError.noDefaultBranch(repoPath) }
+        if let head = PlanningGit.head(of: branch, repoPath: repoPath), head != PlanningHistory.lastHead(history) {
+            return .newCommits(head)
+        }
+        let completed = try await linear.completedIssues(teamIds: workspace.watchedTeams, after: last.endedAt)
+        return completed.isEmpty ? nil : .completedIssues(completed)
+    }
+
+    /// The context of a job that follows the jobs in `history`: the commits
+    /// after the last successful one's head and the issues completed since
+    /// the last one ended, or, on the first job, those of the last
+    /// `PlanningHistory.firstJobLookback`.
+    func gather(history: [PlanningRunRecord], trigger: PlanningTrigger, now: Date) async throws -> PlanningContext {
+        let repoPath = repoPath
         guard let branch = PlanningGit.defaultBranch(repoPath: repoPath) else { throw PlanningError.noDefaultBranch(repoPath) }
         guard let worktree = PlanningGit.worktree(of: branch, repoPath: repoPath) else {
             throw PlanningError.noWorktree(branch: branch, repoPath: repoPath)
@@ -290,17 +330,23 @@ struct PlanningGatherer: Sendable {
             warnings.append("Could not fetch \(branch); the commits are those known locally")
         }
         let ref = PlanningGit.ref(of: branch, repoPath: repoPath)
-        guard let head = Git.run(["rev-parse", ref], in: repoPath) else { throw PlanningError.noHead(ref) }
+        guard let head = Git.run(["rev-parse", ref], in: repoPath).map({ GitCommit.SHA(rawValue: $0) }) else {
+            throw PlanningError.noHead(ref)
+        }
         if let problem = PlanningGit.fastForward(worktree: worktree, to: ref) { warnings.append(problem) }
-        var commits = PlanningGit.commits(
-            repoPath: repoPath, since: since, through: ref, notBefore: now.addingTimeInterval(-PlanningSchedule.interval))
+        let since = PlanningHistory.since(history)
+        let lookback = now.addingTimeInterval(-PlanningHistory.firstJobLookback)
+        var commits = PlanningGit.commits(repoPath: repoPath, since: since, through: ref, notBefore: lookback)
 
-        let issues = try await linear.planningIssues(teamIds: workspace.teamIds)
-        let teams = try await linear.planningTeams(ids: workspace.teamIds)
+        let teamIds = workspace.watchedTeams
+        let issues = try await linear.planningIssues(teamIds: teamIds)
+        let teams = try await linear.planningTeams(ids: teamIds)
         let projectIds = Array(Set(issues.compactMap(\.projectId))).sorted()
         let projects = projectIds.isEmpty ? [] : try await linear.planningProjects(ids: projectIds)
+        let completed = try await linear.completedIssues(
+            teamIds: teamIds, after: PlanningHistory.last(history)?.endedAt ?? lookback)
 
-        var pullRequests: [String: PlanningPullRequest] = [:]
+        var pullRequests: [GitCommit.SHA: PlanningPullRequest] = [:]
         if !commits.isEmpty {
             do {
                 for merged in try mergedPullRequests(branch, repoPath) {
@@ -328,8 +374,9 @@ struct PlanningGatherer: Sendable {
         }
 
         return PlanningContext(
-            workspace: workspace.name, defaultBranch: branch, worktreePath: worktree, head: head, since: since,
-            commits: commits, issues: issues, projects: projects, teams: teams, spec: spec, warnings: warnings
+            workspace: workspace.name, trigger: trigger.description, defaultBranch: branch, worktreePath: worktree,
+            head: head, since: since, commits: commits, completedIssues: completed, issues: issues, projects: projects,
+            teams: teams, spec: spec, warnings: warnings
         )
     }
 }

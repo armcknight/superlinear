@@ -24,25 +24,25 @@ struct PlanningRunner: Sendable {
     var runsDirectory: String { "\(home)/.local/share/superlinear/runs" }
     var logsDirectory: String { "\(home)/.local/share/superlinear/logs" }
 
-    func statusFile(_ sessionId: String) -> String { "\(runsDirectory)/planning-\(sessionId).status" }
-    func promptFile(_ sessionId: String) -> String { "\(runsDirectory)/planning-\(sessionId).prompt" }
-    func resumePromptFile(_ sessionId: String) -> String { "\(runsDirectory)/planning-\(sessionId).resume.prompt" }
-    func contextFile(_ sessionId: String) -> String { "\(runsDirectory)/planning-\(sessionId).context.json" }
-    func outputFile(_ sessionId: String) -> String { "\(runsDirectory)/planning-\(sessionId).proposals.json" }
+    func statusFile(_ sessionId: ClaudeSession.ID) -> String { "\(runsDirectory)/planning-\(sessionId).status" }
+    func promptFile(_ sessionId: ClaudeSession.ID) -> String { "\(runsDirectory)/planning-\(sessionId).prompt" }
+    func resumePromptFile(_ sessionId: ClaudeSession.ID) -> String { "\(runsDirectory)/planning-\(sessionId).resume.prompt" }
+    func contextFile(_ sessionId: ClaudeSession.ID) -> String { "\(runsDirectory)/planning-\(sessionId).context.json" }
+    func outputFile(_ sessionId: ClaudeSession.ID) -> String { "\(runsDirectory)/planning-\(sessionId).proposals.json" }
     /// Claude's output for a workspace's jobs, appended across runs.
     func log(workspace: String) -> String { "\(logsDirectory)/planning-\(Transcripts.encoded(workspace)).log" }
 
-    static func claudeArguments(sessionId: String, mode: LaunchMode, runsDirectory: String) -> [String] {
+    static func claudeArguments(sessionId: ClaudeSession.ID, mode: LaunchMode, runsDirectory: String) -> [String] {
         [
             "claude", "-p",
-            mode == .resume ? "--resume" : "--session-id", sessionId,
+            mode == .resume ? "--resume" : "--session-id", sessionId.rawValue,
             "--allowedTools", allowedTools,
             "--add-dir", runsDirectory,
         ]
     }
 
     /// Writes the job's context and prompt, ahead of its first launch.
-    func prepare(_ context: PlanningContext, sessionId: String) throws {
+    func prepare(_ context: PlanningContext, sessionId: ClaudeSession.ID) throws {
         try FileManager.default.createDirectory(atPath: runsDirectory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -118,7 +118,7 @@ struct PlanningRunner: Sendable {
     }
 
     func launchMode(for run: PlanningRun) -> LaunchMode {
-        AgentRunner(home: home, environment: environment).claudeSessionExists(run.sessionId) ? .resume : .start
+        AgentRunner(home: home, environment: environment).claudeSessionExists(run.sessionId.rawValue) ? .resume : .start
     }
 
     /// Calls `onExit` with the status of a running session this daemon did
@@ -140,14 +140,14 @@ struct PlanningRunner: Sendable {
         return source
     }
 
-    func context(_ sessionId: String) throws -> PlanningContext {
+    func context(_ sessionId: ClaudeSession.ID) throws -> PlanningContext {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(PlanningContext.self, from: Data(contentsOf: URL(fileURLWithPath: contextFile(sessionId))))
     }
 
     /// The proposals the session wrote, checked against its context.
-    func ingest(_ sessionId: String) throws -> (PlanningIngest, PlanningContext) {
+    func ingest(_ sessionId: ClaudeSession.ID) throws -> (PlanningIngest, PlanningContext) {
         let context = try context(sessionId)
         guard let data = FileManager.default.contents(atPath: outputFile(sessionId)) else {
             throw PlanningError.noOutput(outputFile(sessionId))
@@ -156,7 +156,7 @@ struct PlanningRunner: Sendable {
     }
 
     /// What the session used, from its transcripts, or nil when none was found.
-    func usage(_ sessionId: String) -> AgentUsage? {
+    func usage(_ sessionId: ClaudeSession.ID) -> AgentUsage? {
         let configDirectory = environment["CLAUDE_CONFIG_DIR"] ?? "\(home)/.claude"
         let projects = "\(configDirectory)/projects"
         let fm = FileManager.default
@@ -175,7 +175,7 @@ struct PlanningRunner: Sendable {
     }
 
     /// Removes the files a finished job leaves behind.
-    func cleanUp(_ sessionId: String) {
+    func cleanUp(_ sessionId: ClaudeSession.ID) {
         for path in [statusFile(sessionId), promptFile(sessionId), resumePromptFile(sessionId), contextFile(sessionId), outputFile(sessionId)] {
             try? FileManager.default.removeItem(atPath: path)
         }
@@ -188,17 +188,22 @@ struct PlanningJob: Sendable {
     let workspace: WorkspaceConfig
     var runner = PlanningRunner()
 
-    /// Gathers the job's context and writes its files, ready to launch.
-    func prepare(since: String?, linear: any PlanningReading, now: Date = Date()) async throws -> PlanningRun {
-        let context = try await PlanningGatherer(workspace: workspace, linear: linear).gather(since: since, now: now)
-        let run = PlanningRun(sessionId: UUID().uuidString.lowercased(), startedAt: now, worktreePath: context.worktreePath)
+    /// Gathers the context of the job that follows the workspace's jobs in
+    /// `history`, and writes its files, ready to launch.
+    func prepare(
+        history: [PlanningRunRecord], trigger: PlanningTrigger, linear: any PlanningReading, now: Date
+    ) async throws -> PlanningRun {
+        let context = try await PlanningGatherer(workspace: workspace, linear: linear)
+            .gather(history: history, trigger: trigger, now: now)
+        let run = PlanningRun(
+            sessionId: ClaudeSession.ID(rawValue: UUID().uuidString.lowercased()), startedAt: now, worktreePath: context.worktreePath)
         try runner.prepare(context, sessionId: run.sessionId)
         return run
     }
 
     /// What a job that ended with `status` proposes, and its record, with
     /// the counts to fill in once the proposals are screened.
-    func finish(_ run: PlanningRun, status: Int32?, now: Date = Date()) -> (PlanningRunRecord, PlanningIngest) {
+    func finish(_ run: PlanningRun, status: Int32?, now: Date) -> (PlanningRunRecord, PlanningIngest) {
         var record = PlanningRunRecord(
             sessionId: run.sessionId, startedAt: run.startedAt, endedAt: now, usage: runner.usage(run.sessionId))
         record.head = try? runner.context(run.sessionId).head

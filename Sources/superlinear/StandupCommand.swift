@@ -349,8 +349,9 @@ enum StandupCommand {
             let planning = PlanningRecord.load()
             var planned = false
             for workspace in workspaces {
-                guard let offer = PlanCommand.standupOffer(
-                    workspace, state: state.workspaces[workspace.name] ?? WorkspaceState(), planning: planning[workspace.name])
+                guard let offer = await PlanCommand.standupOffer(
+                    workspace, state: state.workspaces[workspace.name] ?? WorkspaceState(), planning: planning[workspace.name],
+                    linear: LinearClient(apiKey: workspace.apiKey), now: Date())
                 else { continue }
                 guard io.ask("\(offer) Run the planning job first? [y/N] ")?.lowercased().hasPrefix("y") == true else { continue }
                 planned = await PlanCommand.runJob(workspace, say: io.say) || planned

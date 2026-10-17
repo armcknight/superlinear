@@ -5,7 +5,7 @@ How superlinear keeps the plan in Linear up to date: it proposes changes, and yo
 <a id="proposals"></a>
 ## Proposals and trust levels
 
-superlinear can propose changes to the Linear workspace: new issues, edits, closures, relations, promotions from Backlog to Todo, spec changes, and project updates. Each proposal is kept in the state file with its kind, its target (an issue, a project, a document, or for a new issue its team), the change itself (for an edit, the old and the new text, so a diff can be shown), the reason, its source (a pull request, a commit range, an agent session with its issue and pull request, or a workflow run), when it was made, and its status: `pending`, `applied`, `rejected` or `expired`, with the reason for a rejection. [Agents' follow-ups](#follow-ups), failing CI on the default branch, TODOs in merged pull requests, and the [daily planning job](#daily-planning) make proposals.
+superlinear can propose changes to the Linear workspace: new issues, edits, closures, relations, promotions from Backlog to Todo, spec changes, and project updates. Each proposal is kept in the state file with its kind, its target (an issue, a project, a document, or for a new issue its team), the change itself (for an edit, the old and the new text, so a diff can be shown), the reason, its source (a pull request, a commit range, an agent session with its issue and pull request, or a workflow run), when it was made, and its status: `pending`, `applied`, `rejected` or `expired`, with the reason for a rejection. [Agents' follow-ups](#follow-ups), failing CI on the default branch, TODOs in merged pull requests, and the [planning job](#daily-planning) make proposals.
 
 <a id="trust-levels"></a>
 ### Trust levels
@@ -49,19 +49,26 @@ Each change applied is appended to `~/.local/share/superlinear/audit/<workspace>
 `superlinear proposals [--workspace <name>]` lists each workspace's pending proposals, oldest first, then those applied, rejected or expired in the last 7 days, newest first. Each shows its ID's first 8 characters, kind, target, status, when it was made, reason and source, any rejection reason, note or error, and the change: a new issue's title and description, or a line diff for an edit.
 
 <a id="daily-planning"></a>
-## The daily planning job
+## The planning job
 
 ```sh
 superlinear plan [--workspace <name>]
 ```
 
-Once a day, for each workspace with `planning.enabled`, superlinear reviews what was merged and how the open issues stand, and stores what it finds as [proposals](#proposals). It never writes to Linear itself; each proposal's trust level decides whether it is applied at once or waits for a standup.
+Each change that may move the project's direction makes superlinear review what was merged and how the open issues stand, for each workspace with `planning.enabled`, and store what it finds as [proposals](#proposals). It never writes to Linear itself; each proposal's trust level decides whether it is applied at once or waits for a standup.
 
-There is no time to configure: the job starts on the first poll after the last one, the daemon's or `superlinear plan`'s, is 24 hours old, and on the first poll of a workspace that has had none. `superlinear plan` runs it at once, in the foreground, for the workspace named, or for every workspace with planning on; the [standup](#standup) offers it when the last run is over 12 hours old.
+There is no schedule. At each poll, when no job is running for the workspace, the daemon starts one when:
+
+- the workspace has had no job yet;
+- the default branch's head is not the one the last job looked at, failed or not: a pull request merged, or commits were pushed outside one. The head comes from `git ls-remote`, so the poll fetches nothing;
+- an issue of the watched teams was completed after the last job ended, in Linear by hand or by the daemon after a merge. Completions while the last job ran do not count again.
+
+Jobs for one workspace run one at a time, so several merges while one runs make one job after it, which covers them all. A failed job counts: the branch has to move, or an issue be completed, before the next. `superlinear plan` runs a job at once, in the foreground, for the workspace named, or for every workspace with planning on; the [standup](#standup) offers it when one of the conditions above holds. The session is told why its job runs.
 
 A job runs one headless Claude session, `claude -p`, in the worktree that has the repository's default branch checked out, which is that of `origin/HEAD`, or `main` or `master`. superlinear first fetches the branch and fast-forwards that worktree to it when the worktree is clean. The session may read the code and run `git log`, `git show` and `git diff`, and write one file. Its prompt gives:
 
 - the commits on the default branch since the head the last successful job looked at, or, on the first job, those of the last 24 hours, at most 100, each with its pull request, from `gh pr list --state merged`, and the Linear issues its message, branch or title names;
+- the issues of the watched teams completed since the last job ended, or, on the first job, in the last 24 hours, which are no longer among the open issues;
 - the open issues of the watched teams, with their state, priority, project, milestone, labels, relations, description and managed block, and each project's description and milestones;
 - the spec document, when `planning.specDocumentURL` is set.
 
@@ -128,7 +135,7 @@ An interactive review in the terminal, run when you want: there is no schedule. 
 
 `--print` prints sections 1, 3, 4 and 5 without prompts and records nothing, for a quick look or a script. Without `--print`, the standup needs a terminal.
 
-Before the first workspace, for each workspace with planning on whose last [planning job](#daily-planning) started over 12 hours ago, or that has had none, the standup says when it ran and how many tokens it used, and offers to run one first, so that its proposals come up in the same standup. It does not yet show budgets or late milestones.
+Before the first workspace, for each workspace with planning on that has had no [planning job](#daily-planning), or whose default branch moved or whose issues were completed since the last one, the standup says when that job ran, how many tokens it used and what changed since, and offers to run one first, so that its proposals come up in the same standup. It does not yet show budgets or late milestones.
 
 <a id="project-updates"></a>
 ## Project updates

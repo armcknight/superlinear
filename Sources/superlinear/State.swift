@@ -389,7 +389,7 @@ struct State: Codable, Sendable {
     ) -> State {
         var state = load(from: url)
         for (name, record) in planning.workspaces {
-            state.takeIn(record, workspace: name)
+            state.takeIn(record, workspace: name, now: Date())
         }
         for (name, standup) in standups.workspaces {
             state.takeIn(standup, workspace: name)
@@ -401,7 +401,7 @@ struct State: Codable, Sendable {
     /// Those older than `WorkspacePlanning.retention` are left out: the state
     /// file may have dropped them since. Returns whether it added any.
     @discardableResult
-    mutating func takeIn(_ planning: WorkspacePlanning, workspace: String, now: Date = Date()) -> Bool {
+    mutating func takeIn(_ planning: WorkspacePlanning, workspace: String, now: Date) -> Bool {
         let known = Set(proposals(workspace: workspace).map(\.id))
         let cutoff = now.addingTimeInterval(-WorkspacePlanning.retention)
         let new = planning.proposals.filter { !known.contains($0.id) && $0.createdAt >= cutoff }
@@ -422,7 +422,7 @@ struct State: Codable, Sendable {
     mutating func finishPlanning(_ record: PlanningRunRecord, workspace: String) {
         workspaces[workspace, default: WorkspaceState()].planningRun = nil
         let runs = workspaces[workspace]?.planningRuns ?? []
-        workspaces[workspace]?.planningRuns = PlanningSchedule.appending(record, to: runs)
+        workspaces[workspace]?.planningRuns = PlanningHistory.appending(record, to: runs)
     }
 
     /// Takes in what standups decided about the workspace's proposals: the

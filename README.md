@@ -24,7 +24,7 @@ Agents outlive the daemon, so restarts, upgrades and config edits do not stop wo
 The details are in [the superlinear guide](docs/index.md):
 
 - [The life of an issue](docs/lifecycle.md): selection and the ready gate, the agent, the pull request, reviews, conflicts, the merge, completion.
-- [Planning](docs/planning.md): proposals and trust levels, the daily planning job, follow-ups from agents, the standup, project updates.
+- [Planning](docs/planning.md): proposals and trust levels, the planning job, follow-ups from agents, the standup, project updates.
 - [Bootstrap](docs/bootstrap.md): components, manifests, secrets, Needs human steps, `bootstrap --check`.
 - [Builds](docs/builds.md): CI, nightly TestFlight builds, build numbers, the release rule, TestFlight feedback.
 - [Configuration](docs/configuration.md): every config key, and the files superlinear reads and writes.
@@ -90,7 +90,7 @@ superlinear standup [--print] [--workspace <name>] [--config <path>]
 superlinear plan [--workspace <name>] [--config <path>]
 ```
 
-With no subcommand it runs the daemon in the foreground. See [Usage](docs/operations.md#usage), [Status](docs/operations.md#status), [The audit log](docs/planning.md#audit-log) for `proposals`, [The standup](docs/planning.md#standup), and [The daily planning job](docs/planning.md#daily-planning) for `plan`.
+With no subcommand it runs the daemon in the foreground. See [Usage](docs/operations.md#usage), [Status](docs/operations.md#status), [The audit log](docs/planning.md#audit-log) for `proposals`, [The standup](docs/planning.md#standup), and [The planning job](docs/planning.md#daily-planning) for `plan`.
 
 ## Security
 

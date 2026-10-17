@@ -122,10 +122,10 @@ extension LinearClient: StandupWriting {
 
 /// The reads the planning job makes in Linear.
 extension LinearClient: PlanningReading {
-    func planningIssues(teamIds: [String]) async throws -> [PlanningIssue] {
+    func planningIssues(teamIds: [LinearTeam.ID]) async throws -> [PlanningIssue] {
         let nodes: [LinearQuery.PlanningIssueNode] = teamIds.isEmpty
             ? try await fetchAll(.planningIssues, variables: [:])
-            : try await fetchAll(.planningIssuesInTeams, variables: ["teamIds": teamIds])
+            : try await fetchAll(.planningIssuesInTeams, variables: ["teamIds": teamIds.map(\.rawValue)])
         return nodes.map(\.planningIssue)
     }
 
@@ -139,17 +139,25 @@ extension LinearClient: PlanningReading {
             projects += nodes.map {
                 PlanningProject(
                     id: $0.id, name: $0.name, content: $0.content ?? "", updatedAt: $0.updatedAt,
-                    milestones: $0.projectMilestones.nodes.map { .init(name: $0.name, targetDate: $0.targetDate) })
+                    milestones: $0.projectMilestones.nodes.map { .init(name: $0.name) })
             }
         }
         return projects
     }
 
-    func planningTeams(ids: [String]) async throws -> [PlanningTeam] {
+    func planningTeams(ids: [LinearTeam.ID]) async throws -> [PlanningTeam] {
         let teams = try await execute(.teams, variables: [:], as: LinearQuery.PlanningTeamsData.self).teams.nodes
         let wanted = Set(ids)
         return teams
-            .filter { wanted.isEmpty || wanted.contains($0.id.rawValue) }
+            .filter { wanted.isEmpty || wanted.contains($0.id) }
             .map { PlanningTeam(id: $0.id, key: $0.key, name: $0.name) }
+    }
+
+    func completedIssues(teamIds: [LinearTeam.ID], after: Date) async throws -> [LinearIssue.Identifier] {
+        var variables: [String: Any] = ["after": ["gt": ISO8601DateFormatter().string(from: after)]]
+        if !teamIds.isEmpty { variables["teamIds"] = teamIds.map(\.rawValue) }
+        let nodes: [LinearQuery.CompletedIssueNode] = try await fetchAll(
+            teamIds.isEmpty ? .completedIssuesSince : .completedIssuesSinceInTeams, variables: variables)
+        return nodes.sorted { $0.completedAt < $1.completedAt }.map(\.identifier)
     }
 }

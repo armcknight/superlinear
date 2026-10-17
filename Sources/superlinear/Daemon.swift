@@ -542,7 +542,7 @@ actor Daemon {
         standups = StandupRecord.load()
         planning = PlanningRecord.load()
         let before = state.proposals(workspace: workspace)
-        if state.takeIn(planning[workspace], workspace: workspace) {
+        if state.takeIn(planning[workspace], workspace: workspace, now: Date()) {
             log("Took in proposals from `superlinear plan`", workspace: workspace)
         }
         state.takeIn(standups[workspace], workspace: workspace)
@@ -666,9 +666,10 @@ actor Daemon {
     // MARK: - Planning
 
     /// Starts the workspace's planning job when planning is on, none is
-    /// running, and the last one, the daemon's or `superlinear plan`'s,
-    /// started `PlanningSchedule.interval` or more ago.
-    func planIfDue(_ workspace: WorkspaceConfig, now: Date = Date()) async {
+    /// running, the daemon's or `superlinear plan`'s, and something changed
+    /// since the last one: the default branch moved, or issues were
+    /// completed. See `PlanningGatherer.trigger`.
+    func planIfDue(_ workspace: WorkspaceConfig, now: Date) async {
         let name = workspace.name
         guard workspace.planning.enabled, state.workspaces[name]?.planningRun == nil, !planningBusy.contains(name)
         else { return }
@@ -676,21 +677,25 @@ actor Daemon {
         if let running = record.running, AgentRunner.isRunning(pid: running.pid, startedAt: running.processStartedAt) {
             return
         }
-        let runs = state.planningRuns(workspace: name, planning: record)
-        guard PlanningSchedule.isDue(last: PlanningSchedule.last(runs), now: now) else { return }
+        let history = state.planningRuns(workspace: name, planning: record)
 
         planningBusy.insert(name)
         defer { planningBusy.remove(name) }
+        let linear = LinearClient(apiKey: workspace.apiKey)
+        let trigger: PlanningTrigger
         let run: PlanningRun
         do {
+            guard let found = try await PlanningGatherer(workspace: workspace, linear: linear).trigger(history: history) else { return }
+            trigger = found
             run = try await PlanningJob(workspace: workspace, runner: planningRunner)
-                .prepare(since: PlanningSchedule.since(runs), linear: LinearClient(apiKey: workspace.apiKey), now: now)
+                .prepare(history: history, trigger: trigger, linear: linear, now: now)
         } catch {
             if firstReport("[\(name)] planning: \(error)") {
                 log("Could not start the planning job, retrying each poll: \(error) (logged once)", workspace: name)
             }
             return
         }
+        log("Starting the planning job: \(trigger)", workspace: name)
         launchPlanning(run, mode: .start, workspace: workspace)
     }
 
@@ -756,7 +761,7 @@ actor Daemon {
         planningBusy.insert(name)
         defer { planningBusy.remove(name) }
 
-        var (record, ingest) = PlanningJob(workspace: workspace, runner: planningRunner).finish(run, status: status)
+        var (record, ingest) = PlanningJob(workspace: workspace, runner: planningRunner).finish(run, status: status, now: Date())
         for refusal in ingest.refused {
             log("Planning job: refused \(refusal)", workspace: name)
         }

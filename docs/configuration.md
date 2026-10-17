@@ -49,7 +49,7 @@ Each workspace entry is one Linear-account-to-repository pairing. List several t
 | <a id="human-labels"></a>`humanLabels` | no | Names of labels that keep an issue for a person: no agent starts on it. Matched in any case. See [The ready gate](lifecycle.md#ready-gate). Defaults to `["Needs human", "Spike"]`. |
 | <a id="autonomy"></a>`autonomy` | no | The trust level of each kind of proposal: a map from kind to `"auto"`, `"standup"` or `"never"`. Kinds left out keep their defaults. An unknown kind or level is a config error, so a misspelt kind does not leave its default in force unseen. See [Proposals and trust levels](planning.md#proposals). |
 | <a id="proposal-expiry-days"></a>`proposalExpiryDays` | no | Days after which a pending proposal expires, counted from the first standup that showed it. Defaults to `7`. |
-| <a id="planning"></a>`planning` | no | Planning settings. `planning.enabled` turns on the [daily planning job](planning.md#daily-planning); it defaults to `false`. `planning.specDocumentURL` is the URL of the Linear document holding the project's spec; the planning job reads it, and decisions entered at a [standup](planning.md#standup-needs-human) are added to it. |
+| <a id="planning"></a>`planning` | no | Planning settings. `planning.enabled` turns on the [planning job](planning.md#daily-planning); it defaults to `false`. `planning.specDocumentURL` is the URL of the Linear document holding the project's spec; the planning job reads it, and decisions entered at a [standup](planning.md#standup-needs-human) are added to it. |
 
 For example, to apply new issues at once and never post project updates:
 

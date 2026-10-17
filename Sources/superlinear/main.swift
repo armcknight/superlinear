@@ -37,13 +37,13 @@ Subcommands:
               and adjust the plan for today. Applies your decisions at the
               end. --print shows what superlinear did, the proposals, the
               issues needing a human and the plan, without prompts.
-              When the last planning job is over 12 hours old, it
-              offers to run one first.
-  plan        Run the daily planning job now and wait for it: Claude
-              reviews the default branch's new commits, the open issues
-              and the spec, and proposes changes to Linear, which come up
-              at the next standup. Without --workspace, runs it for each
-              workspace with planning on.
+              When the default branch moved or issues were completed
+              since the last planning job, it offers to run one first.
+  plan        Run the planning job now and wait for it: Claude reviews
+              the default branch's new commits, the completed and open
+              issues and the spec, and proposes changes to Linear, which
+              come up at the next standup. Without --workspace, runs it
+              for each workspace with planning on.
 
 Options:
   --config <path>   Config file. Default: ~/.config/superlinear/config.json
