@@ -18,6 +18,8 @@ struct WorkspaceConfig: Decodable, Sendable {
     let apiKey: String
     let repoPath: String
     let teamIds: [String]
+    /// `teamIds` as Linear's API takes them.
+    var watchedTeams: [LinearTeam.ID] { teamIds.map { LinearTeam.ID(rawValue: $0) } }
     let pollIntervalSeconds: Int
     let selection: IssueSelection
     /// Linear state types that mean "build this" in `ready` mode.
@@ -77,9 +79,27 @@ struct WorkspaceConfig: Decodable, Sendable {
 
 /// A workspace's `planning` settings.
 struct PlanningConfig: Decodable, Sendable, Equatable {
-    /// The Linear document holding the project's spec. Decisions entered at
-    /// standup are added to it as well as to their issues.
+    /// Whether the planning job runs.
+    var enabled = false
+    /// The Linear document holding the project's spec. The planning job reads
+    /// it, and decisions entered at standup are added to it as well as to
+    /// their issues.
     var specDocumentURL: String?
+
+    init(enabled: Bool = false, specDocumentURL: String? = nil) {
+        self.enabled = enabled
+        self.specDocumentURL = specDocumentURL
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case enabled, specDocumentURL
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        specDocumentURL = try container.decodeIfPresent(String.self, forKey: .specDocumentURL)
+    }
 
     /// The document's ID as Linear's API takes it: the slug at the end of its
     /// URL, as in `https://linear.app/team/document/spec-0123abcd`.

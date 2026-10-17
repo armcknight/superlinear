@@ -30,6 +30,17 @@ actor Daemon {
     private var gitHubPausedUntil: Date?
     /// What standups decided, read again at each poll.
     private var standups: StandupRecord
+    /// What `superlinear plan` did, read again at each poll.
+    private var planning: PlanningRecord
+    private let planningRunner = PlanningRunner()
+    /// Planning jobs this daemon launched, by workspace, kept so their
+    /// termination handlers fire.
+    private var planningProcesses: [String: Process] = [:]
+    /// Watches on planning jobs an earlier daemon launched, by workspace.
+    private var planningWatchers: [String: DispatchSourceProcess] = [:]
+    /// Workspaces whose planning job is being gathered or its proposals
+    /// stored, so that no second job starts meanwhile.
+    private var planningBusy: Set<String> = []
     /// Failed workflow runs already screened for a proposal, so that each is
     /// screened once rather than searched for in Linear every poll.
     private var screenedWorkflowRuns: Set<String> = []
@@ -38,6 +49,7 @@ actor Daemon {
         self.config = config
         self.state = State.load()
         self.standups = StandupRecord.load()
+        self.planning = PlanningRecord.load()
     }
 
     func run() async throws {
@@ -169,6 +181,14 @@ actor Daemon {
                     continue
                 }
                 recover(run, workspace: workspace)
+            }
+            if let run = workspaceState.planningRun {
+                guard let workspace = workspace(named: name) else {
+                    log("Dropping the planning job: workspace is no longer configured", workspace: name)
+                    state.workspaces[name]?.planningRun = nil
+                    continue
+                }
+                recoverPlanning(run, workspace: workspace)
             }
         }
         recovering = false
@@ -515,11 +535,16 @@ actor Daemon {
 
     // MARK: - Standups
 
-    /// Reads the standup file again and takes in what standups decided about
+    /// Reads the planning and standup files again, and takes in the
+    /// proposals `superlinear plan` stored, then what standups decided about
     /// the workspace's proposals.
     func takeInStandups(workspace: String) {
         standups = StandupRecord.load()
+        planning = PlanningRecord.load()
         let before = state.proposals(workspace: workspace)
+        if state.takeIn(planning[workspace], workspace: workspace, now: Date()) {
+            log("Took in proposals from `superlinear plan`", workspace: workspace)
+        }
         state.takeIn(standups[workspace], workspace: workspace)
         if state.proposals(workspace: workspace) != before { save() }
     }
@@ -636,6 +661,129 @@ actor Daemon {
             workspace: workspace.name, autonomy: workspace.autonomy,
             linear: LinearClient(apiKey: workspace.apiKey), audit: AuditLog()
         )
+    }
+
+    // MARK: - Planning
+
+    /// Starts the workspace's planning job when planning is on, none is
+    /// running, the daemon's or `superlinear plan`'s, and something changed
+    /// since the last one: the default branch moved, or issues were
+    /// completed. See `PlanningGatherer.trigger`.
+    func planIfDue(_ workspace: WorkspaceConfig, now: Date) async {
+        let name = workspace.name
+        guard workspace.planning.enabled, state.workspaces[name]?.planningRun == nil, !planningBusy.contains(name)
+        else { return }
+        let record = planning[name]
+        if let running = record.running, AgentRunner.isRunning(pid: running.pid, startedAt: running.processStartedAt) {
+            return
+        }
+        let history = state.planningRuns(workspace: name, planning: record)
+
+        planningBusy.insert(name)
+        defer { planningBusy.remove(name) }
+        let linear = LinearClient(apiKey: workspace.apiKey)
+        let trigger: PlanningTrigger
+        let run: PlanningRun
+        do {
+            guard let found = try await PlanningGatherer(workspace: workspace, linear: linear).trigger(history: history) else { return }
+            trigger = found
+            run = try await PlanningJob(workspace: workspace, runner: planningRunner)
+                .prepare(history: history, trigger: trigger, linear: linear, now: now)
+        } catch {
+            if firstReport("[\(name)] planning: \(error)") {
+                log("Could not start the planning job, retrying each poll: \(error) (logged once)", workspace: name)
+            }
+            return
+        }
+        log("Starting the planning job: \(trigger)", workspace: name)
+        launchPlanning(run, mode: .start, workspace: workspace)
+    }
+
+    private func launchPlanning(_ run: PlanningRun, mode: LaunchMode, workspace: WorkspaceConfig) {
+        let name = workspace.name
+        do {
+            let (launched, process) = try planningRunner.launch(run, mode: mode, workspace: name) { [run] status in
+                Task { await self.finishPlanning(run, status: status, workspace: workspace) }
+            }
+            planningProcesses[name] = process
+            state.startPlanning(launched, workspace: name)
+            save()
+            log(mode == .resume ? "Resuming the planning job" : "Started the planning job in \(run.worktreePath)", workspace: name)
+            log("  Session: \(run.sessionId)", workspace: name)
+            log("  Log: \(planningRunner.log(workspace: name))", workspace: name)
+        } catch {
+            log("Could not launch the planning job: \(error)", workspace: name)
+            state.finishPlanning(
+                PlanningRunRecord(
+                    sessionId: run.sessionId, startedAt: run.startedAt, endedAt: Date(),
+                    error: "Could not launch Claude: \(error)"),
+                workspace: name)
+            save()
+            planningRunner.cleanUp(run.sessionId)
+        }
+    }
+
+    private func recoverPlanning(_ run: PlanningRun, workspace: WorkspaceConfig) {
+        let name = workspace.name
+        switch planningRunner.recovery(for: run) {
+        case .finished(let status):
+            log("The planning job finished while the daemon was stopped", workspace: name)
+            Task { await finishPlanning(run, status: status, workspace: workspace) }
+        case .adopt:
+            log("The planning job is still running (pid \(run.pid ?? 0)); waiting for it", workspace: name)
+            if let source = planningRunner.watch(run, onExit: { status in
+                Task { await self.finishPlanning(run, status: status, workspace: workspace) }
+            }) {
+                planningWatchers[name] = source
+            }
+        case .waiting, .requeue:
+            log("The planning job was interrupted; resuming it", workspace: name)
+            var resumed = run
+            resumed.pid = nil
+            resumed.processStartedAt = nil
+            resumed.resumes += 1
+            launchPlanning(resumed, mode: planningRunner.launchMode(for: resumed), workspace: workspace)
+        case .abandon:
+            log("Giving up on the planning job after \(run.resumes) resumes", workspace: name)
+            Task { await finishPlanning(run, status: nil, workspace: workspace) }
+        }
+    }
+
+    /// Stores what a planning job proposes, through the proposal store's
+    /// rules, and records the job.
+    private func finishPlanning(_ run: PlanningRun, status: Int32?, workspace: WorkspaceConfig) async {
+        let name = workspace.name
+        planningProcesses[name] = nil
+        planningWatchers[name] = nil
+        // A job is finished once; a late duplicate notice finds nothing to do.
+        guard state.workspaces[name]?.planningRun?.sessionId == run.sessionId else { return }
+        state.workspaces[name]?.planningRun = nil
+        planningBusy.insert(name)
+        defer { planningBusy.remove(name) }
+
+        var (record, ingest) = PlanningJob(workspace: workspace, runner: planningRunner).finish(run, status: status, now: Date())
+        for refusal in ingest.refused {
+            log("Planning job: refused \(refusal)", workspace: name)
+        }
+        for draft in ingest.drafts {
+            do {
+                if try await propose(draft, workspace: workspace) != nil {
+                    record.proposed += 1
+                } else {
+                    record.skipped += 1
+                }
+            } catch {
+                log("Could not check a \(draft.payload.kind.rawValue) proposal for duplicates: \(error)", workspace: name)
+                record.skipped += 1
+            }
+        }
+        var summary = record.error.map { "The planning job failed: \($0)" }
+            ?? "The planning job ended: \(record.proposed) proposed, \(record.skipped) skipped"
+        if let usage = record.usage { summary += ", \(StatusSummary.compact(usage.tokens)) tokens" }
+        log(summary, workspace: name)
+        state.finishPlanning(record, workspace: name)
+        save()
+        planningRunner.cleanUp(run.sessionId)
     }
 
     func updateLastPoll(_ date: Date, workspace: String) {

@@ -5,7 +5,7 @@ How a project that superlinear works on is built, from an issue in Linear to a b
 | Page | Contents |
 | --- | --- |
 | [The life of an issue](lifecycle.md) | Selection and the ready gate, the agent, the pull request, reviews, conflicts, the merge, completion. |
-| [Planning](planning.md) | Proposals and trust levels, the daily planning job, follow-ups from agents, the standup, project updates. |
+| [Planning](planning.md) | Proposals and trust levels, the planning job, follow-ups from agents, the standup, project updates. |
 | [Bootstrap](bootstrap.md) | Components, manifests, secrets and where they come from, Needs human steps, `bootstrap --check`. |
 | [Builds](builds.md) | CI, nightly TestFlight builds, build numbers, the release rule, TestFlight feedback. |
 | [Configuration](configuration.md) | Every config key, and the files superlinear reads and writes. |

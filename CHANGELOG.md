@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The planning job. For each workspace with `planning.enabled`, a poll
+  that finds the default branch moved since the last job, or an issue
+  completed since it ended, runs a headless Claude session in the default
+  branch's worktree, given why it runs, the commits merged since the last
+  job with their pull requests and issues, the issues completed since,
+  the watched teams' open issues with their projects, milestones,
+  relations and labels, and the spec document. The session writes
+  proposals to a JSON file: closures of issues the changes did, edits of
+  managed blocks, relations and duplicates, new issues for gaps, spec
+  changes and promotions to Todo. The daemon checks them against what the
+  session was given, stores them through the proposal store's rules, and
+  records the job's token use. Like an agent, a job survives a daemon
+  restart. `superlinear plan [--workspace W]` runs one now, and the
+  standup offers to when something changed since the last, with that
+  job's token use.
 - The content of the `armcknight/templates` repository, in `templates/` until
   that repository is published: the component manifest format
   (`component.toml`) with its JSON Schema and a validator, and the first

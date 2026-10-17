@@ -183,7 +183,7 @@ enum ProposalPayload: Codable, Sendable, Equatable {
     }
 }
 
-/// A change before it is stored: what a producer, such as the daily job or
+/// A change before it is stored: what a producer, such as the planning job or
 /// an agent's follow-ups, hands over.
 struct ProposalDraft: Sendable, Equatable {
     var payload: ProposalPayload

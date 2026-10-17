@@ -36,6 +36,7 @@ superlinear uninstall
 superlinear status [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear standup [--print] [--workspace <name>] [--config <path>]
+superlinear plan [--workspace <name>] [--config <path>]
 ```
 
 With no subcommand it runs the daemon in the foreground, which is how to test a configuration without registering a launch agent. `--config` overrides the default path, `--version` prints the version, and `--help` prints this.
