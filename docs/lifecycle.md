@@ -139,4 +139,4 @@ The same goes for started issues the daemon is not following — work done by ha
 The merge starts the next part of the project's life:
 
 - The [planning job](planning.md#daily-planning) reads the merged changes and proposes what follows from them.
-- The project's [nightly build](builds.md#nightly-testflight) ships them to testers.
+- The owner ships them to testers with the next [TestFlight build](builds.md#testflight), made by hand.

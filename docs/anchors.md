@@ -57,7 +57,8 @@ Rules:
 | Anchor | Section |
 | --- | --- |
 | [`builds.md#ci`](builds.md#ci) | CI. |
-| [`builds.md#nightly-testflight`](builds.md#nightly-testflight) | Nightly TestFlight builds. |
+| [`builds.md#testflight`](builds.md#testflight) | TestFlight builds: staging builds on demand, and TestFlight uploads by hand with `make deploy-beta`. |
+| [`builds.md#nightly-testflight`](builds.md#nightly-testflight) | The old name of `builds.md#testflight`, kept for links to it. |
 | [`builds.md#build-numbers`](builds.md#build-numbers) | Build numbers. |
 | [`builds.md#release-rule`](builds.md#release-rule) | The release rule: agents never release. |
 | [`builds.md#testflight-feedback`](builds.md#testflight-feedback) | TestFlight feedback. |
