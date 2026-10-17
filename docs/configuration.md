@@ -49,7 +49,7 @@ Each workspace entry is one Linear-account-to-repository pairing. List several t
 | <a id="human-labels"></a>`humanLabels` | no | Names of labels that keep an issue for a person: no agent starts on it. Matched in any case. See [The ready gate](lifecycle.md#ready-gate). Defaults to `["Needs human", "Spike"]`. |
 | <a id="autonomy"></a>`autonomy` | no | The trust level of each kind of proposal: a map from kind to `"auto"`, `"standup"` or `"never"`. Kinds left out keep their defaults. An unknown kind or level is a config error, so a misspelt kind does not leave its default in force unseen. See [Proposals and trust levels](planning.md#proposals). |
 | <a id="proposal-expiry-days"></a>`proposalExpiryDays` | no | Days after which a pending proposal expires, counted from the first standup that showed it. Defaults to `7`. |
-| <a id="planning"></a>`planning` | no | Planning settings. `planning.specDocumentURL` is the URL of the Linear document holding the project's spec; decisions entered at a [standup](planning.md#standup-needs-human) are added to it. |
+| <a id="planning"></a>`planning` | no | Planning settings. `planning.enabled` turns on the [planning job](planning.md#daily-planning); it defaults to `false`. `planning.specDocumentURL` is the URL of the Linear document holding the project's spec; the planning job reads it, and decisions entered at a [standup](planning.md#standup-needs-human) are added to it. |
 
 For example, to apply new issues at once and never post project updates:
 
@@ -70,13 +70,15 @@ Edits take effect on their own. The daemon checks the file every five seconds; w
 | Path | Contents |
 | --- | --- |
 | `~/.config/superlinear/config.json` | Configuration, including API keys. |
-| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, blocked and human-labeled issues, proposals, and 30 days of what the daemon did, for the standup, per workspace. |
+| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, blocked and human-labeled issues, proposals, 30 days of what the daemon did, for the standup, and the last 30 planning jobs, per workspace. |
 | `~/.local/share/superlinear/standup.json` | Per workspace, the time of the last standup, and what standups decided: proposals shown and decided, decisions, held issues and the queue's order. |
+| `~/.local/share/superlinear/planning.json` | Per workspace, the planning jobs `superlinear plan` ran and the proposals they stored, for the daemon to take in. |
 | `~/.local/share/superlinear/audit/<workspace>.jsonl` | Each change superlinear applied in Linear, with the proposal and Linear's response. |
 | `~/.local/share/superlinear/daemon.lock` | Held by the running daemon, so a second one exits. |
-| `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. |
+| `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. A planning job also keeps what it was given and the proposals file its session writes, until it is taken in. |
 | `~/.local/share/superlinear/daemon.log` | Daemon output. |
 | `~/.local/share/superlinear/logs/<ISSUE-ID>.log` | Agent output for one issue. A resumed run appends to it. |
+| `~/.local/share/superlinear/logs/planning-<workspace>.log` | Output of the workspace's planning sessions, appended across jobs. |
 | `~/.local/share/superlinear/logs/<ISSUE-ID>.work.log` | Output of `work` itself for one issue, such as worktree setup, teardown after the merge, and errors. |
 | `<worktree>/.superlinear/followups.json` | Work an agent found outside its issue, read when it exits. See [Follow-ups from agents](planning.md#follow-ups). |
 
