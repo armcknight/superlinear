@@ -101,7 +101,7 @@ When a session — an agent for a new issue, a review or a conflict — ends wit
 
 - Pauses every Claude session, in all workspaces, as they share one Claude login: until the reset time in the message, or for one hour when it gives none.
 - Records the stopped session as interrupted, not failed. It keeps its session ID, and counts neither as a resume nor as a failed launch.
-- Starts no session while paused. Queued, blocked and held issues keep their places and their order. GitHub work that needs no Claude — linking and checking pull requests, reviews, moving issues to Done — goes on.
+- Starts no session while paused, the [planning job](planning.md#daily-planning) included; its trigger holds, so it starts after the pause. Queued, blocked and held issues keep their places and their order. GitHub work that needs no Claude — linking and checking pull requests, reviews, moving issues to Done — goes on.
 - Every 15 minutes while paused, runs one very small session (`claude -p` with a one-word prompt and no tools), at a cost of a few tokens. When it answers, the limit was lifted, as when you bought more usage: the pause ends at once. When it gives the limit message again, the pause goes on, until its new reset time.
 - Ends the pause at once on [`superlinear resume`](operations.md#usage), which the [standup](planning.md#standup) also offers while a pause is active.
 - When the pause ends — at the reset time, after a check, or on `superlinear resume` — resumes the interrupted sessions first, with their session IDs, then the queue in its usual order. A resumed session that hits the limit again at once pauses everything again, until the new reset time; nothing retries in a loop.

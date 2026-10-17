@@ -831,12 +831,14 @@ actor Daemon {
     // MARK: - Planning
 
     /// Starts the workspace's planning job when planning is on, none is
-    /// running, the daemon's or `superlinear plan`'s, and something changed
-    /// since the last one: the default branch moved, or issues were
-    /// completed. See `PlanningGatherer.trigger`.
+    /// running, the daemon's or `superlinear plan`'s, Claude sessions are
+    /// not paused at the usage limit, and something changed since the last
+    /// one: the default branch moved, or issues were completed. See
+    /// `PlanningGatherer.trigger`.
     func planIfDue(_ workspace: WorkspaceConfig, now: Date) async {
         let name = workspace.name
-        guard workspace.planning.enabled, state.workspaces[name]?.planningRun == nil, !planningBusy.contains(name)
+        guard workspace.planning.enabled, state.workspaces[name]?.planningRun == nil, !planningBusy.contains(name),
+              claudeAvailable(now: now)
         else { return }
         let record = planning[name]
         if let running = record.running, AgentRunner.isRunning(pid: running.pid, startedAt: running.processStartedAt) {
