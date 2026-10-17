@@ -446,9 +446,18 @@ actor Daemon {
     ) async -> [FollowUp] {
         log("\(run.identifier)'s agent reported \(entries.count) follow-up(s)", workspace: workspace.name)
         let linear = LinearClient(apiKey: workspace.apiKey)
-        let issue: EditableIssue
+        // A GitHub issue's agent has no Linear issue: its follow-ups go to the
+        // workspace's proposal team, and follow from no issue.
+        let teamId: LinearTeam.ID
+        let issueId: LinearIssue.ID?
         do {
-            issue = try await linear.editableIssue(id: LinearIssue.ID(rawValue: run.issueId))
+            if run.gitHubIssue != nil {
+                teamId = try await linear.proposalTeamId(teamIds: workspace.teamIds)
+                issueId = nil
+            } else {
+                let issue = try await linear.editableIssue(id: LinearIssue.ID(rawValue: run.issueId))
+                (teamId, issueId) = (issue.teamId, issue.id)
+            }
         } catch {
             log("Could not look up \(run.identifier) to propose its follow-ups: \(error)", workspace: workspace.name)
             return entries
@@ -457,12 +466,12 @@ actor Daemon {
         for entry in entries {
             // Linear finds an issue by its identifier too. One it cannot find
             // is still named in the description.
-            var related = issue.id
+            var related = issueId
             if let identifier = entry.relatedIssue,
                let found = try? await linear.editableIssue(id: LinearIssue.ID(rawValue: identifier.rawValue)) {
                 related = found.id
             }
-            let draft = entry.draft(teamId: issue.teamId, relatedIssueId: related, agentIssue: run.identifier, source: source)
+            let draft = entry.draft(teamId: teamId, relatedIssueId: related, agentIssue: run.identifier, source: source)
             do {
                 try await propose(draft, workspace: workspace)
             } catch {

@@ -29,6 +29,9 @@ struct AgentRunnerTests {
         #expect(prompt.contains("gh issue view 12"))
         #expect(prompt.contains("Closes #12"))
         #expect(!AgentRunner.prompt(for: run).contains("gh issue view"))
+        // The same rules as every other agent.
+        #expect(prompt.contains(followUpInstructions))
+        #expect(prompt.contains("GitHub's spending limit"))
     }
 
     @Test("A review run on a GitHub issue reads the issue from GitHub, not Linear")

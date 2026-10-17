@@ -67,8 +67,10 @@ enum AddedTodos {
         return title.count > maxTitleLength ? String(title.prefix(maxTitleLength - 1)) + "…" : title
     }
 
+    /// `issueId` is the agent's Linear issue, which the new one follows from;
+    /// nil for a GitHub issue's pull request.
     static func draft(
-        _ todo: Todo, pullRequest: PullRequest, agentIssue: LinearIssue.Identifier, issueId: LinearIssue.ID, teamId: LinearTeam.ID
+        _ todo: Todo, pullRequest: PullRequest, agentIssue: LinearIssue.Identifier, issueId: LinearIssue.ID?, teamId: LinearTeam.ID
     ) -> ProposalDraft {
         let description = """
             Pull request #\(pullRequest.number) for \(agentIssue) added this \(todo.marker.rawValue) at \

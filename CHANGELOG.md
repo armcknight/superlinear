@@ -148,7 +148,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request that closes it, and the daemon closes the issue on the merge if
   GitHub has not. Review and conflict agents on their pull requests also
   read the issue from GitHub. GitHub issue polls pause with the rest of the
-  GitHub work during a rate limit. `superlinear status` lists them as
+  GitHub work during a rate limit. Their agents' follow-ups, and the TODOs
+  their merged pull requests add, are proposed in the workspace's proposal
+  team, as they have no Linear issue. `superlinear status` lists them as
   `GH-<number>`.
 
 ### Changed

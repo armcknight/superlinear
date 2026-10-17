@@ -51,6 +51,11 @@ func gitHubIssuePrompt(number: Int) -> String {
 
     Never comment on the issue. Work autonomously. Do not pause to ask questions. If you encounter \
     ambiguity, make a reasonable decision and document it in the PR description.
+
+    If CI jobs did not start because of GitHub's spending limit or a billing problem, that is not a \
+    failure to fix: do not change code for it, stop monitoring CI, and say so in the pull request description.
+
+    \(followUpInstructions)
     """
 }
 

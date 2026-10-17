@@ -181,16 +181,25 @@ struct WorkspaceProcessor: Sendable {
         }
         guard !todos.isEmpty else { return }
         log("  \(pullRequest.url) added \(todos.count) TODO or FIXME line(s)")
-        let issue: EditableIssue
+        // A GitHub issue has no Linear issue: its TODOs go to the workspace's
+        // proposal team, and follow from no issue.
+        let teamId: LinearTeam.ID
+        let issueId: LinearIssue.ID?
         do {
-            issue = try await client.editableIssue(id: LinearIssue.ID(rawValue: pending.issueId))
+            if pending.gitHubIssue != nil {
+                teamId = try await client.proposalTeamId(teamIds: workspace.teamIds)
+                issueId = nil
+            } else {
+                let issue = try await client.editableIssue(id: LinearIssue.ID(rawValue: pending.issueId))
+                (teamId, issueId) = (issue.teamId, issue.id)
+            }
         } catch {
             log("  Could not look up \(pending.identifier) to propose its added TODOs: \(error)")
             return
         }
         for todo in todos {
             let draft = AddedTodos.draft(
-                todo, pullRequest: pullRequest, agentIssue: pending.identifier, issueId: issue.id, teamId: issue.teamId
+                todo, pullRequest: pullRequest, agentIssue: pending.identifier, issueId: issueId, teamId: teamId
             )
             do {
                 try await daemon.propose(draft, workspace: workspace)
