@@ -8,16 +8,22 @@ import Foundation
 /// starts.
 enum ResumeCommand {
     static func run() -> Int32 {
-        let (message, status) = resume(state: State.load(), daemon: DaemonStatus.read())
+        let (message, status) = resume(state: State.load())
         print(message)
         return status
+    }
+
+    /// `resume` against the running daemon and the state file, now.
+    static func resume(state: State) -> (String, Int32) {
+        resume(
+            state: state, daemon: DaemonStatus.read(), signal: { kill($0, SIGUSR1) == 0 },
+            save: { try $0.save() }, now: Date())
     }
 
     /// What to do, given the state file and the daemon: the message to print
     /// and the exit status.
     static func resume(
-        state: State, daemon: DaemonStatus, signal: (Int32) -> Bool = { kill($0, SIGUSR1) == 0 },
-        save: (State) throws -> Void = { try $0.save() }, now: Date = Date()
+        state: State, daemon: DaemonStatus, signal: (Int32) -> Bool, save: (State) throws -> Void, now: Date
     ) -> (String, Int32) {
         guard let pause = state.claudePause, !pause.isOver(now: now) else {
             return ("[superlinear] Claude sessions are not paused", 0)

@@ -49,7 +49,8 @@ struct WorkspaceProcessor: Sendable {
     /// Finds the CI runs of open pull requests and of the default branch that
     /// the GitHub Actions spending limit stopped, in a private repository. While
     /// there are any, reruns the failed jobs of one each hour; once its jobs
-    /// start, the limit was raised, and the others are rerun too.
+    /// start, or those of a run the owner reran by hand, the limit was raised,
+    /// and the others are rerun too.
     private func checkSpendingLimit(listing: PullRequestListing) async {
         let repoPath = listing.repoPath
         do {
@@ -57,18 +58,25 @@ struct WorkspaceProcessor: Sendable {
             var stop = await daemon.spendingLimitStop(workspace: workspace.name)
             let runs = try SpendingLimit.listRuns(in: repoPath)
 
-            if let probe = stop?.probe {
-                let current = runs.first { $0.databaseId == probe.id }
-                let result = await SpendingLimit.probeResult(current, rerunFrom: probe.attempt) {
+            // A stopped run rerun since the last poll, by the daemon or by the
+            // owner, tells whether the limit was raised. The probe is read
+            // first, and waited for; the others only count once they ran.
+            for watched in stop?.watched ?? [] {
+                let current = runs.first { $0.databaseId == watched.id }
+                let result = await SpendingLimit.probeResult(current, rerunFrom: watched.attempt) {
                     guard let current else { return nil }
                     return try? await wasStopped(current, repoPath: repoPath)
                 }
+                let isProbe = watched.id == stop?.probe?.id
                 switch result {
-                case .pending:
+                case .pending where isProbe:
                     return
+                case .pending:
+                    break
                 case .started:
-                    log("The rerun of CI run \(probe.id) on \(probe.branch) started its jobs, so the spending limit was raised")
-                    for other in stop?.othersToRerun() ?? [] {
+                    let who = isProbe ? "The rerun of" : "A rerun by hand of"
+                    log("\(who) CI run \(watched.id) on \(watched.branch) started its jobs, so the spending limit was raised")
+                    for other in stop?.othersToRerun(after: watched) ?? [] {
                         do {
                             try SpendingLimit.rerunFailedJobs(runId: other.id, in: repoPath)
                             log("  Reran the failed jobs of CI run \(other.id) on \(other.branch)")
@@ -78,8 +86,10 @@ struct WorkspaceProcessor: Sendable {
                     }
                     await daemon.recordSpendingLimitStop(nil, workspace: workspace.name)
                     return
-                case .stillStopped:
+                case .stillStopped where isProbe:
                     stop?.probe = nil
+                case .stillStopped:
+                    break
                 }
             }
 
@@ -89,12 +99,13 @@ struct WorkspaceProcessor: Sendable {
             for run in SpendingLimit.failingRuns(runs, branches: Set(openBranches + [defaultBranch].compactMap { $0 })) {
                 if try await wasStopped(run, repoPath: repoPath) { stopped.append(StoppedRun(run)) }
             }
-            stop = SpendingLimitStop.updated(stop, stopped: stopped)
-            if var current = stop, let probe = current.runToProbe() {
+            let now = Date()
+            stop = SpendingLimitStop.updated(stop, stopped: stopped, now: now)
+            if var current = stop, let probe = current.runToProbe(now: now) {
                 try SpendingLimit.rerunFailedJobs(runId: probe.id, in: repoPath)
                 log("Reran the failed jobs of CI run \(probe.id) on \(probe.branch) to see whether the spending limit was raised")
                 current.probe = probe
-                current.lastRerunAt = Date()
+                current.lastRerunAt = now
                 stop = current
             }
             await daemon.recordSpendingLimitStop(stop, workspace: workspace.name)

@@ -316,13 +316,13 @@ struct AgentRunner: Sendable {
     /// The Claude usage limit message the run's session ended with, if it
     /// did: the end of its log, written by `work`, which starts the log
     /// afresh for a new session and appends to it for a resumed one.
-    func usageLimitHit(for run: AgentRun, now: Date = Date()) -> ClaudeUsageLimit.Hit? {
+    func usageLimitHit(for run: AgentRun, now: Date) -> ClaudeUsageLimit.Hit? {
         guard let handle = FileHandle(forReadingAtPath: agentLog(for: run)) else { return nil }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size > Self.logTailSize ? size - Self.logTailSize : 0)
         guard let data = try? handle.readToEnd() else { return nil }
-        return ClaudeUsageLimit.hit(in: String(decoding: data, as: UTF8.self), now: now)
+        return ClaudeUsageLimit.hit(in: String(decoding: data, as: UTF8.self), now: now, timeZone: .current)
     }
 
     /// How much of the end of an agent's log is searched for the usage limit.

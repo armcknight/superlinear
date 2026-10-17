@@ -1,4 +1,5 @@
 import Foundation
+import Tagged
 
 /// The Claude plan's usage limit, as a `claude` session reports it when it
 /// stops. All workspaces share one Claude login, so when one session hits the
@@ -16,9 +17,13 @@ import Foundation
 ///
 /// Any of them may come without a reset time.
 enum ClaudeUsageLimit {
+    /// When the limit resets, as Claude said it: its own kind of date, so it
+    /// is not mixed up with the others a pause keeps.
+    typealias ResetTime = Tagged<ClaudeUsageLimit, Date>
+
     /// A usage limit message, with the reset time when it gave one.
     struct Hit: Equatable, Sendable {
-        var resetAt: Date?
+        var resetAt: ResetTime?
     }
 
     /// The lines at the end of a session's output that are searched. The
@@ -27,7 +32,7 @@ enum ClaudeUsageLimit {
     static let linesSearched = 3
 
     /// The usage limit message at the end of `output`, if it is there.
-    static func hit(in output: String, now: Date = Date(), timeZone: TimeZone = .current) -> Hit? {
+    static func hit(in output: String, now: Date, timeZone: TimeZone) -> Hit? {
         let lines = output.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -39,17 +44,18 @@ enum ClaudeUsageLimit {
 
     /// The message, when `line` is one. Only a line that starts with it
     /// counts, after any JSON or log prefix around a quoted message.
-    static func hit(line: String, now: Date = Date(), timeZone: TimeZone = .current) -> Hit? {
+    static func hit(line: String, now: Date, timeZone: TimeZone) -> Hit? {
         let text = unquoted(line)
         if let match = text.firstMatch(of: /^Claude AI usage limit reached(?:\|(\d{9,11}))?/) {
-            return Hit(resetAt: match.output.1.flatMap { TimeInterval($0) }.map(Date.init(timeIntervalSince1970:)))
+            let reset = match.output.1.flatMap { TimeInterval($0) }.map(Date.init(timeIntervalSince1970:))
+            return Hit(resetAt: reset.map(ResetTime.init(rawValue:)))
         }
         let forms = [
             /^You(?:'|’)ve hit your (?:(?:usage|session|weekly|daily|opus|sonnet|\d+-hour) )*limit\b/.ignoresCase(),
             /^(?:Claude (?:AI )?usage |(?:(?:session|weekly|daily|opus|sonnet|\d+-hour) )+)limit reached\b/.ignoresCase(),
         ]
         guard forms.contains(where: { text.firstMatch(of: $0) != nil }) else { return nil }
-        return Hit(resetAt: resetTime(in: text, now: now, timeZone: timeZone))
+        return Hit(resetAt: resetTime(in: text, now: now, timeZone: timeZone).map(ResetTime.init(rawValue:)))
     }
 
     /// The text of a JSON result line such as `{"type":"result",…,"result":"Claude AI usage limit reached|…"}`,
@@ -65,7 +71,7 @@ enum ClaudeUsageLimit {
     /// The reset time after "resets" or "reset at": a time of day, perhaps
     /// after a weekday or a month and day, perhaps followed by a time zone in
     /// brackets. A time with no day is the next one to come.
-    static func resetTime(in text: String, now: Date, timeZone: TimeZone = .current) -> Date? {
+    static func resetTime(in text: String, now: Date, timeZone: TimeZone) -> Date? {
         let pattern = /(?i)reset(?:s| at)\s+(?:(mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+)?(?:(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*\(([^)]+)\))?/
         guard let match = text.firstMatch(of: pattern), var hour = Int(match.output.4) else { return nil }
         let minute = match.output.5.flatMap { Int($0) } ?? 0
@@ -103,7 +109,7 @@ struct ClaudePause: Codable, Sendable, Equatable {
     var since: Date
     /// When Claude said the limit resets, or `fallbackDelay` after it was hit
     /// when it did not say.
-    var until: Date
+    var until: ClaudeUsageLimit.ResetTime
     /// When the next small session checks whether the limit was lifted early,
     /// as when the owner bought more usage.
     var nextCheckAt: Date
@@ -113,33 +119,34 @@ struct ClaudePause: Codable, Sendable, Equatable {
     /// How often a paused daemon checks whether the limit was lifted.
     static let checkInterval: TimeInterval = 15 * 60
 
-    init(since: Date, until: Date, nextCheckAt: Date) {
+    init(since: Date, until: ClaudeUsageLimit.ResetTime, nextCheckAt: Date) {
         self.since = since
         self.until = until
         self.nextCheckAt = nextCheckAt
     }
 
     /// The pause for a limit hit at `now`.
-    init(hit: ClaudeUsageLimit.Hit, now: Date = Date()) {
-        let until = hit.resetAt.flatMap { $0 > now ? $0 : nil } ?? now.addingTimeInterval(Self.fallbackDelay)
+    init(hit: ClaudeUsageLimit.Hit, now: Date) {
+        let until = hit.resetAt.flatMap { $0.rawValue > now ? $0 : nil }
+            ?? ClaudeUsageLimit.ResetTime(rawValue: now.addingTimeInterval(Self.fallbackDelay))
         self.init(since: now, until: until, nextCheckAt: now.addingTimeInterval(Self.checkInterval))
     }
 
     /// The pause after another session, or a check, hit the limit at `now`:
     /// it lasts until the new reset time, or as long as it did when the new
     /// message gives none.
-    func extended(by hit: ClaudeUsageLimit.Hit, now: Date = Date()) -> ClaudePause {
+    func extended(by hit: ClaudeUsageLimit.Hit, now: Date) -> ClaudePause {
         var pause = self
-        if let reset = hit.resetAt, reset > now { pause.until = reset }
+        if let reset = hit.resetAt, reset.rawValue > now { pause.until = reset }
         pause.nextCheckAt = now.addingTimeInterval(Self.checkInterval)
         return pause
     }
 
-    func isOver(now: Date = Date()) -> Bool { now >= until }
+    func isOver(now: Date) -> Bool { now >= until.rawValue }
 
     /// Whether a check is due: the pause is not over, and the last check was
     /// at least `checkInterval` ago.
-    func checkDue(now: Date = Date()) -> Bool { !isOver(now: now) && now >= nextCheckAt }
+    func checkDue(now: Date) -> Bool { !isOver(now: now) && now >= nextCheckAt }
 
     /// What a check found.
     enum Check: Equatable, Sendable {
@@ -152,7 +159,7 @@ struct ClaudePause: Codable, Sendable, Equatable {
     }
 
     /// The pause after a check at `now`, or nil when the limit was lifted.
-    func after(_ check: Check, now: Date = Date()) -> ClaudePause? {
+    func after(_ check: Check, now: Date) -> ClaudePause? {
         switch check {
         case .lifted:
             return nil
@@ -166,10 +173,10 @@ struct ClaudePause: Codable, Sendable, Equatable {
     }
 
     /// The line `superlinear status` prints about it.
-    func rendered(waiting: Int, now: Date = Date()) -> String {
+    func rendered(waiting: Int, now: Date) -> String {
         let time = { (date: Date) in StatusTime.clock(date, now: now) }
         let next = checkDue(now: now) ? "checking now" : "next check \(time(nextCheckAt))"
-        return "Claude usage limit: paused until \(time(until)) (\(next)), "
+        return "Claude usage limit: paused until \(time(until.rawValue)) (\(next)), "
             + "\(waiting) session\(waiting == 1 ? "" : "s") waiting"
     }
 
@@ -181,7 +188,7 @@ struct ClaudePause: Codable, Sendable, Equatable {
     static let checkTimeout: TimeInterval = 120
 
     /// Runs the check session and reads its result.
-    static func check(environment: [String: String] = ProcessInfo.processInfo.environment) async -> Check {
+    static func check(environment: [String: String]) async -> Check {
         await Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -203,13 +210,13 @@ struct ClaudePause: Codable, Sendable, Equatable {
             }
             let data = output.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
-            return Self.reading(String(decoding: data, as: UTF8.self), status: process.terminationStatus)
+            return Self.reading(String(decoding: data, as: UTF8.self), status: process.terminationStatus, now: Date())
         }.value
     }
 
     /// What a check session's output and exit status say.
-    static func reading(_ output: String, status: Int32, now: Date = Date()) -> Check {
-        if let hit = ClaudeUsageLimit.hit(in: output, now: now) { return .limited(hit) }
+    static func reading(_ output: String, status: Int32, now: Date) -> Check {
+        if let hit = ClaudeUsageLimit.hit(in: output, now: now, timeZone: .current) { return .limited(hit) }
         guard status == 0 else {
             return .failed("`claude` exited \(status): \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
         }

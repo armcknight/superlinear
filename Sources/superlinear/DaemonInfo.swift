@@ -68,7 +68,7 @@ enum StatusTime {
     }
 
     /// The time of day, to the minute, with the date when it is not today.
-    static func clock(_ date: Date, now: Date = Date()) -> String {
+    static func clock(_ date: Date, now: Date) -> String {
         date.formatted(date: Calendar.current.isDate(date, inSameDayAs: now) ? .omitted : .abbreviated, time: .shortened)
     }
 

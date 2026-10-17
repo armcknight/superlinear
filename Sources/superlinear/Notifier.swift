@@ -3,6 +3,9 @@ import Foundation
 /// Posts macOS notifications, as when a pause of Claude sessions or of CI
 /// starts or ends, so the owner learns of it without reading the log.
 enum Notifier {
+    /// The title of the daemon's notifications.
+    static let title = "superlinear"
+
     /// The AppleScript that posts `message`.
     static func script(title: String, message: String) -> String {
         func quoted(_ text: String) -> String {
@@ -13,7 +16,7 @@ enum Notifier {
 
     /// Posts the notification and does not wait for it. A failure, as with
     /// no one logged in, is only logged.
-    static func post(title: String = "superlinear", message: String) {
+    static func post(title: String, message: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script(title: title, message: message)]

@@ -222,7 +222,7 @@ actor Daemon {
     /// None launches while the Claude usage limit pauses sessions; queued runs
     /// keep their places until it ends.
     private func fillSlots() {
-        guard !recovering, claudeAvailable() else { return }
+        guard !recovering, claudeAvailable(now: Date()) else { return }
         if let until = launchesPausedUntil {
             guard Date() >= until else { return }
             launchesPausedUntil = nil
@@ -346,14 +346,14 @@ actor Daemon {
         guard let current = state.workspaces[workspace]?.inFlight[run.issueId], current.sessionId == run.sessionId
         else { return }
 
-        if let hit = runner.usageLimitHit(for: run) {
+        if let hit = runner.usageLimitHit(for: run, now: Date()) {
             // Interrupted, not failed: it resumes in its session once the
             // pause ends, ahead of the queue, and counts no retry.
             state.recordRun(current.stoppedByUsageLimit(), workspace: workspace)
             // A status file left behind would read as finished after a restart.
             runner.cleanUp(run)
             log("\(run.identifier) stopped at the Claude usage limit; it resumes when the pause ends", workspace: workspace)
-            pauseClaude(hit)
+            pauseClaude(hit, now: Date())
             return
         }
 
@@ -472,23 +472,23 @@ actor Daemon {
 
     /// Pauses every Claude session until the limit resets, or extends the
     /// pause to a new reset time. Logs and notifies once per pause.
-    private func pauseClaude(_ hit: ClaudeUsageLimit.Hit, now: Date = Date()) {
+    private func pauseClaude(_ hit: ClaudeUsageLimit.Hit, now: Date) {
         if let pause = state.claudePause {
             state.claudePause = pause.extended(by: hit, now: now)
         } else {
             let pause = ClaudePause(hit: hit, now: now)
             state.claudePause = pause
-            let until = StatusTime.clock(pause.until, now: now)
+            let until = StatusTime.clock(pause.until.rawValue, now: now)
             print("[\(ISO8601DateFormatter().string(from: now))] The Claude usage limit is reached; pausing Claude sessions "
                 + "in every workspace until \(until), checking every \(Int(ClaudePause.checkInterval / 60)) minutes "
                 + "whether it was lifted sooner")
-            Notifier.post(message: "Claude usage limit reached. Agents are paused until \(until).")
+            Notifier.post(title: Notifier.title, message: "Claude usage limit reached. Agents are paused until \(until).")
         }
         save()
     }
 
     /// Whether sessions may start now. Ends a pause whose reset time has passed.
-    private func claudeAvailable(now: Date = Date()) -> Bool {
+    private func claudeAvailable(now: Date) -> Bool {
         guard let pause = state.claudePause else { return true }
         guard pause.isOver(now: now) else { return false }
         endClaudePause("its reset time has passed")
@@ -502,7 +502,7 @@ actor Daemon {
         let waiting = state.queuedRuns.count
         print("[\(ISO8601DateFormatter().string(from: Date()))] The Claude pause ended: \(reason); "
             + "resuming \(waiting) waiting session(s)")
-        Notifier.post(message: "Claude usage limit lifted. Agents resume.")
+        Notifier.post(title: Notifier.title, message: "Claude usage limit lifted. Agents resume.")
     }
 
     /// Ends the Claude pause at once, as `superlinear resume` asks through
@@ -522,9 +522,10 @@ actor Daemon {
     private func runClaudePauseLoop() async {
         while !Task.isCancelled {
             if let pause = state.claudePause {
-                if pause.isOver() {
+                let now = Date()
+                if pause.isOver(now: now) {
                     fillSlots()
-                } else if pause.checkDue() {
+                } else if pause.checkDue(now: now) {
                     await checkClaudePause()
                 }
             }
@@ -537,7 +538,7 @@ actor Daemon {
     }
 
     private func checkClaudePause() async {
-        let check = await ClaudePause.check()
+        let check = await ClaudePause.check(environment: ProcessInfo.processInfo.environment)
         // It may have ended while the check ran.
         guard let pause = state.claudePause else { return }
         let now = Date()
@@ -551,7 +552,7 @@ actor Daemon {
         let timestamp = ISO8601DateFormatter().string(from: now)
         switch check {
         case .limited:
-            print("[\(timestamp)] The Claude usage limit still holds; paused until \(StatusTime.clock(after.until, now: now))")
+            print("[\(timestamp)] The Claude usage limit still holds; paused until \(StatusTime.clock(after.until.rawValue, now: now))")
         case .failed(let message):
             print("[\(timestamp)] Could not check the Claude usage limit, trying again in "
                 + "\(Int(ClaudePause.checkInterval / 60)) minutes: \(message)")
@@ -593,10 +594,10 @@ actor Daemon {
         case (nil, let stop?):
             log("CI not started on \(stop.branches.sorted().joined(separator: ", ")): the GitHub Actions spending limit "
                 + "is used up. Rerunning one stopped run each hour until its jobs start", workspace: workspace)
-            Notifier.post(message: "GitHub Actions spending limit reached in \(workspace). CI is not starting.")
+            Notifier.post(title: Notifier.title, message: "GitHub Actions spending limit reached in \(workspace). CI is not starting.")
         case (_?, nil):
             log("CI runs again: the GitHub Actions spending limit no longer stops it", workspace: workspace)
-            Notifier.post(message: "GitHub Actions spending limit lifted in \(workspace). CI runs again.")
+            Notifier.post(title: Notifier.title, message: "GitHub Actions spending limit lifted in \(workspace). CI runs again.")
         default:
             break
         }

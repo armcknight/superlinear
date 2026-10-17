@@ -242,18 +242,7 @@ enum Standup {
     /// The most recent workflow run on the default branch, and GitHub's rate
     /// limit, as risks.
     struct DefaultBranchRun: Decodable, Sendable, Equatable {
-        /// Where the run is, as `gh run list` reports it.
-        enum Status: String, Decodable, Sendable {
-            case queued, requested, waiting, pending, completed
-            case inProgress = "in_progress"
-            /// A status GitHub added since.
-            case unknown
-
-            init(from decoder: Decoder) throws {
-                self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
-            }
-        }
-
+        typealias Status = WorkflowRun.Status
         typealias Conclusion = WorkflowRun.Conclusion
 
         var status: Status
@@ -292,8 +281,7 @@ enum Standup {
 
     /// Section 6.
     static func risks(
-        defaultBranch: String?, latestRun: DefaultBranchRun?, rateLimit: RateLimit?,
-        pauses: Pauses = Pauses(), now: Date = Date()
+        defaultBranch: String?, latestRun: DefaultBranchRun?, rateLimit: RateLimit?, pauses: Pauses, now: Date
     ) -> [String] {
         var risks = pauses.risks(now: now)
         // A run the spending limit stopped is listed with the pause.
@@ -319,29 +307,15 @@ enum Standup {
         /// The pause of every Claude session at the usage limit.
         var claude: ClaudePause?
         /// The issues whose sessions it holds back, in the workspace.
-        var waiting: [LinearIssue.Identifier] = []
+        var waiting: [LinearIssue.Identifier]
         /// The workspace's CI runs the GitHub Actions spending limit stopped.
         var spendingLimit: SpendingLimitStop?
 
-        init(claude: ClaudePause? = nil, waiting: [LinearIssue.Identifier] = [], spendingLimit: SpendingLimitStop? = nil) {
-            self.claude = claude
-            self.waiting = waiting
-            self.spendingLimit = spendingLimit
-        }
-
-        /// The pauses in the state file for `workspace`.
-        init(state: State, workspace: String, now: Date = Date()) {
-            claude = state.claudePause.flatMap { $0.isOver(now: now) ? nil : $0 }
-            let queued = state.workspaces[workspace]?.inFlight.values.filter(\.isQueued) ?? []
-            waiting = queued.map(\.identifier).sorted { $0.sortsBefore($1) }
-            spendingLimit = state.workspaces[workspace]?.spendingLimit
-        }
-
-        func risks(now: Date = Date()) -> [String] {
+        func risks(now: Date) -> [String] {
             var risks: [String] = []
             if let claude {
                 let held = waiting.isEmpty ? "holds back no session here" : "holds back \(StandupView.list(waiting))"
-                risks.append("Claude usage limit: sessions paused until \(StatusTime.clock(claude.until, now: now)), "
+                risks.append("Claude usage limit: sessions paused until \(StatusTime.clock(claude.until.rawValue, now: now)), "
                     + "next check \(StatusTime.clock(claude.nextCheckAt, now: now)); \(held)")
             }
             if let stop = spendingLimit {
@@ -613,5 +587,16 @@ struct StandupSession: Sendable {
             }
         }
         return lines
+    }
+}
+
+extension Standup.Pauses {
+    /// The pauses in the state file for `workspace`.
+    init(state: State, workspace: String, now: Date) {
+        let queued = state.workspaces[workspace]?.inFlight.values.filter(\.isQueued) ?? []
+        self.init(
+            claude: state.claudePause.flatMap { $0.isOver(now: now) ? nil : $0 },
+            waiting: queued.map(\.identifier).sorted { $0.sortsBefore($1) },
+            spendingLimit: state.workspaces[workspace]?.spendingLimit)
     }
 }

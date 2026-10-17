@@ -1,4 +1,5 @@
 import Foundation
+import Tagged
 
 /// What an agent's Claude sessions used, read from their transcripts: the
 /// tokens Claude reports for each message, and the time the agent was active.
@@ -107,6 +108,22 @@ struct Transcripts: Sendable {
 
 /// A GitHub Actions workflow run, as `gh run list --json` reports it.
 struct WorkflowRun: Decodable, Sendable, Equatable {
+    /// A run's ID, which `gh run list` reports as `databaseId` and `gh run
+    /// rerun` takes.
+    typealias ID = Tagged<WorkflowRun, Int>
+
+    /// Where the run is, as `gh run list` reports it.
+    enum Status: String, Decodable, Sendable {
+        case queued, requested, waiting, pending, completed
+        case inProgress = "in_progress"
+        /// A status GitHub added since.
+        case unknown
+
+        init(from decoder: Decoder) throws {
+            self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+        }
+    }
+
     /// How a completed run ended, as `gh run list` reports it.
     enum Conclusion: String, Sendable {
         case success, failure, neutral, cancelled, skipped, stale

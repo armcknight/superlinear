@@ -14,8 +14,10 @@ struct ClaudeUsageLimitTests {
     private func date(_ text: String) -> Date { ISO8601DateFormatter().date(from: text)! }
 
     private func reset(_ output: String) -> Date?? {
-        ClaudeUsageLimit.hit(in: output, now: now, timeZone: utc).map(\.resetAt)
+        ClaudeUsageLimit.hit(in: output, now: now, timeZone: utc).map { $0.resetAt?.rawValue }
     }
+
+    private func resetTime(_ date: Date) -> ClaudeUsageLimit.ResetTime { .init(rawValue: date) }
 
     @Test("The pipe form gives its reset as a Unix time")
     func pipeForm() {
@@ -57,18 +59,18 @@ struct ClaudeUsageLimitTests {
 
     @Test("The pause lasts until the reset, or an hour when Claude gives none")
     func pauseLength() {
-        let timed = ClaudePause(hit: .init(resetAt: now.addingTimeInterval(7200)), now: now)
-        #expect(timed.until == now.addingTimeInterval(7200))
+        let timed = ClaudePause(hit: .init(resetAt: resetTime(now.addingTimeInterval(7200))), now: now)
+        #expect(timed.until.rawValue == now.addingTimeInterval(7200))
         #expect(timed.nextCheckAt == now.addingTimeInterval(ClaudePause.checkInterval))
         let untimed = ClaudePause(hit: .init(resetAt: nil), now: now)
-        #expect(untimed.until == now.addingTimeInterval(ClaudePause.fallbackDelay))
+        #expect(untimed.until.rawValue == now.addingTimeInterval(ClaudePause.fallbackDelay))
         #expect(!untimed.isOver(now: now.addingTimeInterval(3599)))
         #expect(untimed.isOver(now: now.addingTimeInterval(3600)))
     }
 
     @Test("The 15-minute check resumes early when the session answers")
     func checkResumesEarly() {
-        let pause = ClaudePause(hit: .init(resetAt: now.addingTimeInterval(4 * 3600)), now: now)
+        let pause = ClaudePause(hit: .init(resetAt: resetTime(now.addingTimeInterval(4 * 3600))), now: now)
         #expect(!pause.checkDue(now: now.addingTimeInterval(14 * 60)))
         #expect(pause.checkDue(now: now.addingTimeInterval(15 * 60)))
         let check = ClaudePause.reading("ok\n", status: 0, now: now)
@@ -78,15 +80,17 @@ struct ClaudeUsageLimitTests {
 
     @Test("The 15-minute check keeps the pause, with the new reset time, when the limit holds")
     func checkKeepsPause() {
-        let pause = ClaudePause(hit: .init(resetAt: now.addingTimeInterval(4 * 3600)), now: now)
+        let pause = ClaudePause(hit: .init(resetAt: resetTime(now.addingTimeInterval(4 * 3600))), now: now)
         let later = now.addingTimeInterval(15 * 60)
         let check = ClaudePause.reading("You've hit your limit · resets 5pm\n", status: 1, now: later)
         guard case .limited = check else {
             Issue.record("expected the limit, got \(check)")
             return
         }
-        let kept = pause.after(.limited(.init(resetAt: now.addingTimeInterval(7 * 3600))), now: later)
-        #expect(kept?.until == now.addingTimeInterval(7 * 3600))
+        let kept = pause.after(.limited(.init(resetAt: resetTime(now.addingTimeInterval(7 * 3600)))), now: later)
+        #expect(kept?.until.rawValue == now.addingTimeInterval(7 * 3600))
+        // A reset time already past does not shorten the pause.
+        #expect(pause.after(.limited(.init(resetAt: resetTime(now))), now: later)?.until == pause.until)
         #expect(kept?.since == now)
         #expect(kept?.nextCheckAt == later.addingTimeInterval(ClaudePause.checkInterval))
         // A message with no time keeps the reset time it had.
@@ -110,13 +114,13 @@ struct ClaudeUsageLimitTests {
         let runner = AgentRunner(home: home, environment: [:])
         let run = AgentRun(issueId: "i", identifier: "SPL-1", branchName: "b", sessionId: "s")
         try FileManager.default.createDirectory(atPath: runner.logsDirectory, withIntermediateDirectories: true)
-        #expect(runner.usageLimitHit(for: run) == nil)
+        #expect(runner.usageLimitHit(for: run, now: now) == nil)
         let filler = String(repeating: "work\n", count: 4000)
         try (filler + "Claude AI usage limit reached|1792000000\n").write(
             toFile: runner.agentLog(for: run), atomically: true, encoding: .utf8)
-        #expect(runner.usageLimitHit(for: run)?.resetAt == Date(timeIntervalSince1970: 1_792_000_000))
+        #expect(runner.usageLimitHit(for: run, now: now)?.resetAt?.rawValue == Date(timeIntervalSince1970: 1_792_000_000))
         try (filler + "Opened the pull request.\n").write(toFile: runner.agentLog(for: run), atomically: true, encoding: .utf8)
-        #expect(runner.usageLimitHit(for: run) == nil)
+        #expect(runner.usageLimitHit(for: run, now: now) == nil)
     }
 
     @Test("A stopped session is interrupted, not failed: it keeps its session, place and counts")
@@ -164,6 +168,10 @@ struct ClaudeUsageLimitTests {
             workspace: "w")
         let decoded = try State.decoded(from: try state.encoded())
         #expect(decoded.claudePause == state.claudePause)
+        // The reset time is a plain date in the file, like the others.
+        let file = try #require(try JSONSerialization.jsonObject(with: state.encoded()) as? [String: Any])
+        let pause = try #require(file["claudePause"] as? [String: Any])
+        #expect(pause["until"] is String && pause["since"] is String)
         #expect(decoded.queuedRuns.first?.usageLimited == true)
         #expect(try State.decoded(from: Data(#"{"workspaces":{}}"#.utf8)).claudePause == nil)
         var lifted = decoded
@@ -204,7 +212,8 @@ struct ClaudeUsageLimitTests {
     @Test("Status shows the pause with its next check and the sessions waiting")
     func statusLine() {
         var state = State()
-        state.claudePause = ClaudePause(since: now, until: now.addingTimeInterval(3600), nextCheckAt: now.addingTimeInterval(900))
+        state.claudePause = ClaudePause(
+            since: now, until: resetTime(now.addingTimeInterval(3600)), nextCheckAt: now.addingTimeInterval(900))
         for id in ["a", "b"] {
             state.recordRun(AgentRun(issueId: id, identifier: .init(rawValue: id), branchName: id, sessionId: id), workspace: "w")
         }

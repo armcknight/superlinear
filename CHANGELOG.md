@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Actions spending limit kept from starting are told apart from failures by
   their annotations, shown as "CI not started: GitHub spending limit", and
   not given to agents to fix; one is rerun each hour, and once its jobs
-  start the others are rerun, newest first, one per branch. `superlinear
+  start, or those of a run you reran by hand, the others are rerun, newest
+  first, one per branch. `superlinear
   status` shows a line for each active pause, the standup lists them under
   Risks, and a macOS notification marks when each starts and ends.
 

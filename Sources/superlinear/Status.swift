@@ -403,7 +403,7 @@ enum StatusCommand {
 
     /// One line for each active pause: of Claude sessions at the usage limit,
     /// and of CI at the GitHub Actions spending limit.
-    static func pauseLines(state: State, workspaces: [String], now: Date = Date()) -> [String] {
+    static func pauseLines(state: State, workspaces: [String], now: Date) -> [String] {
         var lines: [String] = []
         if let pause = state.claudePause, !pause.isOver(now: now) {
             lines.append(pause.rendered(waiting: state.queuedRuns.count, now: now))
@@ -451,7 +451,7 @@ enum StatusCommand {
             let time = reset.formatted(date: .omitted, time: .shortened)
             header.append("warning: GitHub's rate limit is used up until \(time), so pull requests could not all be listed")
         }
-        header += pauseLines(state: state, workspaces: config.workspaces.map(\.name))
+        header += pauseLines(state: state, workspaces: config.workspaces.map(\.name), now: Date())
         let summary = StatusSummary(reports: reports).rendered()
             + "\n\n" + Standup.statusLine(state: state, standups: standups, workspaces: config.workspaces.map(\.name))
         let footer = DaemonStatus.read().footer(polls: config.workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })

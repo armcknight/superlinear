@@ -115,6 +115,7 @@ When the limit is used up, or a payment fails, GitHub starts no jobs in private 
 - Proposes no issue for such a run on the default branch, as it does for [failing CI](planning.md#follow-ups).
 - Tells agents, in their prompts, that such CI is not a failure to fix. Agents go on working: the limit stops CI, not Claude, and agents run the tests locally before they push.
 - Once an hour, reruns the failed jobs of the newest stopped run (`gh run rerun <id> --failed`). When its jobs start, you have raised the limit or the month has changed: it reruns the failed jobs of the other stopped runs, newest first, at most one for each branch.
+- Reads the stopped runs again at each poll. A run you rerun by hand that starts its jobs counts like the hourly rerun: the others are rerun, and the stop ends. A run that no longer fails, as after you reran it and it passed, leaves the list; when none is left, the stop ends. Between polls, `superlinear status` shows the last poll's view.
 
 ### Where pauses show
 

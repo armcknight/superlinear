@@ -8,10 +8,15 @@ import Testing
 @Suite("GitHub Actions spending limit")
 struct SpendingLimitTests {
     private let now = ISO8601DateFormatter().date(from: "2026-10-16T10:00:00Z")!
+    private let noPauses = Standup.Pauses(claude: nil, waiting: [], spendingLimit: nil)
+
+    private func stop(since: Date, runs: [StoppedRun], probe: StoppedRun? = nil) -> SpendingLimitStop {
+        SpendingLimitStop(since: since, runs: runs, lastRerunAt: since, probe: probe)
+    }
 
     private func run(
-        _ id: Int, branch: String = "feature", workflow: String = "ci", status: String = "completed",
-        conclusion: String? = "failure", minutesAgo: Double = 0, attempt: Int = 1
+        _ id: WorkflowRun.ID, branch: String = "feature", workflow: String = "ci", status: WorkflowRun.Status = .completed,
+        conclusion: WorkflowRun.Conclusion? = .failure, minutesAgo: Double = 0, attempt: Int = 1
     ) -> WorkflowRunSummary {
         WorkflowRunSummary(
             databaseId: id, headBranch: branch, workflowName: workflow, status: status, conclusion: conclusion,
@@ -33,11 +38,12 @@ struct SpendingLimitTests {
     func failingRuns() {
         let runs = [
             run(1, minutesAgo: 30),
-            run(2, conclusion: "success", minutesAgo: 10),
+            run(2, conclusion: .success, minutesAgo: 10),
             run(3, branch: "main", minutesAgo: 5),
-            run(4, branch: "main", workflow: "lint", conclusion: "startup_failure", minutesAgo: 6),
+            run(4, branch: "main", workflow: "lint", conclusion: .startupFailure, minutesAgo: 6),
             run(5, branch: "elsewhere", minutesAgo: 1),
-            run(6, branch: "other", status: "in_progress", conclusion: nil),
+            run(6, branch: "other", status: .inProgress, conclusion: nil),
+            run(7, branch: "other", conclusion: nil, minutesAgo: 1),
         ]
         let failing = SpendingLimit.failingRuns(runs, branches: ["feature", "main", "other"])
         #expect(failing.map(\.databaseId) == [3, 4])
@@ -47,13 +53,19 @@ struct SpendingLimitTests {
     func decoding() throws {
         let data = Data(#"""
             [{"databaseId": 7, "headBranch": "b", "workflowName": "ci", "status": "in_progress", "conclusion": "",
-              "createdAt": "2026-10-16T09:00:00Z", "attempt": 2}]
+              "createdAt": "2026-10-16T09:00:00Z", "attempt": 2},
+             {"databaseId": 8, "headBranch": "b", "status": "brand_new", "conclusion": "brand_new",
+              "createdAt": "2026-10-16T09:00:00Z"}]
             """#.utf8)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let runs = try decoder.decode([WorkflowRunSummary].self, from: data)
-        #expect(runs.first?.conclusion == nil)
-        #expect(runs.first?.attempt == 2)
+        #expect(runs == [
+            run(7, branch: "b", status: .inProgress, conclusion: nil, minutesAgo: 60, attempt: 2),
+            WorkflowRunSummary(
+                databaseId: 8, headBranch: "b", workflowName: nil, status: .unknown, conclusion: nil,
+                createdAt: now.addingTimeInterval(-3600), attempt: nil),
+        ])
     }
 
     @Test("A stop starts with the runs found, keeps its start, and ends when none are left")
@@ -72,8 +84,7 @@ struct SpendingLimitTests {
 
     @Test("One stopped run, the newest, is rerun each hour")
     func hourlyRerun() {
-        var stop = SpendingLimitStop(
-            since: now, runs: [StoppedRun(run(2, minutesAgo: 5)), StoppedRun(run(1, minutesAgo: 30))])
+        var stop = stop(since: now, runs: [StoppedRun(run(2, minutesAgo: 5)), StoppedRun(run(1, minutesAgo: 30))])
         #expect(stop.runToProbe(now: now.addingTimeInterval(59 * 60)) == nil)
         #expect(stop.runToProbe(now: now.addingTimeInterval(60 * 60))?.id == 2)
         stop.probe = stop.runs[0]
@@ -84,8 +95,15 @@ struct SpendingLimitTests {
     @Test("A probe that is watched stays, though its run no longer fails")
     func probeStays() {
         let probe = StoppedRun(run(2, minutesAgo: 5))
-        let stop = SpendingLimitStop(since: now, runs: [probe], probe: probe)
+        let stop = stop(since: now, runs: [probe], probe: probe)
         #expect(SpendingLimitStop.updated(stop, stopped: [], now: now)?.runs == [probe])
+    }
+
+    @Test("The probe is read first at a poll, then the runs the owner may have rerun by hand")
+    func watched() {
+        let runs = [StoppedRun(run(3, minutesAgo: 1)), StoppedRun(run(2, minutesAgo: 2)), StoppedRun(run(1, minutesAgo: 3))]
+        #expect(stop(since: now, runs: runs).watched == runs)
+        #expect(stop(since: now, runs: runs, probe: runs[1]).watched.map(\.id) == [2, 3, 1])
     }
 
     @Test("The rerun's result: started, stopped again, or not yet known")
@@ -95,18 +113,18 @@ struct SpendingLimitTests {
         #expect(await SpendingLimit.probeResult(nil, rerunFrom: 1, stopped: stopped) == .pending)
         #expect(await SpendingLimit.probeResult(run(1, attempt: 1), rerunFrom: 1, stopped: stopped) == .pending)
         #expect(await SpendingLimit.probeResult(
-            run(1, status: "queued", conclusion: nil, attempt: 2), rerunFrom: 1, stopped: stopped) == .pending)
+            run(1, status: .queued, conclusion: nil, attempt: 2), rerunFrom: 1, stopped: stopped) == .pending)
         #expect(await SpendingLimit.probeResult(
-            run(1, status: "in_progress", conclusion: nil, attempt: 2), rerunFrom: 1, stopped: stopped) == .started)
+            run(1, status: .inProgress, conclusion: nil, attempt: 2), rerunFrom: 1, stopped: stopped) == .started)
         #expect(await SpendingLimit.probeResult(
-            run(1, conclusion: "success", attempt: 2), rerunFrom: 1, stopped: stopped) == .started)
+            run(1, conclusion: .success, attempt: 2), rerunFrom: 1, stopped: stopped) == .started)
         #expect(await SpendingLimit.probeResult(run(1, attempt: 2), rerunFrom: 1, stopped: stopped) == .stillStopped)
         // It ran, and failed for a real reason: the limit was raised.
         #expect(await SpendingLimit.probeResult(run(1, attempt: 2), rerunFrom: 1, stopped: ran) == .started)
         #expect(await SpendingLimit.probeResult(run(1, attempt: 2), rerunFrom: 1, stopped: { nil }) == .pending)
     }
 
-    @Test("Once the probe's jobs start, the other runs are rerun newest first, one for each branch")
+    @Test("Once a rerun's jobs start, the other runs are rerun newest first, one for each branch")
     func resumeOthers() {
         let runs = [
             StoppedRun(run(5, branch: "a", minutesAgo: 1)),
@@ -115,8 +133,10 @@ struct SpendingLimitTests {
             StoppedRun(run(2, branch: "c", minutesAgo: 4)),
             StoppedRun(run(1, branch: "b", workflow: "lint", minutesAgo: 5)),
         ]
-        let stop = SpendingLimitStop(since: now, runs: runs, probe: runs[1])
-        #expect(stop.othersToRerun().map(\.id) == [5, 2])
+        let stop = stop(since: now, runs: runs, probe: runs[1])
+        #expect(stop.othersToRerun(after: runs[1]).map(\.id) == [5, 2])
+        // A run the owner reran by hand counts the same as the probe.
+        #expect(stop.othersToRerun(after: runs[3]).map(\.id) == [5, 4])
     }
 
     @Test("A pull request stopped by the limit shows CI not started, not CI failing")
@@ -136,9 +156,8 @@ struct SpendingLimitTests {
     @Test("Status shows one line for the repositories whose CI stopped")
     func statusLine() {
         var state = State()
-        state.workspaces["w", default: WorkspaceState()].spendingLimit = SpendingLimitStop(
-            since: now, runs: [StoppedRun(run(1))])
-        state.workspaces["x", default: WorkspaceState()].spendingLimit = SpendingLimitStop(
+        state.workspaces["w", default: WorkspaceState()].spendingLimit = stop(since: now, runs: [StoppedRun(run(1))])
+        state.workspaces["x", default: WorkspaceState()].spendingLimit = stop(
             since: now.addingTimeInterval(60), runs: [StoppedRun(run(2))])
         let lines = StatusCommand.pauseLines(state: state, workspaces: ["w", "x"], now: now)
         #expect(lines.count == 1)
@@ -149,9 +168,10 @@ struct SpendingLimitTests {
     @Test("The standup's risks list both pauses and the work they hold back")
     func risks() {
         let pauses = Standup.Pauses(
-            claude: ClaudePause(since: now, until: now.addingTimeInterval(3600), nextCheckAt: now.addingTimeInterval(900)),
+            claude: ClaudePause(
+                since: now, until: .init(rawValue: now.addingTimeInterval(3600)), nextCheckAt: now.addingTimeInterval(900)),
             waiting: ["SPL-1", "SPL-2"],
-            spendingLimit: SpendingLimitStop(since: now, runs: [StoppedRun(run(1, branch: "main"))]))
+            spendingLimit: stop(since: now, runs: [StoppedRun(run(1, branch: "main"))]))
         let failing = Standup.DefaultBranchRun(status: .completed, conclusion: .failure, url: "https://ci/1", workflowName: "ci")
         let risks = Standup.risks(defaultBranch: "main", latestRun: failing, rateLimit: nil, pauses: pauses, now: now)
         #expect(risks.count == 2)
@@ -160,14 +180,14 @@ struct SpendingLimitTests {
         #expect(risks[1].hasPrefix("GitHub Actions spending limit: CI not started since "))
         #expect(risks[1].contains("on main;"))
         // Without the stop, the default branch's failure is a real one.
-        #expect(Standup.risks(defaultBranch: "main", latestRun: failing, rateLimit: nil, now: now)
+        #expect(Standup.risks(defaultBranch: "main", latestRun: failing, rateLimit: nil, pauses: noPauses, now: now)
             == ["CI failure on main (ci): https://ci/1"])
     }
 
     @Test("The standup's pauses come from the state file, the Claude pause only while it lasts")
     func pausesFromState() {
         var state = State()
-        state.claudePause = ClaudePause(since: now, until: now.addingTimeInterval(3600), nextCheckAt: now)
+        state.claudePause = ClaudePause(since: now, until: .init(rawValue: now.addingTimeInterval(3600)), nextCheckAt: now)
         state.recordRun(AgentRun(issueId: "i", identifier: "SPL-9", branchName: "b", sessionId: "s"), workspace: "w")
         let pauses = Standup.Pauses(state: state, workspace: "w", now: now)
         #expect(pauses.claude != nil)
@@ -191,7 +211,7 @@ struct SpendingLimitTests {
         StandupCommand.offerResume(state: state, io: none, resume: { _ in "resumed" }, now: now)
         #expect(none.asked.isEmpty)
 
-        state.claudePause = ClaudePause(since: now, until: now.addingTimeInterval(3600), nextCheckAt: now)
+        state.claudePause = ClaudePause(since: now, until: .init(rawValue: now.addingTimeInterval(3600)), nextCheckAt: now)
         let yes = IO(["y"])
         StandupCommand.offerResume(state: state, io: yes, resume: { _ in "resumed" }, now: now)
         #expect(yes.asked.count == 1)
@@ -203,7 +223,7 @@ struct SpendingLimitTests {
 
     @Test("Notifications quote their text for AppleScript")
     func notification() {
-        #expect(Notifier.script(title: "superlinear", message: #"Say "hi" \ bye"#)
+        #expect(Notifier.script(title: Notifier.title, message: #"Say "hi" \ bye"#)
             == #"display notification "Say \"hi\" \\ bye" with title "superlinear""#)
     }
 }
