@@ -342,9 +342,11 @@ struct AgentRunner: Sendable {
     /// Whether the run's process is alive and is the one that was launched,
     /// rather than an unrelated process that reused its pid.
     static func isRunning(_ run: AgentRun) -> Bool {
-        guard let pid = run.pid, let recorded = run.processStartedAt,
-              let actual = startTime(of: pid)
-        else { return false }
+        isRunning(pid: run.pid, startedAt: run.processStartedAt)
+    }
+
+    static func isRunning(pid: Int32?, startedAt recorded: Date?) -> Bool {
+        guard let pid, let recorded, let actual = startTime(of: pid) else { return false }
         return abs(actual.timeIntervalSince(recorded)) < 1
     }
 

@@ -36,6 +36,7 @@ superlinear uninstall
 superlinear status [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear standup [--print] [--workspace <name>] [--config <path>]
+superlinear plan [--workspace <name>] [--config <path>]
 superlinear resume
 ```
 

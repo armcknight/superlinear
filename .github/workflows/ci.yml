@@ -7,7 +7,7 @@ on:
 
 jobs:
   ci:
-    uses: armcknight/workflows/.github/workflows/swift-package-ci.yml@2
+    uses: armcknight/workflows/.github/workflows/swift-package-ci.yml@4
 
   docs:
     runs-on: ubuntu-latest

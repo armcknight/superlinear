@@ -342,10 +342,22 @@ enum StandupCommand {
             workspaces = [match]
         }
         var record = StandupRecord.load()
-        let state = State.loadWithStandups(standups: record)
+        var state = State.loadWithStandups(standups: record)
 
-        // TODO: SPL-11 adds `superlinear plan`. When its last run is older
-        // than 12 hours, offer to run it first, with its token cost.
+        // A job's proposals come up in this standup when it runs first.
+        if !printOnly {
+            let planning = PlanningRecord.load()
+            var planned = false
+            for workspace in workspaces {
+                guard let offer = await PlanCommand.standupOffer(
+                    workspace, state: state.workspaces[workspace.name] ?? WorkspaceState(), planning: planning[workspace.name],
+                    linear: LinearClient(apiKey: workspace.apiKey), now: Date())
+                else { continue }
+                guard io.ask("\(offer) Run the planning job first? [y/N] ")?.lowercased().hasPrefix("y") == true else { continue }
+                planned = await PlanCommand.runJob(workspace, say: io.say) || planned
+            }
+            if planned { state = State.loadWithStandups(standups: record) }
+        }
 
         for (index, workspace) in workspaces.enumerated() {
             let workspaceState = state.workspaces[workspace.name] ?? WorkspaceState()

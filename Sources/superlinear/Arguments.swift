@@ -10,6 +10,7 @@ enum Command: Equatable {
     case proposals(configPath: String?, workspace: String?)
     case standup(configPath: String?, workspace: String?, printOnly: Bool)
     case resume
+    case plan(configPath: String?, workspace: String?)
     case version
     case help
     case invalid(String)
@@ -58,6 +59,22 @@ enum Command: Equatable {
                 rest = rest.dropFirst()
             }
             return .proposals(configPath: configPath, workspace: workspace)
+        case "plan":
+            rest = rest.dropFirst()
+            var configPath: String?
+            var workspace: String?
+            while let argument = rest.first {
+                rest = rest.dropFirst()
+                guard ["--config", "--workspace"].contains(argument) else {
+                    return .invalid("unknown option for plan: \(argument)")
+                }
+                guard let value = rest.first else {
+                    return .invalid(argument == "--config" ? "--config needs a path" : "--workspace needs a name")
+                }
+                if argument == "--config" { configPath = value } else { workspace = value }
+                rest = rest.dropFirst()
+            }
+            return .plan(configPath: configPath, workspace: workspace)
         case "standup":
             rest = rest.dropFirst()
             var configPath: String?
