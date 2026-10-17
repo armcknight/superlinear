@@ -16,6 +16,7 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
       "repoPath": "~/Code/my-repo",
       "teamIds": [],
       "pollIntervalSeconds": 60,
+      "githubIssues": false,
       "selection": "ready",
       "readyStates": ["unstarted"],
       "humanLabels": ["Needs human", "Spike"]
@@ -44,6 +45,7 @@ Each workspace entry is one Linear-account-to-repository pairing. List several t
 | <a id="repo-path"></a>`repoPath` | yes | Repository the agent works in. `~` is expanded. |
 | <a id="team-ids"></a>`teamIds` | no | Linear team IDs to watch. Empty or absent means all teams. Defaults to `[]`. |
 | <a id="poll-interval-seconds"></a>`pollIntervalSeconds` | no | Seconds between polls. Defaults to `60`. |
+| <a id="github-issues"></a>`githubIssues` | no | Also work on the repository's GitHub issues that you open or comment `/superlinear-do` on. See [GitHub issues](lifecycle.md#github-issues). Defaults to `false`. |
 | <a id="selection"></a>`selection` | no | `"new"` to start issues created since the last poll, or `"ready"` to start every issue in `readyStates`. See [Selection](lifecycle.md#selection). Defaults to `"new"`. |
 | <a id="ready-states"></a>`readyStates` | no | Linear state types that mean "build this" in `ready` mode: any of `triage`, `backlog`, `unstarted`, `started`, `completed` and `canceled`, usually the first three. Any other value, such as a state name like `"Todo"`, is an error. Defaults to `["unstarted"]`, which is Todo. |
 | <a id="human-labels"></a>`humanLabels` | no | Names of labels that keep an issue for a person: no agent starts on it. Matched in any case. See [The ready gate](lifecycle.md#ready-gate). Defaults to `["Needs human", "Spike"]`. |

@@ -25,6 +25,16 @@ Each workspace picks its issues in one of two modes, set by [`selection`](config
 <a id="first-poll"></a>
 **First poll:** a workspace with no state — just added to the config, or after `make reset` — in `new` mode takes its first poll as the starting point, logs that once, and starts no issue created before it. Without that, its first poll would start an agent for every open issue in the workspace. In `ready` mode the first poll starts every ready issue, which is what Todo means there.
 
+<a id="github-issues"></a>
+### GitHub issues
+
+A workspace with [`githubIssues`](configuration.md#github-issues) on also takes work from its repository's GitHub issues, with `gh` signed in as you. Each poll lists the repository's open issues, newest 1,000, and queues the ones you asked for:
+
+- **Issues you open**, from the first poll with the option on. Issues you opened before then are left alone, so turning it on does not start an agent on every old issue.
+- **Issues anyone opened, yours included, on which you comment a line starting with `/superlinear-do`.** Comments from anyone else do nothing.
+
+Each issue is processed once, as Linear's are, and shares the same queue and agent limit. Its run is named `GH-<number>`, on the branch `github/gh-<number>`. Its agent reads the issue with `gh issue view`, implements, commits, and opens a pull request with `/armcknight-claude:pr --autonomous`, putting `Closes #<number>` in the description. Nothing is linked or updated in Linear. When the pull request merges, the daemon closes the issue as completed if GitHub has not already, then removes the worktree. If GitHub cannot be reached, the daemon logs it once and goes on with Linear. Your reviews on its pull request bring an agent back, as for a Linear issue's (see [Reviews](#reviews)), and that agent reads the issue from GitHub too. Its agents' [follow-ups](planning.md#follow-ups), and the TODOs its merged pull request adds, are proposed as Linear issues in the workspace's proposal team, as they have no Linear issue to follow from.
+
 <a id="ready-gate"></a>
 ## The ready gate
 

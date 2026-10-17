@@ -14,16 +14,19 @@ struct PendingMerge: Codable, Sendable, Equatable {
     /// The last agent set to resolve the pull request's conflicts with its
     /// base branch, if that was the last agent on the issue.
     var conflictAttempt: ConflictAttempt?
+    /// The GitHub issue's number, when the issue comes from GitHub.
+    var gitHubIssue: Int? = nil
 
     init(
         issueId: String, identifier: LinearIssue.Identifier, branchName: String,
-        reviewsHandledThrough: Date? = nil, conflictAttempt: ConflictAttempt? = nil
+        reviewsHandledThrough: Date? = nil, conflictAttempt: ConflictAttempt? = nil, gitHubIssue: Int? = nil
     ) {
         self.issueId = issueId
         self.identifier = identifier
         self.branchName = branchName
         self.reviewsHandledThrough = reviewsHandledThrough
         self.conflictAttempt = conflictAttempt
+        self.gitHubIssue = gitHubIssue
     }
 
     /// The watch that follows a run once its agent ends. Reviews from after
@@ -36,7 +39,7 @@ struct PendingMerge: Codable, Sendable, Equatable {
         self.init(
             issueId: run.issueId, identifier: run.identifier, branchName: run.branchName,
             reviewsHandledThrough: run.conflict.map { $0.reviewsHandledThrough ?? started } ?? started,
-            conflictAttempt: run.conflict?.attempt
+            conflictAttempt: run.conflict?.attempt, gitHubIssue: run.gitHubIssue
         )
     }
 }

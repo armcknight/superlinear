@@ -117,16 +117,31 @@ actor Daemon {
     /// queues it twice, and the poll does not wait for its agent. Issues queued
     /// at once start in the order of their `queuedAt`.
     func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig, queuedAt: Date = Date()) {
-        let run = AgentRun(
+        enqueue(AgentRun(
             issueId: issue.id.rawValue,
             identifier: issue.identifier,
             branchName: issue.branchName,
             sessionId: UUID().uuidString.lowercased(),
             queuedAt: queuedAt
-        )
-        state.markProcessed(issue.id.rawValue, workspace: workspace.name)
+        ), title: issue.title, workspace: workspace)
+    }
+
+    /// Queues an agent for a GitHub issue, as for a Linear one.
+    func enqueueAgent(for issue: GitHubIssue, workspace: WorkspaceConfig) {
+        enqueue(AgentRun(
+            issueId: issue.issueId,
+            identifier: issue.identifier,
+            branchName: issue.branchName,
+            sessionId: UUID().uuidString.lowercased(),
+            queuedAt: Date(),
+            gitHubIssue: issue.number
+        ), title: issue.title, workspace: workspace)
+    }
+
+    private func enqueue(_ run: AgentRun, title: String, workspace: WorkspaceConfig) {
+        state.markProcessed(run.issueId, workspace: workspace.name)
         state.recordRun(run, workspace: workspace.name)
-        log("Queued \(issue.identifier): \(issue.title)", workspace: workspace.name)
+        log("Queued \(run.identifier): \(title)", workspace: workspace.name)
         save()
         fillSlots()
     }
@@ -143,7 +158,8 @@ actor Daemon {
             branchName: pending.branchName,
             sessionId: UUID().uuidString.lowercased(),
             queuedAt: Date(),
-            review: ReviewRequest(number: pullRequest.number, url: pullRequest.url)
+            review: ReviewRequest(number: pullRequest.number, url: pullRequest.url),
+            gitHubIssue: pending.gitHubIssue
         )
         state.startReview(run, workspace: workspace.name)
         log("Queued \(pending.identifier) to address the review on \(pullRequest.url)", workspace: workspace.name)
@@ -171,7 +187,8 @@ actor Daemon {
             conflict: ConflictRequest(
                 number: pullRequest.number, url: pullRequest.url, baseBranch: baseBranch,
                 attempt: attempt, reviewsHandledThrough: current.reviewsHandledThrough
-            )
+            ),
+            gitHubIssue: pending.gitHubIssue
         )
         state.startReview(run, workspace: workspace.name)
         log(
@@ -296,7 +313,7 @@ actor Daemon {
             if run.review == nil, run.conflict == nil, mode == .start, run.resumes == 0, firstLaunch {
                 state.recordActivity(
                     ActivityEvent(time: Date(), kind: .agentStarted, identifier: run.identifier), workspace: workspace.name)
-                if workspace.selection == .ready { markStarted(run, workspace: workspace) }
+                if workspace.selection == .ready, run.gitHubIssue == nil { markStarted(run, workspace: workspace) }
             }
             if let review = run.review {
                 log("  Addressing the review on \(review.url)", workspace: workspace.name)
@@ -429,9 +446,18 @@ actor Daemon {
     ) async -> [FollowUp] {
         log("\(run.identifier)'s agent reported \(entries.count) follow-up(s)", workspace: workspace.name)
         let linear = LinearClient(apiKey: workspace.apiKey)
-        let issue: EditableIssue
+        // A GitHub issue's agent has no Linear issue: its follow-ups go to the
+        // workspace's proposal team, and follow from no issue.
+        let teamId: LinearTeam.ID
+        let issueId: LinearIssue.ID?
         do {
-            issue = try await linear.editableIssue(id: LinearIssue.ID(rawValue: run.issueId))
+            if run.gitHubIssue != nil {
+                teamId = try await linear.proposalTeamId(teamIds: workspace.teamIds)
+                issueId = nil
+            } else {
+                let issue = try await linear.editableIssue(id: LinearIssue.ID(rawValue: run.issueId))
+                (teamId, issueId) = (issue.teamId, issue.id)
+            }
         } catch {
             log("Could not look up \(run.identifier) to propose its follow-ups: \(error)", workspace: workspace.name)
             return entries
@@ -440,12 +466,12 @@ actor Daemon {
         for entry in entries {
             // Linear finds an issue by its identifier too. One it cannot find
             // is still named in the description.
-            var related = issue.id
+            var related = issueId
             if let identifier = entry.relatedIssue,
                let found = try? await linear.editableIssue(id: LinearIssue.ID(rawValue: identifier.rawValue)) {
                 related = found.id
             }
-            let draft = entry.draft(teamId: issue.teamId, relatedIssueId: related, agentIssue: run.identifier, source: source)
+            let draft = entry.draft(teamId: teamId, relatedIssueId: related, agentIssue: run.identifier, source: source)
             do {
                 try await propose(draft, workspace: workspace)
             } catch {
@@ -655,6 +681,18 @@ actor Daemon {
         }
         state.recordWaiting(blocked: plan.blocked, needsHuman: plan.needsHuman, workspace: workspace)
         save()
+    }
+
+    func filterUnprocessed(_ issues: [GitHubIssue], workspace: String) -> [GitHubIssue] {
+        issues.filter { !state.isProcessed($0.issueId, workspace: workspace) }
+    }
+
+    /// When the workspace's GitHub issues were first polled; now, the first
+    /// time.
+    func gitHubIssuesSince(workspace: String) -> Date {
+        let since = state.gitHubIssuesSince(workspace: workspace)
+        save()
+        return since
     }
 
     func pendingMerges(workspace: String) -> [PendingMerge] {

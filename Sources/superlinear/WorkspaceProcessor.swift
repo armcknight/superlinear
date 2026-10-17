@@ -39,6 +39,7 @@ struct WorkspaceProcessor: Sendable {
         await daemon.planIfDue(workspace, now: Date())
 
         // Each step checks first, as one hitting the rate limit pauses the rest.
+        if workspace.githubIssues, await daemon.gitHubAvailable() { await pollGitHubIssues() }
         let listing = PullRequestListing(repoPath: NSString(string: workspace.repoPath).expandingTildeInPath)
         if await daemon.gitHubAvailable() { await linkRunningAgentsPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await checkPullRequests(client: client, listing: listing) }
@@ -180,16 +181,25 @@ struct WorkspaceProcessor: Sendable {
         }
         guard !todos.isEmpty else { return }
         log("  \(pullRequest.url) added \(todos.count) TODO or FIXME line(s)")
-        let issue: EditableIssue
+        // A GitHub issue has no Linear issue: its TODOs go to the workspace's
+        // proposal team, and follow from no issue.
+        let teamId: LinearTeam.ID
+        let issueId: LinearIssue.ID?
         do {
-            issue = try await client.editableIssue(id: LinearIssue.ID(rawValue: pending.issueId))
+            if pending.gitHubIssue != nil {
+                teamId = try await client.proposalTeamId(teamIds: workspace.teamIds)
+                issueId = nil
+            } else {
+                let issue = try await client.editableIssue(id: LinearIssue.ID(rawValue: pending.issueId))
+                (teamId, issueId) = (issue.teamId, issue.id)
+            }
         } catch {
             log("  Could not look up \(pending.identifier) to propose its added TODOs: \(error)")
             return
         }
         for todo in todos {
             let draft = AddedTodos.draft(
-                todo, pullRequest: pullRequest, agentIssue: pending.identifier, issueId: issue.id, teamId: issue.teamId
+                todo, pullRequest: pullRequest, agentIssue: pending.identifier, issueId: issueId, teamId: teamId
             )
             do {
                 try await daemon.propose(draft, workspace: workspace)
@@ -245,6 +255,34 @@ struct WorkspaceProcessor: Sendable {
         return true
     }
 
+    /// Queues the repository's open GitHub issues that you opened since GitHub
+    /// polling began, or that you commented `/superlinear-do` on. A failure is
+    /// logged and leaves Linear's work to go on.
+    private func pollGitHubIssues() async {
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let client = GitHubIssueClient()
+        let since = await daemon.gitHubIssuesSince(workspace: workspace.name)
+        let requested: [GitHubIssue]
+        do {
+            let login = try await daemon.viewerLogin(repoPath: repoPath)
+            requested = try await client.openIssues(repoPath: repoPath).filter {
+                $0.isRequested(by: login, openedSince: since)
+            }
+        } catch {
+            if await pausedForRateLimit(error, repoPath: repoPath) { return }
+            await logOnce("Could not list GitHub issues: \(error)")
+            return
+        }
+        let newIssues = await daemon.filterUnprocessed(requested, workspace: workspace.name)
+        if !newIssues.isEmpty {
+            log("Found \(newIssues.count) new GitHub issue(s)")
+        }
+        // Oldest first, as Linear's are.
+        for issue in newIssues.sorted(by: { $0.number < $1.number }) {
+            await daemon.enqueueAgent(for: issue, workspace: workspace)
+        }
+    }
+
     /// Links and completes started issues that no run or merge watch follows,
     /// such as work done by hand or by agents from before a state reset. Their
     /// worktrees are left alone, since they may hold work of your own.
@@ -289,7 +327,8 @@ struct WorkspaceProcessor: Sendable {
     /// Links the pull requests of agents still running, which open them well
     /// before they end, as they go on to watch CI.
     private func linkRunningAgentsPullRequests(client: LinearClient, listing: PullRequestListing) async {
-        let runs = await daemon.launchedRuns(workspace: workspace.name)
+        // GitHub links a pull request to the issue it closes by itself.
+        let runs = await daemon.launchedRuns(workspace: workspace.name).filter { $0.gitHubIssue == nil }
         guard !runs.isEmpty else { return }
         let all: [PullRequest]
         do {
@@ -348,7 +387,9 @@ struct WorkspaceProcessor: Sendable {
                 return
             }
             // Before the merge check, which may end the watch.
-            await link(pullRequests, issueId: pending.issueId, identifier: pending.identifier, client: client)
+            if pending.gitHubIssue == nil {
+                await link(pullRequests, issueId: pending.issueId, identifier: pending.identifier, client: client)
+            }
             let status = MergeStatus.of(pullRequests)
 
             switch status {
@@ -364,7 +405,14 @@ struct WorkspaceProcessor: Sendable {
             case .merged(let pr):
                 log("\(pending.identifier) merged in \(pr.url)")
                 do {
-                    if try await client.completeIssue(id: pending.issueId) {
+                    if let number = pending.gitHubIssue {
+                        if try await GitHubIssueClient().completeIssue(number: number, repoPath: repoPath) {
+                            log("  Closed GitHub issue #\(number)")
+                            await daemon.recordActivity(
+                                ActivityEvent(time: Date(), kind: .issueCompleted, identifier: pending.identifier, detail: pr.url),
+                                workspace: workspace.name)
+                        }
+                    } else if try await client.completeIssue(id: pending.issueId) {
                         log("  Marked \(pending.identifier) done in Linear")
                         await daemon.recordActivity(
                             ActivityEvent(time: Date(), kind: .issueCompleted, identifier: pending.identifier, detail: pr.url),
@@ -372,7 +420,7 @@ struct WorkspaceProcessor: Sendable {
                     }
                 } catch {
                     // Leave it pending so the next poll tries again.
-                    log("  Could not mark \(pending.identifier) done in Linear: \(error)")
+                    log("  Could not mark \(pending.identifier) done: \(error)")
                     continue
                 }
                 await proposeAddedTodos(of: pr, pending: pending, client: client, repoPath: repoPath)

@@ -32,6 +32,9 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// The pull request whose conflicts with its base branch the run
     /// resolves, for a run started by such a conflict.
     var conflict: ConflictRequest?
+    /// The number of the GitHub issue the agent works on, when the run comes
+    /// from GitHub rather than Linear.
+    var gitHubIssue: Int? = nil
     /// Set when the run's session stopped at the Claude usage limit, until it
     /// launches again. Such a run waits out the pause, then goes first.
     var usageLimited: Bool?
@@ -124,6 +127,9 @@ struct WorkspaceState: Codable, Sendable {
     var blocked: [LinearIssue.ID: WaitingIssue]
     /// Issues with a human label, keyed by issue ID.
     var needsHuman: [LinearIssue.ID: WaitingIssue]
+    /// When the daemon first polled the repository's GitHub issues. Issues you
+    /// opened before then are left alone unless you comment `/superlinear-do`.
+    var gitHubIssuesSince: Date?
     /// Proposed changes to Linear, pending and decided, oldest first.
     var proposals: [Proposal]
     /// What the daemon did on its own, oldest first, for the standup.
@@ -165,6 +171,7 @@ struct WorkspaceState: Codable, Sendable {
         poll = try container.decodeIfPresent(PollRecord.self, forKey: .poll)
         blocked = try container.decodeIfPresent([LinearIssue.ID: WaitingIssue].self, forKey: .blocked) ?? [:]
         needsHuman = try container.decodeIfPresent([LinearIssue.ID: WaitingIssue].self, forKey: .needsHuman) ?? [:]
+        gitHubIssuesSince = try container.decodeIfPresent(Date.self, forKey: .gitHubIssuesSince)
         proposals = try container.decodeIfPresent([Proposal].self, forKey: .proposals) ?? []
         activity = try container.decodeIfPresent([ActivityEvent].self, forKey: .activity) ?? []
         spendingLimit = try container.decodeIfPresent(SpendingLimitStop.self, forKey: .spendingLimit)
@@ -279,6 +286,13 @@ struct State: Codable, Sendable {
 
     func isProcessed(_ issueId: String, workspace: String) -> Bool {
         workspaces[workspace]?.processedIssueIds.contains(issueId) ?? false
+    }
+
+    /// When GitHub issues were first polled, set to `now` on the first call.
+    mutating func gitHubIssuesSince(workspace: String, now: Date = Date()) -> Date {
+        if let since = workspaces[workspace]?.gitHubIssuesSince { return since }
+        workspaces[workspace, default: WorkspaceState()].gitHubIssuesSince = now
+        return now
     }
 
     func lastPollTimestamp(workspace: String) -> Date {

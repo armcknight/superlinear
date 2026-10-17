@@ -27,6 +27,9 @@ struct WorkspaceConfig: Decodable, Sendable {
     /// Labels that keep an issue for a person: no agent starts on it. Teams
     /// name their own labels, so these are names, matched in any case.
     let humanLabels: [String]
+    /// Whether to work on the repository's GitHub issues too: those you open,
+    /// and those you comment `/superlinear-do` on.
+    let githubIssues: Bool
     /// The trust level of each kind of proposal.
     let autonomy: Autonomy
     /// Days after which a pending proposal expires, counted from the first
@@ -36,7 +39,7 @@ struct WorkspaceConfig: Decodable, Sendable {
     let planning: PlanningConfig
 
     enum CodingKeys: String, CodingKey {
-        case name, apiKey, repoPath, teamIds, pollIntervalSeconds, selection, readyStates, humanLabels
+        case name, apiKey, repoPath, teamIds, pollIntervalSeconds, selection, readyStates, humanLabels, githubIssues
         case autonomy, proposalExpiryDays, planning
     }
 
@@ -50,6 +53,7 @@ struct WorkspaceConfig: Decodable, Sendable {
         selection = try container.decodeIfPresent(IssueSelection.self, forKey: .selection) ?? .new
         readyStates = try container.decodeIfPresent([LinearStateType].self, forKey: .readyStates) ?? Self.defaultReadyStates
         humanLabels = try container.decodeIfPresent([String].self, forKey: .humanLabels) ?? Self.defaultHumanLabels
+        githubIssues = try container.decodeIfPresent(Bool.self, forKey: .githubIssues) ?? false
         // A misspelt kind would otherwise leave its default in force unseen.
         var overrides: [ProposalKind: TrustLevel] = [:]
         for (key, level) in try container.decodeIfPresent([String: TrustLevel].self, forKey: .autonomy) ?? [:] {

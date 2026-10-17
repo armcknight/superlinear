@@ -30,6 +30,18 @@ struct ConflictResolutionTests {
         #expect(prompt.contains("Do not post comments on GitHub"))
     }
 
+    @Test("A conflict run on a GitHub issue reads the issue from GitHub, and its watch stays on GitHub")
+    func gitHubIssue() {
+        var gitHub = run(conflict: request)
+        gitHub.gitHubIssue = 7
+        let prompt = AgentRunner.prompt(for: gitHub)
+        #expect(prompt.contains("git merge origin/main"))
+        #expect(prompt.contains("gh issue view 7"))
+        #expect(!prompt.contains("linctl"))
+        #expect(PendingMerge(gitHub).gitHubIssue == 7)
+        #expect(AgentRunner.prompt(for: run(conflict: request)).contains("linctl"))
+    }
+
     // The conflict run reads no reviews: a review that came in before it must
     // still get an agent after it.
     @Test("The watch after a conflict run keeps the review baseline from before it, and the heads it tried")
