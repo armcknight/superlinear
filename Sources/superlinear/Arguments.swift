@@ -1,3 +1,5 @@
+import Foundation
+
 /// What the command line asks for. Anything unrecognised is an error rather
 /// than ignored: an unknown word used to fall through to running the daemon,
 /// so `superlinear status`, a command this version lacks, started a second
@@ -6,7 +8,7 @@ enum Command: Equatable {
     case run(configPath: String?)
     case install(force: Bool)
     case uninstall
-    case status(configPath: String?)
+    case status(configPath: String?, filter: StatusFilter)
     case proposals(configPath: String?, workspace: String?)
     case standup(configPath: String?, workspace: String?, printOnly: Bool)
     case resume
@@ -35,14 +37,35 @@ enum Command: Equatable {
         case "status":
             rest = rest.dropFirst()
             var configPath: String?
+            var filter = StatusFilter()
             while let argument = rest.first {
                 rest = rest.dropFirst()
-                guard argument == "--config" else { return .invalid("unknown option for status: \(argument)") }
-                guard let path = rest.first else { return .invalid("--config needs a path") }
-                configPath = path
+                guard ["--config", "--status", "--workspace"].contains(argument) else {
+                    return .invalid("unknown option for status: \(argument)")
+                }
+                guard let value = rest.first else {
+                    return .invalid(argument == "--config" ? "--config needs a path" : "\(argument) needs a name")
+                }
                 rest = rest.dropFirst()
+                if argument == "--config" {
+                    configPath = value
+                    continue
+                }
+                // Comma-separated, and the option may repeat.
+                let names = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                guard !names.isEmpty else { return .invalid("\(argument) needs a name") }
+                if argument == "--workspace" {
+                    filter.workspaces = (filter.workspaces ?? []) + names
+                    continue
+                }
+                for name in names {
+                    guard let section = StatusSection(name: name) else {
+                        return .invalid("unknown status: \(name). Statuses: \(StatusSection.all.map(\.name).joined(separator: ", "))")
+                    }
+                    filter.sections = (filter.sections ?? []).union([section])
+                }
             }
-            return .status(configPath: configPath)
+            return .status(configPath: configPath, filter: filter)
         case "proposals":
             rest = rest.dropFirst()
             var configPath: String?
