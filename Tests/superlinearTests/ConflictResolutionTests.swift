@@ -61,9 +61,9 @@ struct ConflictResolutionTests {
     func category() {
         var queued = run(conflict: request)
         queued.pid = nil
-        #expect(TaskCategory.of(run: run(conflict: request), running: true, issue: nil, pullRequest: nil) == .resolvingConflicts)
-        #expect(TaskCategory.of(run: queued, running: false, issue: nil, pullRequest: nil) == .resolvingConflicts)
-        #expect(TaskCategory.of(run: run(conflict: request), running: false, issue: nil, pullRequest: nil) == .interrupted)
+        #expect(TaskCategory.of(run: run(conflict: request), running: true, issue: nil, pullRequest: nil, pending: nil) == .resolvingConflicts)
+        #expect(TaskCategory.of(run: queued, running: false, issue: nil, pullRequest: nil, pending: nil) == .resolvingConflicts)
+        #expect(TaskCategory.of(run: run(conflict: request), running: false, issue: nil, pullRequest: nil, pending: nil) == .interrupted)
     }
 
     @Test("GitHub's mergeable state is read from the open listing")

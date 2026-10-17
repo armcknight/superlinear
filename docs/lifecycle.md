@@ -12,7 +12,8 @@ How an issue in Linear becomes a merged pull request: which issues superlinear p
 5. Each remaining issue is recorded as processed and queued, and an agent starts on it when a slot is free: see [The agent](#agent).
 6. When the agent exits, the issue waits for its pull request to merge: see [The pull request](#pull-request).
 7. Reviews and conflicts bring an agent back to the same branch: see [Reviews](#reviews) and [Conflicts](#conflicts).
-8. When the pull request merges, the issue is done: see [The merge and completion](#merge).
+8. With [`stacking`](configuration.md#stacking) on, an issue whose one unmerged blocker has an open pull request starts on top of it, and the daemon keeps its pull request current with the one below: see [Stacks](#stacks).
+9. When the pull request merges, the issue is done: see [The merge and completion](#merge).
 
 <a id="selection"></a>
 ## Selection
@@ -30,7 +31,7 @@ Each workspace picks its issues in one of two modes, set by [`selection`](config
 
 In both modes, an issue the selection finds starts only when nothing holds it back:
 
-- **Blockers:** an issue that another issue blocks, through a Linear "blocks" relation, does not start while that issue is neither completed nor canceled. It waits in the state file as blocked, and starts on the first poll after its last blocker is closed.
+- **Blockers:** an issue that another issue blocks, through a Linear "blocks" relation, does not start while that issue is neither completed nor canceled. It waits in the state file as blocked, and starts on the first poll after its last blocker is closed. With [`stacking`](configuration.md#stacking) on, an issue whose last open blocker has an open pull request from an agent may start on top of that pull request instead: see [Stacks](#stacks).
 - **Human labels:** an issue with a label in [`humanLabels`](configuration.md#human-labels) — "Needs human" or "Spike" by default, in any case — never starts an agent. Should the label come off, it starts like any other issue. These issues are for you: the [standup](planning.md#standup-needs-human) lists them to sign off.
 - **Holds:** an issue held at a [standup](planning.md#standup) does not start until a standup releases it.
 - **Moving on:** a waiting issue moved out of the states an agent starts from, or archived, stops waiting.
@@ -88,6 +89,46 @@ When the base branch moves on and an open pull request the daemon is watching no
 Reviews come first: if a review also needs an agent, that agent goes first, and the conflict waits for the poll after it ends. The conflict also waits for a poll that can read the reviews, so the review baseline stays correct; a conflict run does not count reviews as addressed.
 
 Each conflict gets one agent. The daemon records the heads of the branch and of the base when it queues the agent. If the pull request still conflicts with the same heads after the agent ends, the daemon logs that once and starts no other agent until one of the two branches moves. GitHub works out the mergeable state in the background after a push, so a pull request it has not yet checked waits for a later poll.
+
+<a id="stacks"></a>
+## Stacks
+
+When an issue's blocker has an open pull request that waits for your review, its dependents wait too, although the code they need exists. With the workspace key [`stacking`](configuration.md#stacking), on by default, dependent work starts on top of the blocker's branch, as a pull request that targets that branch. You review and merge bottom-up; superlinear never merges.
+
+<a id="stackable"></a>
+### Which issues stack
+
+An issue is **stackable** when:
+
+- every blocker is completed or canceled, except exactly one;
+- that one's agent has ended, and its pull request is open, not a draft, with CI passing; and
+- the resulting stack is no deeper than [`maxStackDepth`](configuration.md#max-stack-depth) pull requests, the bottom one included, 3 by default.
+
+A stackable issue starts like a ready issue, with these differences. Its branch is created from the blocker's branch on `origin`, fetched first, and `work start` adopts it, so the worktree begins at the lower pull request's head. The prompt says that the work is stacked on the blocker's pull request, which is not merged yet and can change, and tells the agent to open its pull request against that branch, and never to rebase, force-push, or merge the default branch in. An issue with two or more unmerged blockers waits as before, whatever their pull requests. So does one whose blocker's pull request is a draft, has CI failing or running, or would make the stack too deep; the daemon logs why, once. The blocker's pull request is looked up once per poll per blocker, for the few blocked issues that could stack.
+
+`superlinear status` shows each pull request under the one it stacks on, indented, with "stacked on #n". The [standup](planning.md#standup)'s "Waiting on you" orders them by stack, bottom first.
+
+<a id="no-native-stacks"></a>
+### Why not GitHub's native stacks
+
+GitHub's stacked pull requests, in public preview with the `gh stack` extension, were considered and not used. When a lower pull request in a native stack merges, GitHub rebases the pull requests above it and force-pushes their branches, from the server, with no setting to turn that off: the changelog says the pull requests above a merged layer "stay open and automatically rebase and retarget", and the "Rebase stack" action "force-pushes each rebased branch". That rewrites commits you may have reviewed, and the review comments on them. superlinear's rule is the opposite, so its stacks are plain pull requests that target the lower branch, and the `gh stack` extension is not needed. GitHub does the one thing a plain stack needs: when a pull request merges and its branch is deleted, as with "automatically delete head branches" on, it retargets the open pull requests that targeted that branch to the merged pull request's base, without rewriting them. The daemon retargets them itself when the branch stays.
+
+<a id="never-rewritten"></a>
+### Reviewed pull requests are never rewritten
+
+A pull request the daemon watches is never rebased or force-pushed, by superlinear or by GitHub on superlinear's behalf, whether or not it has reviews. It is brought up to date by merging its base branch into it, so that its commits, and your comments on them, stay as you saw them in GitHub. Agents are told the same.
+
+<a id="keeping-stacks-current"></a>
+### Keeping a stack current
+
+Each poll looks at every stacked pull request whose agent has ended, lower ones first, so that a change low in the stack reaches each pull request above it in the same poll:
+
+- **The lower branch moves**, after a review response, a conflict merge, or a push: the daemon merges the lower branch into the upper one, in its worktree, with a merge commit, and pushes. If the merge conflicts, it is aborted, and a [conflict agent](#conflicts) resolves it on the upper pull request, with the lower branch as the base; the daemon tries once per pair of heads, as for any base.
+- **The lower pull request merges:** the upper pull request now targets what the lower one targeted, the default branch or the next branch down. GitHub retargets it when the lower branch is deleted; when it is not, the daemon runs `gh pr edit --base`. The repositories squash-merge, so the upper branch still holds the lower branch's original commits. The daemon merges the new base into it, a merge commit, never a rebase, which leaves only the upper pull request's own changes in its diff. Its issue's blocker is completed in Linear by the merge.
+- **The lower pull request is closed without a merge:** the upper pull request becomes a draft, its issue goes back to Blocked in `superlinear status`, with why, and the standup's "Waiting on you" lists the draft for a decision: reopen the lower pull request, and the upper one leaves draft; retarget the upper one by hand, and the daemon treats it as merged below; or close it.
+- Conflict detection compares each stacked pull request with its own base, the lower branch, not with the default branch.
+
+The daemon pushes to the upper branch itself for these merges, with a plain push, and only to branches it made. Agents never force-push. A pull request the daemon just pushed to is not checked for conflicts until the next poll, as GitHub's state is of before the push.
 
 <a id="limits"></a>
 ## Usage and spending limits
