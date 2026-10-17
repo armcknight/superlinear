@@ -113,6 +113,18 @@ struct PullRequestTests {
         #expect(PullRequestReview.unaddressed(reviews, by: "someone", after: .distantPast).isEmpty)
     }
 
+    @Test("The latest change request from before the stopped agent's log is answered again")
+    func reviewsStoppedAtUsageLimit() {
+        let asked = [review("me", "APPROVED", at: 100), review("me", "CHANGES_REQUESTED", body: "Fix it", at: 200)]
+        let log = Date(timeIntervalSince1970: 300)
+        #expect(PullRequestReview.stoppedAtUsageLimit(asked, by: "me", logWrittenAt: log))
+        // Approved since, after the log, by someone else, or no log.
+        #expect(!PullRequestReview.stoppedAtUsageLimit(asked + [review("me", "APPROVED", at: 250)], by: "me", logWrittenAt: log))
+        #expect(!PullRequestReview.stoppedAtUsageLimit(asked, by: "me", logWrittenAt: Date(timeIntervalSince1970: 150)))
+        #expect(!PullRequestReview.stoppedAtUsageLimit(asked, by: "someone", logWrittenAt: log))
+        #expect(!PullRequestReview.stoppedAtUsageLimit(asked, by: "me", logWrittenAt: nil))
+    }
+
     @Test("A branch with no pull request is missing")
     func missing() {
         #expect(MergeStatus.of([]) == .missing)

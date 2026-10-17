@@ -71,4 +71,32 @@ struct StartedIssueSweepTests {
         let prs = try PullRequestChecker.decodePullRequests(Data(json.utf8))
         #expect(prs.first?.mergedAt == ISO8601DateFormatter().date(from: "2026-10-12T04:59:33Z"))
     }
+
+    // A daemon from before the Claude pause dropped an agent the limit
+    // stopped; the sweep finds it again, and only it.
+    @Test("Issues stopped at the usage limit are found again, and only those")
+    func stoppedAtUsageLimit() {
+        let issues = ["stopped", "unprocessed", "tracked", "with-pr", "finished"].map { issue($0) }
+        let found = StartedIssueSweep.stoppedAtUsageLimit(
+            issues: issues,
+            pullRequests: [pr(1, "linear/with-pr", .closed)],
+            processed: ["stopped", "tracked", "with-pr", "finished"],
+            tracked: ["tracked"]
+        ) { $0.rawValue != "finished" }
+        #expect(found.map(\.id) == ["stopped"])
+    }
+
+    @Test("Each stopped agent's log is recovered once")
+    func recoveredOnce() {
+        var recoveries = UsageLimitRecoveries()
+        let log = Date(timeIntervalSince1970: 100)
+        let claims = [
+            recoveries.claim(issueId: "a", logModified: log),
+            recoveries.claim(issueId: "a", logModified: log),
+            recoveries.claim(issueId: "b", logModified: log),
+            recoveries.claim(issueId: "a", logModified: Date(timeIntervalSince1970: 200)),
+            recoveries.claim(issueId: "c", logModified: nil),
+        ]
+        #expect(claims == [true, false, true, true, false])
+    }
 }

@@ -23,6 +23,21 @@ enum StartedIssueSweep {
         }
     }
 
+    /// Started issues whose agent the Claude usage limit stopped before the
+    /// daemon could pause it, as a daemon from before the pause did: issues it
+    /// processed and follows through no run or merge watch, with no pull
+    /// request from their branch, whose last agent log ends at the limit.
+    static func stoppedAtUsageLimit(
+        issues: [LinearIssueStatus], pullRequests: [PullRequest], processed: Set<String>, tracked: Set<String>,
+        stopped: (LinearIssue.Identifier) -> Bool
+    ) -> [LinearIssueStatus] {
+        let branches = Set(pullRequests.compactMap(\.headRefName))
+        return issues.filter { issue in
+            processed.contains(issue.id) && !tracked.contains(issue.id) && !branches.contains(issue.branchName)
+                && stopped(issue.identifier)
+        }
+    }
+
     /// The merge that completes the issue: none while a pull request is still
     /// open, as for follow-up work, nor one from before the issue last moved
     /// into a started state, so an issue reopened after its merge is left
@@ -34,5 +49,19 @@ enum StartedIssueSweep {
         else { return nil }
         if let startedAt = issue.startedAt, let mergedAt = latest.mergedAt, mergedAt < startedAt { return nil }
         return latest
+    }
+}
+
+/// The agents recovered after the Claude usage limit stopped them, by issue
+/// ID, with when each one's log was last written, so each log is recovered
+/// once.
+struct UsageLimitRecoveries {
+    private var logs: [String: Date] = [:]
+
+    /// Whether to recover `issueId`'s agent now, recording it when so.
+    mutating func claim(issueId: String, logModified: Date?) -> Bool {
+        guard let logModified, logs[issueId] != logModified else { return false }
+        logs[issueId] = logModified
+        return true
     }
 }

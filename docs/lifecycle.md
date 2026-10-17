@@ -106,6 +106,13 @@ When a session — an agent for a new issue, a review or a conflict — ends wit
 - Ends the pause at once on [`superlinear resume`](operations.md#usage), which the [standup](planning.md#standup) also offers while a pause is active.
 - When the pause ends — at the reset time, after a check, or on `superlinear resume` — resumes the interrupted sessions first, with their session IDs, then the queue in its usual order. A resumed session that hits the limit again at once pauses everything again, until the new reset time; nothing retries in a loop.
 
+A daemon from before this pause took an agent that the limit stopped for one that ended without a pull request, and dropped it. Each poll's [started-issue sweep](#started-issue-sweep) finds such agents again from the end of their logs in `~/.local/share/superlinear/logs/<issue>.log`:
+
+- A started issue the daemon queued, with no run or merge watch and no pull request from its branch, whose log ends with the limit message, is queued again ahead of the others. It resumes the newest Claude session of its worktree, so uncommitted work there carries on, or starts a new session on the same branch when there is none. It is not a new start: the issue is not moved in Linear again.
+- An issue awaiting its merge whose log ends with the limit message, and whose pull request's latest review from you asks for changes and came before that log, gets one more agent for its reviews: the stopped agent was answering them, and the old daemon counted them as answered.
+
+Each log is recovered once: an agent whose relaunch fails before it writes its log again is not queued again for the same message. If the limit is still on, the relaunched session ends with the limit message, and the pause above takes over.
+
 <a id="spending-limit"></a>
 ### The GitHub Actions spending limit
 
