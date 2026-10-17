@@ -30,7 +30,7 @@ The details are in [the superlinear guide](docs/index.md):
 - [Bootstrap](docs/bootstrap.md): components, manifests, secrets, Needs human steps, `bootstrap --check`.
 - [Builds](docs/builds.md): CI, staging and TestFlight builds, build numbers, the release rule, TestFlight feedback.
 - [Configuration](docs/configuration.md): every config key, and the files superlinear reads and writes.
-- [Operations](docs/operations.md): installing and running the daemon, `superlinear status`, make targets, releases.
+- [Operations](docs/operations.md): installing and running the daemon, `superlinear status` and `stats`, make targets, releases.
 
 Projects that superlinear works on link to the guide from their READMEs. Link to a section by its stable anchor, listed in [Anchors](docs/anchors.md).
 
@@ -87,13 +87,14 @@ superlinear [--config <path>]
 superlinear install
 superlinear uninstall
 superlinear status [--config <path>]
+superlinear stats [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear standup [--print] [--workspace <name>] [--config <path>]
 superlinear plan [--workspace <name>] [--config <path>]
 superlinear resume
 ```
 
-With no subcommand it runs the daemon in the foreground. See [Usage](docs/operations.md#usage), [Status](docs/operations.md#status), [The audit log](docs/planning.md#audit-log) for `proposals`, [The standup](docs/planning.md#standup), [The planning job](docs/planning.md#daily-planning) for `plan`, and [Usage and spending limits](docs/lifecycle.md#limits) for `resume`.
+With no subcommand it runs the daemon in the foreground. See [Usage](docs/operations.md#usage), [Status](docs/operations.md#status), [Stats](docs/operations.md#stats), [The audit log](docs/planning.md#audit-log) for `proposals`, [The standup](docs/planning.md#standup), [The planning job](docs/planning.md#daily-planning) for `plan`, and [Usage and spending limits](docs/lifecycle.md#limits) for `resume`.
 
 ## Security
 

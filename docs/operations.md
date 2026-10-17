@@ -34,6 +34,7 @@ superlinear [--config <path>]
 superlinear install
 superlinear uninstall
 superlinear status [--config <path>]
+superlinear stats [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear standup [--print] [--workspace <name>] [--config <path>]
 superlinear plan [--workspace <name>] [--config <path>]
@@ -84,19 +85,26 @@ Agents' builds fill the disk fast: a SwiftPM `.build` directory or an Xcode Deri
 | Closed without a merge | The issue was closed in Linear without a merged pull request. |
 | Stale branches and worktrees | Local branches no longer needed: their pull request merged, or closed without a merge, or, for a worktree under `worktrees/` with no agent running or queued, none was opened. The base branch, branches with an open pull request, and branches of your own without such a worktree are never listed. Each shows its worktree if it has one, its last commit's age, and the commits removing it would lose: for a merged or closed pull request, those made after its head, as a squash merge leaves the rest on no remote branch; otherwise those no remote branch has. `work finish <branch>` removes the branch and its worktree. |
 
-After the workspaces comes a summary:
-
-- **Counts:** the number of projects, and of items in each section above, across all workspaces.
-- **Out of sync:** for each workspace whose open pull requests fork off local commits not yet pushed, how many do.
-- **Per pull request:** the total, median, minimum and maximum of each measure, and a histogram of its values in 16 equal ranges from minimum to maximum, over the agents' pull requests — those of finished tasks that are open or merged, and the open ones listed for review. The measures are lines added and removed and files changed; tokens, cache reads and agent time, from the Claude transcripts; and CI time.
-- **All tracked tasks:** the tokens, cache reads, agent time and CI time of every task, with or without a pull request.
-- **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
-
-After the summary, a line gives the time of the last [standup](planning.md#standup), and the numbers of pending proposals and of issues that need a human.
+After the workspaces, a line gives the time of the last [standup](planning.md#standup), and the numbers of pending proposals and of issues that need a human.
 
 When a [pause](lifecycle.md#limits) is active, the report begins with one line for it.
 
 The report ends with this command's version and binary, then the daemon's: its pid, version, binary and start time, or that it is not running. It warns when the daemon's binary has been replaced since the daemon started. Last, under **Polls**, each workspace shows when its last poll ended, whether it failed, and when the next one is due, or, once that time has passed, that it is polling now. Each workspace polls on its own loop, which waits its `pollIntervalSeconds` after each poll ends, so each has its own times.
+
+What the agents' work took is not part of the report: see [Stats](#stats).
+
+<a id="stats"></a>
+## Stats
+
+`superlinear stats` measures the agents' work across all workspaces. It gathers the same tasks and pull requests as `status`, then reads the Claude transcripts of each branch, lists the repository's CI runs with `gh run list`, and diffs each open pull request's branch locally, so it takes longer than `status`. It prints:
+
+- **Counts:** the number of projects, and of items in each [status](#status) section, across all workspaces.
+- **Out of sync:** for each workspace whose open pull requests fork off local commits not yet pushed, how many do. GitHub shows such pull requests larger than they are; the stats measure them from the local fork point, and warn to push the base branch.
+- **Per pull request:** the total, median, minimum and maximum of each measure, and a histogram of its values in 16 equal ranges from minimum to maximum, over the agents' pull requests — those of finished tasks that are open or merged, and the open ones listed for review. The measures are lines added and removed and files changed; tokens, cache reads and agent time, from the Claude transcripts; and CI time.
+- **All tracked tasks:** the tokens, cache reads, agent time and CI time of every task, with or without a pull request.
+- **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
+
+Problems that left the stats incomplete, such as Linear, GitHub or the CI runs being out of reach, are printed first as warnings, each with its workspace's name. Like `status`, it takes no daemon lock, so it runs beside a daemon.
 
 Lines and files of an open pull request come from `git diff --shortstat` in the local repository, measured from the later of two fork points: where the branch left the local base branch, and where it left `origin/<base>`. An agent forks off the local base, so when that is ahead of GitHub's, GitHub counts the unpushed commits as part of each pull request. The workspace then shows a warning to push the base branch. Merged pull requests, and branches found neither locally nor on `origin`, use GitHub's numbers.
 
