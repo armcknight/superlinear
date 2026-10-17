@@ -15,7 +15,7 @@ This is a personal tool, published as a reference. It is opinionated about how w
 3. **The agent.** Each ready issue is queued, and up to `maxConcurrentAgents` agents run at once. Each runs `claude -p` in its own worktree, with a prompt to plan, implement, commit, open a pull request and see CI through. See [The agent](docs/lifecycle.md#agent).
 4. **Reviews and conflicts.** Review the pull request, or let it conflict with its base branch, and an agent comes back to the same branch to address it. See [Reviews](docs/lifecycle.md#reviews) and [Conflicts](docs/lifecycle.md#conflicts).
 5. **The merge.** You merge; superlinear never does. The issue is then marked done and its worktree removed. See [The merge and completion](docs/lifecycle.md#merge).
-6. **Planning.** superlinear proposes changes to the plan in Linear, which you approve at a `superlinear standup`, or let through on their own by trust level. See [Planning](docs/planning.md).
+6. **Planning.** superlinear proposes changes to the plan in Linear, where you accept or reject them, or lets them through on their own by trust level. See [Planning](docs/planning.md).
 
 When the Claude usage limit or the GitHub Actions spending limit stops work, superlinear pauses what cannot succeed and resumes when the limit is lifted. See [Usage and spending limits](docs/lifecycle.md#limits).
 
@@ -26,7 +26,7 @@ Agents outlive the daemon, so restarts, upgrades and config edits do not stop wo
 The details are in [the superlinear guide](docs/index.md):
 
 - [The life of an issue](docs/lifecycle.md): selection and the ready gate, the agent, the pull request, reviews, conflicts, the merge, completion.
-- [Planning](docs/planning.md): proposals and trust levels, the planning job, follow-ups from agents, the standup, project updates.
+- [Planning](docs/planning.md): proposals and trust levels, the planning job, follow-ups from agents, reviewing proposals in Linear, project updates.
 - [Bootstrap](docs/bootstrap.md): components, manifests, secrets, Needs human steps, `bootstrap --check`.
 - [Builds](docs/builds.md): CI, nightly TestFlight builds, build numbers, the release rule, TestFlight feedback.
 - [Configuration](docs/configuration.md): every config key, and the files superlinear reads and writes.
@@ -86,14 +86,13 @@ Then set up a workspace: see [Configuration](docs/configuration.md). For the lau
 superlinear [--config <path>]
 superlinear install
 superlinear uninstall
-superlinear status [--config <path>]
+superlinear status [--since <duration>] [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
-superlinear standup [--print] [--workspace <name>] [--config <path>]
 superlinear plan [--workspace <name>] [--config <path>]
 superlinear resume
 ```
 
-With no subcommand it runs the daemon in the foreground. See [Usage](docs/operations.md#usage), [Status](docs/operations.md#status), [The audit log](docs/planning.md#audit-log) for `proposals`, [The standup](docs/planning.md#standup), [The planning job](docs/planning.md#daily-planning) for `plan`, and [Usage and spending limits](docs/lifecycle.md#limits) for `resume`.
+With no subcommand it runs the daemon in the foreground. See [Usage](docs/operations.md#usage), [Status](docs/operations.md#status), [The audit log](docs/planning.md#audit-log) for `proposals`, [The planning job](docs/planning.md#daily-planning) for `plan`, and [Usage and spending limits](docs/lifecycle.md#limits) for `resume`.
 
 ## Security
 

@@ -22,7 +22,7 @@ Not built yet: [SPL-18](https://linear.app/superlinear-linear/issue/SPL-18) adds
 <a id="needs-human-steps"></a>
 ## Needs human steps
 
-Not built yet: [SPL-18](https://linear.app/superlinear-linear/issue/SPL-18) turns the steps that need a person into Needs human issues, and fills in this section. Until then, an issue with a [human label](lifecycle.md#ready-gate) is how work is kept for a person, and the [standup](planning.md#standup-needs-human) is where you sign it off.
+Not built yet: [SPL-18](https://linear.app/superlinear-linear/issue/SPL-18) turns the steps that need a person into Needs human issues, and fills in this section. Until then, an issue with a [human label](lifecycle.md#ready-gate) is how work is kept for a person, and [marking it Done in Linear](planning.md#standup-needs-human) is how you sign it off.
 
 <a id="bootstrap-check"></a>
 ## `bootstrap --check`

@@ -8,7 +8,7 @@ import Testing
 @Suite("GitHub Actions spending limit")
 struct SpendingLimitTests {
     private let now = ISO8601DateFormatter().date(from: "2026-10-16T10:00:00Z")!
-    private let noPauses = Standup.Pauses(claude: nil, waiting: [], spendingLimit: nil)
+    private let noPauses = StatusReview.Pauses(claude: nil, waiting: [], spendingLimit: nil)
 
     private func stop(since: Date, runs: [StoppedRun], probe: StoppedRun? = nil) -> SpendingLimitStop {
         SpendingLimitStop(since: since, runs: runs, lastRerunAt: since, probe: probe)
@@ -165,60 +165,35 @@ struct SpendingLimitTests {
         #expect(StatusCommand.pauseLines(state: state, workspaces: ["w"], now: now)[0].contains("in 1 repository since"))
     }
 
-    @Test("The standup's risks list both pauses and the work they hold back")
+    @Test("The status risks list both pauses and the work they hold back")
     func risks() {
-        let pauses = Standup.Pauses(
+        let pauses = StatusReview.Pauses(
             claude: ClaudePause(
                 since: now, until: .init(rawValue: now.addingTimeInterval(3600)), nextCheckAt: now.addingTimeInterval(900)),
             waiting: ["SPL-1", "SPL-2"],
             spendingLimit: stop(since: now, runs: [StoppedRun(run(1, branch: "main"))]))
-        let failing = Standup.DefaultBranchRun(status: .completed, conclusion: .failure, url: "https://ci/1", workflowName: "ci")
-        let risks = Standup.risks(defaultBranch: "main", latestRun: failing, rateLimit: nil, pauses: pauses, now: now)
+        let failing = WorkflowRun(
+            headBranch: "main", status: "completed", startedAt: nil, updatedAt: nil, workflowName: "ci", conclusion: .failure, url: "https://ci/1")
+        let risks = StatusReview.risks(defaultBranch: "main", latestRun: failing, rateLimit: nil, pauses: pauses, now: now)
         #expect(risks.count == 2)
         #expect(risks[0].hasPrefix("Claude usage limit: sessions paused until "))
         #expect(risks[0].hasSuffix("holds back SPL-1, SPL-2"))
         #expect(risks[1].hasPrefix("GitHub Actions spending limit: CI not started since "))
         #expect(risks[1].contains("on main;"))
         // Without the stop, the default branch's failure is a real one.
-        #expect(Standup.risks(defaultBranch: "main", latestRun: failing, rateLimit: nil, pauses: noPauses, now: now)
+        #expect(StatusReview.risks(defaultBranch: "main", latestRun: failing, rateLimit: nil, pauses: noPauses, now: now)
             == ["CI failure on main (ci): https://ci/1"])
     }
 
-    @Test("The standup's pauses come from the state file, the Claude pause only while it lasts")
+    @Test("The status pauses come from the state file, the Claude pause only while it lasts")
     func pausesFromState() {
         var state = State()
         state.claudePause = ClaudePause(since: now, until: .init(rawValue: now.addingTimeInterval(3600)), nextCheckAt: now)
         state.recordRun(AgentRun(issueId: "i", identifier: "SPL-9", branchName: "b", sessionId: "s"), workspace: "w")
-        let pauses = Standup.Pauses(state: state, workspace: "w", now: now)
+        let pauses = StatusReview.Pauses(state: state, workspace: "w", now: now)
         #expect(pauses.claude != nil)
         #expect(pauses.waiting == ["SPL-9"])
-        #expect(Standup.Pauses(state: state, workspace: "w", now: now.addingTimeInterval(3600)).claude == nil)
-    }
-
-    @Test("The standup offers to resume Claude sessions once, when they are paused")
-    func offerResume() {
-        final class IO: StandupIO, @unchecked Sendable {
-            var answers: [String?]
-            var said: [String] = []
-            var asked: [String] = []
-            init(_ answers: [String?]) { self.answers = answers }
-            func say(_ text: String) { said.append(text) }
-            func ask(_ prompt: String) -> String? { asked.append(prompt); return answers.isEmpty ? nil : answers.removeFirst() }
-            func edit(_ text: String) -> String? { text }
-        }
-        var state = State()
-        let none = IO(["y"])
-        StandupCommand.offerResume(state: state, io: none, resume: { _ in "resumed" }, now: now)
-        #expect(none.asked.isEmpty)
-
-        state.claudePause = ClaudePause(since: now, until: .init(rawValue: now.addingTimeInterval(3600)), nextCheckAt: now)
-        let yes = IO(["y"])
-        StandupCommand.offerResume(state: state, io: yes, resume: { _ in "resumed" }, now: now)
-        #expect(yes.asked.count == 1)
-        #expect(yes.said == ["resumed"])
-        let no = IO([""])
-        StandupCommand.offerResume(state: state, io: no, resume: { _ in "resumed" }, now: now)
-        #expect(no.said.isEmpty)
+        #expect(StatusReview.Pauses(state: state, workspace: "w", now: now.addingTimeInterval(3600)).claude == nil)
     }
 
     @Test("Notifications quote their text for AppleScript")

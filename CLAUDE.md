@@ -11,7 +11,7 @@ A macOS launchd daemon, written in Swift, that starts Claude Code agents for Lin
 
 - Every change to behavior updates the matching page in `docs/`, in the same pull request:
   - selection, the ready gate, agents, pull requests, reviews, conflicts, merges: [`docs/lifecycle.md`](docs/lifecycle.md);
-  - proposals, trust levels, the planning job, follow-ups, the standup, project updates: [`docs/planning.md`](docs/planning.md);
+  - proposals, trust levels, the planning job, follow-ups, reviewing proposals in Linear, project updates: [`docs/planning.md`](docs/planning.md);
   - components, manifests, secrets, `bootstrap`: [`docs/bootstrap.md`](docs/bootstrap.md);
   - CI, TestFlight builds, build numbers, releases, TestFlight feedback: [`docs/builds.md`](docs/builds.md);
   - config keys and files: [`docs/configuration.md`](docs/configuration.md);

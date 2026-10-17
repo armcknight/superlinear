@@ -1,7 +1,11 @@
 import Foundation
 
-/// The reads and writes that applying proposals makes in Linear.
+/// The reads and writes that proposals make in Linear.
 extension LinearClient: LinearWriting {
+    func viewerId() async throws -> String {
+        try await execute(.viewer, variables: [:], as: LinearQuery.ViewerData.self).viewer.id
+    }
+
     func editableIssue(id: LinearIssue.ID) async throws -> EditableIssue {
         let issue = try await execute(
             .editableIssue, variables: ["id": id.rawValue], as: LinearQuery.EditableIssueData.self
@@ -37,14 +41,62 @@ extension LinearClient: LinearWriting {
         return LinearLabel.ID(rawValue: id)
     }
 
+    func teamStates(id: LinearTeam.ID) async throws -> TeamStates {
+        let team = try await execute(.teamStates, variables: ["id": id.rawValue], as: LinearQuery.TeamStatesData.self).team
+        return TeamStates(
+            triageEnabled: team.triageEnabled,
+            states: team.states.nodes.map { TeamStates.State(id: $0.id, type: $0.type, position: $0.position) })
+    }
+
+    func enableTriage(teamId: LinearTeam.ID) async throws {
+        try await mutate(.enableTriage, variables: ["id": teamId.rawValue], field: "teamUpdate")
+    }
+
     func createIssue(
-        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String, labelIds: [LinearLabel.ID]
-    ) async throws -> JSONValue {
+        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
+        labelIds: [LinearLabel.ID], stateId: String?
+    ) async throws -> CreatedIssue {
         var input: [String: Any] = [
             "teamId": teamId.rawValue, "title": title, "description": description, "labelIds": labelIds.map(\.rawValue),
         ]
         if let projectId { input["projectId"] = projectId.rawValue }
-        return try await mutate(.createIssue, variables: ["input": input], field: "issueCreate")
+        if let stateId { input["stateId"] = stateId }
+        let response = try await mutate(.createIssue, variables: ["input": input], field: "issueCreate")
+        guard let issue = response["issueCreate"]?["issue"], let id = issue["id"]?.stringValue,
+              let identifier = issue["identifier"]?.stringValue
+        else { throw LinearClientError.invalidResponse }
+        return CreatedIssue(id: LinearIssue.ID(rawValue: id), identifier: identifier, url: issue["url"]?.stringValue, response: response)
+    }
+
+    func createComment(issueId: LinearIssue.ID, body: String) async throws -> CreatedComment {
+        let response = try await mutate(
+            .createComment, variables: ["issueId": issueId.rawValue, "body": body], field: "commentCreate")
+        guard let comment = response["commentCreate"]?["comment"], let id = comment["id"]?.stringValue else {
+            throw LinearClientError.invalidResponse
+        }
+        return CreatedComment(id: id, url: comment["url"]?.stringValue, response: response)
+    }
+
+    func updateComment(id: String, body: String) async throws -> JSONValue {
+        try await mutate(.updateComment, variables: ["id": id, "body": body], field: "commentUpdate")
+    }
+
+    func addLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue {
+        try await mutate(.addLabel, variables: ["id": issueId.rawValue, "labelId": labelId.rawValue], field: "issueAddLabel")
+    }
+
+    func removeLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue {
+        try await mutate(.removeLabel, variables: ["id": issueId.rawValue, "labelId": labelId.rawValue], field: "issueRemoveLabel")
+    }
+
+    func proposalIssues(ids: [LinearIssue.ID]) async throws -> [ProposalIssueSnapshot] {
+        var snapshots: [ProposalIssueSnapshot] = []
+        for start in stride(from: 0, to: ids.count, by: 25) {
+            let batch = ids[start..<min(start + 25, ids.count)].map(\.rawValue)
+            let nodes: [LinearQuery.ProposalIssueNode] = try await fetchAll(.proposalIssues, variables: ["ids": batch])
+            snapshots += nodes.map(\.snapshot)
+        }
+        return snapshots
     }
 
     func updateIssueDescription(id: LinearIssue.ID, description: String) async throws -> JSONValue {
@@ -59,6 +111,14 @@ extension LinearClient: LinearWriting {
 
     func promoteIssue(id: LinearIssue.ID) async throws -> JSONValue {
         try await moveOrThrow(id: id, toFirst: "unstarted")
+    }
+
+    func completeIssue(id: LinearIssue.ID) async throws -> Bool {
+        try await completeIssue(id: id.rawValue)
+    }
+
+    func moveIssue(id: LinearIssue.ID, toFirst type: LinearStateType) async throws -> JSONValue {
+        try await moveOrThrow(id: id, toFirst: type.rawValue)
     }
 
     private func moveOrThrow(id: LinearIssue.ID, toFirst type: String) async throws -> JSONValue {
@@ -103,20 +163,6 @@ extension LinearClient: LinearWriting {
         try await mutate(
             .postProjectUpdate, variables: ["projectId": projectId.rawValue, "body": body], field: "projectUpdateCreate"
         )
-    }
-}
-
-/// The writes in Linear that a standup makes for the owner, besides applying
-/// proposals.
-protocol StandupWriting: LinearWriting {
-    /// Moves the issue to its team's first completed state. Returns false
-    /// when it was completed or canceled already.
-    func completeIssue(id: LinearIssue.ID) async throws -> Bool
-}
-
-extension LinearClient: StandupWriting {
-    func completeIssue(id: LinearIssue.ID) async throws -> Bool {
-        try await completeIssue(id: id.rawValue)
     }
 }
 

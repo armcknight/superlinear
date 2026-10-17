@@ -1,7 +1,7 @@
 import Foundation
 
-/// Something the daemon did on its own, kept in the state file so the
-/// standup can show the owner what happened since the last one.
+/// Something the daemon did on its own, kept in the state file so that
+/// `superlinear status` can show the owner what happened lately.
 struct ActivityEvent: Codable, Sendable, Equatable {
     enum Kind: String, Codable, Sendable {
         /// An agent started on a new issue.
@@ -30,7 +30,7 @@ struct ActivityEvent: Codable, Sendable, Equatable {
     /// How long events stay in the state file.
     static let retention: TimeInterval = 30 * 24 * 60 * 60
 
-    /// The line the standup prints for it.
+    /// The line `superlinear status` prints for it.
     var rendered: String {
         let text = switch kind {
         case .agentStarted: "agent started on \(identifier)"

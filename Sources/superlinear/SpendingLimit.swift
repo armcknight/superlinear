@@ -176,7 +176,7 @@ struct StoppedRun: Codable, Sendable, Equatable {
 }
 
 /// A repository's CI stopped by the spending limit. Kept in the state file,
-/// so `superlinear status` and the standup can show it.
+/// so `superlinear status` can show it.
 struct SpendingLimitStop: Codable, Sendable, Equatable {
     /// When the daemon first found a stopped run.
     var since: Date

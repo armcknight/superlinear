@@ -10,7 +10,7 @@ Each agent opens its pull request with `/armcknight-claude:pr --autonomous`, whi
 superlinear itself reads CI in two places:
 
 - `superlinear status` shows each open pull request's CI state, and the CI time of each task, from `gh run list`: see [Status](operations.md#status).
-- The [standup](planning.md#standup) lists CI failing on the default branch under Risks.
+- [`superlinear status`](operations.md#status) lists CI failing on the default branch under Risks.
 
 The CI workflows a project runs are its own. Shared workflows for each kind of project are not built yet: [SPL-17](https://linear.app/superlinear-linear/issue/SPL-17) adds them.
 
