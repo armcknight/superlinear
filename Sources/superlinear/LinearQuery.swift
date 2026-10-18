@@ -21,6 +21,9 @@ enum LinearQuery: CaseIterable, Sendable {
     case startedIssuesInTeams
     /// The issues with some numbers in teams with some keys.
     case issuesByNumber
+    /// The issues with some numbers in teams with some keys, with what the
+    /// planning job looks at, for a comment answer's prompt.
+    case namedIssues
     /// An issue's state type, and its team's states of one type.
     case issueState
     case moveIssue
@@ -176,6 +179,13 @@ enum LinearQuery: CaseIterable, Sendable {
                 after: $cursor
               ) {
             \(Self.startedIssueFields)
+              }
+            }
+            """
+        case .namedIssues: """
+            query NamedIssues($numbers: [Float!], $keys: [String!], $cursor: String) {
+              issues(filter: { number: { in: $numbers }, team: { key: { in: $keys } } }, first: 25, after: $cursor) {
+            \(Self.planningIssueFields)
               }
             }
             """

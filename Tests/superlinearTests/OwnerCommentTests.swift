@@ -457,7 +457,7 @@ struct OwnerCommentTests {
             subject: .proposal(proposal, issueId: "tem-15"),
             comment: FreshComment(comment: comment("q", "What would it cost?", at: at(10))),
             thread: [comment("before", "Earlier note", at: at(5)), comment("q", "What would it cost?", at: at(10))], key: "tem-15", since: at(0))
-        let text = CommentAnswerPrompt.render(question)
+        let text = CommentAnswerPrompt.render(question, openIssues: [], namedIssues: [])
         #expect(text.contains("You only read"))
         #expect(text.contains("vapor-ci.yml: an optional Postgres service for tests"))
         #expect(text.contains("Source: agent session session for TEM-3"))
@@ -468,6 +468,46 @@ struct OwnerCommentTests {
         #expect(text.contains("superlinear adds the line \"\(CommentMarker.line)\" at the start of the reply"))
         #expect(!CommentSessionRunner.allowedTools.contains("Write"))
         #expect(!CommentSessionRunner.allowedTools.contains("Edit"))
+    }
+
+    @Test("The answer session may read Linear issues with linctl, and write nothing there")
+    func linctlTools() {
+        let tools = CommentSessionRunner.allowedTools.split(separator: ",").map(String.init)
+        for command in ["get", "list", "search"] { #expect(tools.contains("Bash(linctl issue \(command):*)")) }
+        let linctl = tools.filter { $0.contains("linctl") }
+        #expect(Set(linctl) == Set(["get", "list", "search"].map { "Bash(linctl issue \($0):*)" }))
+        #expect(!tools.contains { $0.contains("linctl issue update") || $0.contains("linctl comment") || $0 == "Bash(linctl:*)" })
+        #expect(CommentAnswerPrompt.render(triageQuestion("Hi"), openIssues: [], namedIssues: []).contains(LinearKey.promptLine))
+    }
+
+    @Test("A comment's prompt has the workspace's issues it and the proposal name, not other teams' or its own")
+    func namedIssues() {
+        let question = triageQuestion("Is this a duplicate of TEM-22? See also ABC-1, TEM-22 and TEM-15.")
+        let identifiers = CommentAnswerPrompt.namedIdentifiers(question, teamKeys: ["TEM"])
+        // TEM-3 is the proposal's source; ABC is no team of the workspace; TEM-15 is the issue the comment is on.
+        #expect(identifiers == ["TEM-22", "TEM-3"])
+
+        let duplicate = PlanningIssue(
+            id: "tem-22", identifier: "TEM-22", title: "Postgres for the tests", description: "A database service in CI.",
+            stateName: "Todo", stateType: .unstarted, priority: nil, teamId: "team", teamKey: "TEM", projectId: nil,
+            projectName: nil, milestone: nil, labels: ["ci"],
+            relations: [PlanningRelation(type: .blocks, identifier: "TEM-30", direction: .outgoing)], updatedAt: at(0))
+        let text = CommentAnswerPrompt.render(question, openIssues: [], namedIssues: [duplicate])
+        #expect(text.contains("- TEM-22: Postgres for the tests\n  - State: Todo\n  - Labels: ci\n  - Relations: blocks TEM-30"))
+        #expect(text.contains("A database service in CI."))
+        #expect(!CommentAnswerPrompt.render(question, openIssues: [], namedIssues: []).contains("issues that the comment names"))
+    }
+
+    @Test("A comment names at most a few issues")
+    func namedIssuesLimit() {
+        let body = (1...20).map { "TEM-\($0 + 100)" }.joined(separator: " ")
+        #expect(CommentAnswerPrompt.namedIdentifiers(triageQuestion(body), teamKeys: ["TEM"]).count == CommentAnswerPrompt.maxNamedIssues)
+    }
+
+    private func triageQuestion(_ body: String) -> CommentQuestion {
+        CommentQuestion(
+            subject: .proposal(triageProposal(), issueId: "tem-15"), comment: FreshComment(comment: comment("q", body, at: at(10))),
+            thread: [], key: "tem-15", since: at(0))
     }
 
     // MARK: Prompts

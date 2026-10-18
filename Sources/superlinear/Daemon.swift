@@ -420,7 +420,7 @@ actor Daemon {
                 stack.baseHead = head
                 run.stack = stack
             }
-            let (launched, process) = try runner.launch(run, mode: mode, repoPath: repoPath) { [run] status in
+            let (launched, process) = try runner.launch(run, mode: mode, repoPath: repoPath, apiKey: workspace.apiKey) { [run] status in
                 Task { await self.finish(run, status: status, workspace: workspace.name) }
             }
             processes[run.issueId] = process
@@ -716,7 +716,8 @@ actor Daemon {
     }
 
     private func checkClaudePause() async {
-        let check = await ClaudePause.check(environment: ProcessInfo.processInfo.environment)
+        // The check belongs to no workspace and reads no Linear, so it gets no key.
+        let check = await ClaudePause.check(environment: LinearKey.withoutKey(ProcessInfo.processInfo.environment))
         // It may have ended while the check ran.
         guard let pause = state.claudePause else { return }
         let now = Date()
@@ -1249,21 +1250,34 @@ actor Daemon {
         if case .spec = question.subject, let issues = try? await linear.planningIssues(teamIds: workspace.watchedTeams) {
             openIssues = issues.map { "\($0.identifier) [\($0.stateName)] \($0.title)" }
         }
+        // The issues the comment names go in the prompt, so a question such
+        // as "is this a duplicate of X?" needs no tool call.
+        var namedIssues: [PlanningIssue] = []
+        do {
+            let teamKeys = Set(try await linear.planningTeams(ids: []).map(\.key))
+            let identifiers = CommentAnswerPrompt.namedIdentifiers(question, teamKeys: teamKeys)
+            if !identifiers.isEmpty {
+                let found = try await linear.namedIssues(identifiers: identifiers)
+                namedIssues = identifiers.compactMap { identifier in found.first { $0.identifier == identifier } }
+            }
+        } catch {
+            log("Could not read the issues the comment on \(question.location) names; answering without them: \(error)", workspace: name)
+        }
         var sessionId = ClaudeSession.ID(rawValue: UUID().uuidString.lowercased())
         let startedAt = Date()
         var model = state.planningModel(now: startedAt)
         log("Answering the owner's comment on \(question.location) in session \(sessionId), on \(model.rawValue)", workspace: name)
         var session: CommentSessionRunner.Session
         do {
-            let prompt = CommentAnswerPrompt.render(question, openIssues: openIssues)
-            session = try await commentRunner.run(prompt: prompt, sessionId: sessionId, model: model, worktree: worktree, workspace: name)
+            let prompt = CommentAnswerPrompt.render(question, openIssues: openIssues, namedIssues: namedIssues)
+            session = try await commentRunner.run(prompt: prompt, sessionId: sessionId, model: model, worktree: worktree, workspace: name, apiKey: workspace.apiKey)
             // At Fable's limit, the question is asked again on the fallback, in a new session.
             if model == .fable, let hit = ClaudeUsageLimit.hit(in: session.output, now: Date(), timeZone: .current) {
                 recordFableLimit(hit, now: Date(), workspace: name)
                 model = PlanningModel.fallback
                 sessionId = ClaudeSession.ID(rawValue: UUID().uuidString.lowercased())
                 log("Answering the comment on \(question.location) again in session \(sessionId), on \(model.rawValue)", workspace: name)
-                session = try await commentRunner.run(prompt: prompt, sessionId: sessionId, model: model, worktree: worktree, workspace: name)
+                session = try await commentRunner.run(prompt: prompt, sessionId: sessionId, model: model, worktree: worktree, workspace: name, apiKey: workspace.apiKey)
             }
         } catch {
             failed(question, "Could not start Claude: \(error)", workspace: name)
@@ -1409,7 +1423,7 @@ actor Daemon {
         var run = run
         run.model = model
         do {
-            let (launched, process) = try planningRunner.launch(run, mode: mode, model: model, workspace: name) { [run] status in
+            let (launched, process) = try planningRunner.launch(run, mode: mode, model: model, workspace: name, apiKey: workspace.apiKey) { [run] status in
                 Task { await self.finishPlanning(run, status: status, workspace: workspace) }
             }
             planningProcesses[name] = process

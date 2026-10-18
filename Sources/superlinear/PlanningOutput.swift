@@ -13,7 +13,8 @@ enum PlanningPrompt {
             You are superlinear's planning job for the Linear workspace "\(context.workspace)". This job runs \
             because \(context.trigger). You run headless: do not ask questions. You are in a worktree of the \
             repository with its default branch, `\(context.defaultBranch)`, checked out at \(context.head.short). \
-            Read the code with Read, Grep, Glob and `git log`, `git show` and `git diff` as you need.
+            Read the code with Read, Grep, Glob and `git log`, `git show` and `git diff` as you need. \
+            \(LinearKey.promptLine)
 
             Do not change Linear, the repository or anything else. Your only output is a JSON file of proposed \
             changes, written with the Write tool to:

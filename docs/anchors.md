@@ -18,6 +18,7 @@ Rules:
 | [`lifecycle.md#github-issues`](lifecycle.md#github-issues) | GitHub issues: issues you open or comment `/superlinear-do` on. |
 | [`lifecycle.md#ready-gate`](lifecycle.md#ready-gate) | The ready gate: blockers, human labels and holds. |
 | [`lifecycle.md#agent`](lifecycle.md#agent) | The agent: the queue, the worktree and the prompt. |
+| [`lifecycle.md#linear-key`](lifecycle.md#linear-key) | The workspace's Linear key in every Claude session. |
 | [`lifecycle.md#pull-request`](lifecycle.md#pull-request) | The pull request, and how the daemon follows it. |
 | [`lifecycle.md#reviews`](lifecycle.md#reviews) | Reviews that bring an agent back. |
 | [`lifecycle.md#linear-comments`](lifecycle.md#linear-comments) | Comments in Linear that bring an agent back. |
@@ -96,6 +97,8 @@ Rules:
 | [`configuration.md#planning`](configuration.md#planning) | `planning` |
 | [`configuration.md#stacking`](configuration.md#stacking) | `stacking` |
 | [`configuration.md#max-stack-depth`](configuration.md#max-stack-depth) | `maxStackDepth` |
+| [`configuration.md#autonomy-levels`](configuration.md#autonomy-levels) | The `autonomy` map and its trust levels. |
+| [`configuration.md#planning-keys`](configuration.md#planning-keys) | The `planning` keys. |
 | [`configuration.md#config-changes`](configuration.md#config-changes) | Changing the config. |
 | [`configuration.md#files`](configuration.md#files) | The files superlinear reads and writes. |
 

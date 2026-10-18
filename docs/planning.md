@@ -74,41 +74,56 @@ Each change applied is appended to `~/.local/share/superlinear/audit/<workspace>
 <a id="daily-planning"></a>
 ## The planning job
 
+For each workspace with [`planning.enabled`](configuration.md#planning-keys), the planning job reviews what was merged and how the open issues stand, and makes [proposals](#proposals). It never writes to Linear itself: each proposal's trust level decides whether it is applied at once or [put in Linear](#standup) for you.
+
+### When it runs
+
+There is no schedule. At a poll, when no job is running for the workspace, a job starts when:
+
+- the workspace has had no job yet;
+- the default branch moved since the last job (`git ls-remote`, so the poll fetches nothing); or
+- an issue of the watched teams was completed since the last job ended.
+
+Jobs for one workspace run one at a time, so several merges during a job make one job after it. A failed job counts as a job: the next one waits for another change.
+
 ```sh
 superlinear plan [--workspace <name>]
 ```
 
-Each change that may move the project's direction makes superlinear review what was merged and how the open issues stand, for each workspace with `planning.enabled`, and store what it finds as [proposals](#proposals). It never writes to Linear itself; each proposal's trust level decides whether it is applied at once or [put in Linear for review](#standup).
+runs a job now, in the foreground, for the workspace named (even with `planning.enabled` off), or for every workspace with planning on. It refuses to start while another job runs for the workspace.
 
-There is no schedule. At each poll, when no job is running for the workspace, the daemon starts one when:
+### What it does
 
-- the workspace has had no job yet;
-- the default branch's head is not the one the last job looked at, failed or not: a pull request merged, or commits were pushed outside one. The head comes from `git ls-remote`, so the poll fetches nothing;
-- an issue of the watched teams was completed after the last job ended, in Linear by hand or by the daemon after a merge. Completions while the last job ran do not count again.
+The job is one headless Claude session on [Fable](#planning-model), in the worktree of the repository's default branch, which superlinear fetches and fast-forwards first when that worktree is clean. The session may read the code, run `git log`, `git show` and `git diff`, and read the workspace's Linear issues with `linctl` and the [workspace's key](lifecycle.md#linear-key). It writes one file: its proposals.
 
-Jobs for one workspace run one at a time, so several merges while one runs make one job after it, which covers them all. A failed job counts: the branch has to move, or an issue be completed, before the next. `superlinear plan` runs a job at once, in the foreground, for the workspace named, or for every workspace with planning on. The session is told why its job runs.
+Its prompt has:
 
-A job runs one headless Claude session, `claude -p` on [Fable](#planning-model), in the worktree that has the repository's default branch checked out, which is that of `origin/HEAD`, or `main` or `master`. superlinear first fetches the branch and fast-forwards that worktree to it when the worktree is clean. The session may read the code and run `git log`, `git show` and `git diff`, and write one file. Its prompt gives:
-
-- the commits on the default branch since the head the last successful job looked at, or, on the first job, those of the last 24 hours, at most 100, each with its pull request, from `gh pr list --state merged`, and the Linear issues its message, branch or title names;
-- the issues of the watched teams completed since the last job ended, or, on the first job, in the last 24 hours, which are no longer among the open issues;
-- the open issues of the watched teams, with their state, priority, project, milestone, labels, relations, description and managed block, and each project's description and milestones;
+- the commits since the last job (on the first job, the last 24 hours, at most 100), with their pull requests and the issues they name;
+- the issues completed since the last job;
+- the open issues of the watched teams, with their state, priority, project, milestone, labels, relations and description, and each project's description and milestones;
 - the spec document, when `planning.specDocumentURL` is set.
 
-The session writes a JSON file of proposals, not to Linear. It looks for:
+It looks for:
 
-- issues that the merged changes made obsolete or already did: `closeIssue`, with the commit;
-- issue descriptions whose assumptions the changes broke: `editIssue` of the managed block;
-- missing relations between issues, and duplicates: `addRelation`;
-- gaps: work that the spec or a project's exit criteria need but that no issue covers, and issues you created that have no acceptance criteria or spec references: `createIssue`, `editIssue`;
-- places where the code and the spec no longer agree: `changeSpec`, or `createIssue` to fix the code;
-- backlog issues that are now unblocked and should be promoted to Todo: `promoteIssue`.
+| Finding | Proposal |
+| --- | --- |
+| An issue the merged changes made obsolete or already did | `closeIssue` |
+| An issue whose description the changes made wrong | `editIssue` of its managed block |
+| A missing relation, or a duplicate | `addRelation` |
+| Work that the spec or a project needs and no issue covers, or an issue with no acceptance criteria | `createIssue`, `editIssue` |
+| Code and spec that no longer agree | `changeSpec`, or `createIssue` to fix the code |
+| A backlog issue that is now unblocked | `promoteIssue` |
 
-When the session ends, superlinear checks the file against what the job was given. A proposal is refused when it has no reason, names an issue that is not open in the watched teams or is `superlinear: hands off`, promotes an issue not in the backlog, adds a relation that exists, or edits text into what it is. Each proposal's source is the pull request or commit it names, or else the job's commit range, or its session when there were no commits. The rest go through the proposal store's rules, so one pending or rejected before is not proposed again, and `auto` kinds are applied. The job's time, head, token use, and the numbers proposed and skipped are kept in the state file, and its refusals in the daemon log.
+When the session ends, superlinear checks each proposal against what the job was given. It refuses one with no reason, one that names an issue not open in the watched teams or labeled `superlinear: hands off`, and one that changes nothing. The rest go through the [proposal rules](#proposal-rules) and the [duplicate check](#duplicate-check). The job's time, head, token use and counts are kept in the state file, and shown by `superlinear stats`; refusals go to the daemon log.
 
-The job has no token budget of its own. Like an agent, it outlives a daemon restart: a later daemon waits for it, takes in its proposals if it ended meanwhile, or resumes its Claude session if it was interrupted, up to three times. A session that the Claude usage limit stops ends as a failed job for now; pausing and resuming it as agents will be is [SPL-26](https://linear.app/superlinear-linear/issue/SPL-26). Jobs do not count toward `maxConcurrentAgents`.
+### Restarts and limits
 
-`superlinear plan` stores its proposals and runs in `~/.local/share/superlinear/planning.json`, apart from the state file that only the daemon writes; the daemon and `superlinear proposals` take them in from there, and the daemon puts them in Linear at its next poll. It refuses to start while the daemon or another `plan` runs a job for the workspace.
+- A job outlives a daemon restart: the next daemon waits for it, takes in its proposals if it ended, or resumes its session if it was interrupted, up to three times.
+- At Fable's usage limit, the job resumes on Opus: see [the model](#planning-model).
+- At the Claude usage limit on Opus, the job ends as failed. The next change in the workspace starts a new one.
+- Jobs do not count toward [`maxConcurrentAgents`](configuration.md#max-concurrent-agents), and have no token budget of their own.
+
+`superlinear plan` keeps its jobs and proposals in `~/.local/share/superlinear/planning.json`, because only the daemon writes the state file. The daemon takes them in, and puts the proposals in Linear, at its next poll.
 
 <a id="planning-model"></a>
 ## The model for planning and answers
@@ -172,7 +187,7 @@ Once answered, superlinear edits the comment's first line to say so, with the ti
 
 Ask about a proposal in a comment, and superlinear answers in the comment's thread. A comment counts when you write it on a proposed issue that waits in Triage or Backlog, or as a reply in the thread of a proposal's comment. Only comments from the API key's user count. superlinear's own comments do not count: each reply it writes starts with the line `*Written by superlinear.*`, and its proposal comments start with what they propose.
 
-For each comment, the daemon runs a short headless Claude session on [Fable](#planning-model) that only reads. It can read the code and its history in the repository's default-branch worktree, and look at pull requests and CI runs with `gh`. It cannot edit files, commit, push, open pull requests, or write to Linear or GitHub. Its prompt has the proposal (its kind, reason, source, and the text or the diff), the comments before yours, and your comment. The answer is posted as a reply under your comment. superlinear adds the marker line at the start of the reply, and its notes, such as the one that says it changed the proposal, at the end; the prompt tells the session not to write them, and superlinear removes them from the start and end of the answer should the session copy them from its earlier replies. Ask "What would this cost in CI?" on a proposed CI change, and the reply estimates the minutes it adds to each run, and says on which runners.
+For each comment, the daemon runs a short headless Claude session on [Fable](#planning-model) that only reads. It can read the code and its history in the repository's default-branch worktree, look at pull requests and CI runs with `gh`, and read the workspace's Linear issues with `linctl issue get`, `linctl issue list` and `linctl issue search`, with the [workspace's key](lifecycle.md#linear-key) in its environment. It cannot edit files, commit, push, open pull requests, or write to Linear or GitHub: no other `linctl` command is allowed. Its prompt has the proposal (its kind, reason, source, and the text or the diff), the comments before yours, and your comment. It also has the issues of the workspace's teams that your comment or the proposal names, up to 10, each with its title, state, labels, relations and description, so "is this a duplicate of TEM-22?" needs no tool call. Identifiers of teams outside the workspace, and the proposed issue itself, are not fetched. The answer is posted as a reply under your comment. superlinear adds the marker line at the start of the reply, and its notes, such as the one that says it changed the proposal, at the end; the prompt tells the session not to write them, and superlinear removes them from the start and end of the answer should the session copy them from its earlier replies. Ask "What would this cost in CI?" on a proposed CI change, and the reply estimates the minutes it adds to each run, and says on which runners.
 
 When the comment asks for a change to the proposal, such as "make it optional" or "only for main", the session may also return new text. superlinear then edits the proposed issue's description, or the proposal's comment, and says in the reply that it did. The proposal still waits for your answer. This applies to the kinds that have text: a new issue's description, an edit's new text, a spec change, and a project update. For a closure, a relation or a promotion, the reply tells you to reject the proposal and say what you want instead.
 
@@ -185,7 +200,7 @@ The sessions run one at a time in each workspace, in the background, so a poll d
 <a id="spec-comments"></a>
 ### Comments on the spec document
 
-Proposals are checked against the workspace's spec document ([`planning.specDocumentURL`](configuration.md#planning)), so a question or a request on it is answered like one on a proposal. Each poll reads the document's comments. A new comment from the API key's user gets a read-only session. Its prompt has the document, the comment's thread, and the open issues of the watched teams, and it runs in the repository's default-branch worktree. The answer is a reply in the comment's thread.
+Proposals are checked against the workspace's spec document ([`planning.specDocumentURL`](configuration.md#planning)), so a question or a request on it is answered like one on a proposal. Each poll reads the document's comments. A new comment from the API key's user gets a read-only session. Its prompt has the document, the comment's thread, the open issues of the watched teams, and the issues the comment names, and it runs in the repository's default-branch worktree with the same tools. The answer is a reply in the comment's thread.
 
 A request to change the spec, such as "this should also cover X", becomes a `changeSpec` proposal. It goes to Triage like any other proposal, and the reply links to it. superlinear never edits the document unless you accept the proposal. Only comments made after the daemon first reads the document count. Comments on other documents, on projects and on project updates are ignored.
 
@@ -198,4 +213,4 @@ A request to change the spec, such as "this should also cover X", becomes a `cha
 <a id="project-updates"></a>
 ## Project updates
 
-Not built yet: [SPL-13](https://linear.app/superlinear-linear/issue/SPL-13) adds them, and fills in this section.
+superlinear does not post project updates on its own. The `postProjectUpdate` kind is in the proposal store, so it has a [trust level](#trust-levels) and a [form in Linear](#standup), but nothing makes such proposals: the project updates and milestone forecasts that SPL-13 planned were canceled.

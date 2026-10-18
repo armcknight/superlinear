@@ -8,9 +8,9 @@ import Foundation
 /// tell how it ended. Beside the status, the runs directory keeps the job's
 /// prompt, the context it was given, and the proposals file it writes.
 struct PlanningRunner: Sendable {
-    /// The tools the session may use: reading the code and its history, and
-    /// writing the proposals file.
-    static let allowedTools = "Read,Grep,Glob,Write,Bash(git log:*),Bash(git show:*),Bash(git diff:*)"
+    /// The tools the session may use: reading the code, its history and the
+    /// workspace's Linear issues, and writing the proposals file.
+    static let allowedTools = "Read,Grep,Glob,Write,Bash(git log:*),Bash(git show:*),Bash(git diff:*),\(LinearKey.readTools)"
 
     let home: String
     /// The environment sessions launch with. `claude` is found through its PATH.
@@ -58,7 +58,7 @@ struct PlanningRunner: Sendable {
     /// Claude's status — nil when it left none — once it ends. Returns the run
     /// with the launched process and its model recorded.
     func launch(
-        _ run: PlanningRun, mode: LaunchMode, model: PlanningModel, workspace: String,
+        _ run: PlanningRun, mode: LaunchMode, model: PlanningModel, workspace: String, apiKey: String,
         onExit: @escaping @Sendable (Int32?) -> Void
     ) throws -> (PlanningRun, Process) {
         let fm = FileManager.default
@@ -88,9 +88,7 @@ struct PlanningRunner: Sendable {
         process.arguments = ["-c", AgentRunner.wrapperScript, "sh"]
             + Self.claudeArguments(sessionId: run.sessionId, mode: mode, model: model, runsDirectory: runsDirectory)
         process.currentDirectoryURL = URL(fileURLWithPath: run.worktreePath)
-        process.environment = environment.merging(
-            ["SUPERLINEAR_STATUS_FILE": statusFile(run.sessionId)], uniquingKeysWith: { $1 }
-        )
+        process.environment = launchEnvironment(run.sessionId, apiKey: apiKey)
         // Files rather than pipes, which would break when the daemon exits.
         process.standardInput = input
         process.standardOutput = output
@@ -109,6 +107,14 @@ struct PlanningRunner: Sendable {
         launched.processStartedAt = AgentRunner.startTime(of: process.processIdentifier)
         launched.model = model
         return (launched, process)
+    }
+
+    /// The environment a session launches with: the daemon's, with the
+    /// workspace's Linear key `apiKey` and the status file.
+    func launchEnvironment(_ sessionId: ClaudeSession.ID, apiKey: String) -> [String: String] {
+        LinearKey.environment(environment, apiKey: apiKey).merging(
+            ["SUPERLINEAR_STATUS_FILE": statusFile(sessionId)], uniquingKeysWith: { $1 }
+        )
     }
 
     /// The Claude usage limit the workspace's last session stopped at, from

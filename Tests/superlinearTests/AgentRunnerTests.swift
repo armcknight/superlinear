@@ -201,7 +201,7 @@ struct AgentRunnerTests {
         let runner = AgentRunner(home: home, environment: ["PATH": "\(bin):/usr/bin:/bin"])
         let status: Int32? = try await withCheckedThrowingContinuation { continuation in
             do {
-                let (launched, _) = try runner.launch(run, mode: .start, repoPath: home) { status in
+                let (launched, _) = try runner.launch(run, mode: .start, repoPath: home, apiKey: "key") { status in
                     continuation.resume(returning: status)
                 }
                 #expect(launched.pid != nil)

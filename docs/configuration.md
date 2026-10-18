@@ -1,10 +1,8 @@
 # Configuration
 
-```sh
-make config
-```
+The config is `~/.config/superlinear/config.json`. `make config` creates it from the included example and opens it in your editor. It holds your Linear API keys, so it is never tracked in git. `--config <path>` on any command reads another file.
 
-Creates `~/.config/superlinear/config.json` from the included example and opens it in your editor. The config is never tracked in git: keep your API keys local.
+This is a config with every key set, each to its default where it has one:
 
 ```json
 {
@@ -17,73 +15,112 @@ Creates `~/.config/superlinear/config.json` from the included example and opens 
       "teamIds": [],
       "pollIntervalSeconds": 60,
       "githubIssues": false,
-      "selection": "ready",
+      "selection": "new",
       "readyStates": ["unstarted"],
       "humanLabels": ["Needs human", "Spike"],
-      "stacking": true
+      "autonomy": { "addRelation": "auto" },
+      "proposalExpiryDays": 7,
+      "planning": { "enabled": false },
+      "stacking": true,
+      "maxStackDepth": 3
     }
   ]
 }
 ```
 
-Each workspace entry is one Linear-account-to-repository pairing. List several to watch more than one repository.
+Only `workspaces`, and each workspace's `name`, `apiKey` and `repoPath`, are required. A key left out has its default.
 
 <a id="top-level-keys"></a>
 ## Top-level keys
 
-| Key | Required | Description |
-| --- | --- | --- |
-| <a id="workspaces"></a>`workspaces` | yes | The workspaces to watch, at least one. See [Workspace keys](#workspace-keys). |
-| <a id="max-concurrent-agents"></a>`maxConcurrentAgents` | no | How many agents run at once across all workspaces. Further issues wait in a queue, kept in the state file, and start oldest first as running agents finish. An interrupted agent keeps its place, so it resumes before newer issues start. Defaults to `3`. |
+| Key | Default | Example | Description |
+| --- | --- | --- | --- |
+| <a id="workspaces"></a>`workspaces` | required | `"workspaces": [{ … }]` | The workspaces to watch, at least one: see [Workspace keys](#workspace-keys). |
+| <a id="max-concurrent-agents"></a>`maxConcurrentAgents` | `3` | `"maxConcurrentAgents": 5` | How many agents run at once, across all workspaces. Other issues wait in a queue, oldest first. An interrupted agent keeps its place, so it resumes before newer issues start. At least `1`. Planning jobs and comment answers do not count. |
 
 <a id="workspace-keys"></a>
 ## Workspace keys
 
-| Key | Required | Description |
-| --- | --- | --- |
-| <a id="name"></a>`name` | yes | Label for logs. Also the key under which state is stored. |
-| <a id="api-key"></a>`apiKey` | yes | Linear personal API key. |
-| <a id="repo-path"></a>`repoPath` | yes | Repository the agent works in. `~` is expanded. |
-| <a id="team-ids"></a>`teamIds` | no | Linear team IDs to watch. Empty or absent means all teams. Defaults to `[]`. |
-| <a id="poll-interval-seconds"></a>`pollIntervalSeconds` | no | Seconds between polls. Defaults to `60`. |
-| <a id="github-issues"></a>`githubIssues` | no | Also work on the repository's GitHub issues that you open or comment `/superlinear-do` on. See [GitHub issues](lifecycle.md#github-issues). Defaults to `false`. |
-| <a id="selection"></a>`selection` | no | `"new"` to start issues created since the last poll, or `"ready"` to start every issue in `readyStates`. See [Selection](lifecycle.md#selection). Defaults to `"new"`. |
-| <a id="ready-states"></a>`readyStates` | no | Linear state types that mean "build this" in `ready` mode: any of `triage`, `backlog`, `unstarted`, `started`, `completed` and `canceled`, usually the first three. Any other value, such as a state name like `"Todo"`, is an error. Defaults to `["unstarted"]`, which is Todo. |
-| <a id="human-labels"></a>`humanLabels` | no | Names of labels that keep an issue for a person: no agent starts on it. Matched in any case. See [The ready gate](lifecycle.md#ready-gate). Defaults to `["Needs human", "Spike"]`. |
-| <a id="autonomy"></a>`autonomy` | no | The trust level of each kind of proposal: a map from kind to `"auto"`, `"review"` or `"never"`. Kinds left out keep their defaults. An unknown kind or level is a config error, so a misspelt kind does not leave its default in force unseen. See [Proposals and trust levels](planning.md#proposals). |
-| <a id="proposal-expiry-days"></a>`proposalExpiryDays` | no | Days after which a pending proposal expires, counted from when it was [put in Linear](planning.md#standup). Defaults to `7`. |
-| <a id="planning"></a>`planning` | no | Planning settings. `planning.enabled` turns on the [planning job](planning.md#daily-planning); it defaults to `false`. `planning.specDocumentURL` is the URL of the Linear document holding the project's spec, which the planning job reads and may propose changes to. |
-| <a id="stacking"></a>`stacking` | no | Whether an issue whose one unmerged blocker has an open pull request from an agent, not a draft, with CI passing, starts on top of that pull request's branch, as a pull request that targets it. See [Stacks](lifecycle.md#stacks). Defaults to `true`. |
-| <a id="max-stack-depth"></a>`maxStackDepth` | no | How many pull requests a stack may hold, the bottom one included; an issue that would make a stack deeper waits for a merge. At least `1`, which stacks nothing. Defaults to `3`. |
+Each workspace pairs one Linear workspace with one repository. List several to watch more than one.
 
-For example, to apply new issues at once and never post project updates:
+| Key | Default | Example | Description |
+| --- | --- | --- | --- |
+| <a id="name"></a>`name` | required | `"name": "statustician"` | The name in logs and `superlinear status`, and the key of its state. |
+| <a id="api-key"></a>`apiKey` | required | `"apiKey": "lin_api_…"` | A Linear personal API key for the workspace. Claude sessions get it too: see [the Linear key](lifecycle.md#linear-key). |
+| <a id="repo-path"></a>`repoPath` | required | `"repoPath": "~/Code/statustician"` | The repository agents work in. `~` is expanded. |
+| <a id="team-ids"></a>`teamIds` | `[]` | `"teamIds": ["210bd4b4-545d-459e-9e58-4207281ca011"]` | The Linear team IDs to watch. Empty means every team in the workspace. |
+| <a id="poll-interval-seconds"></a>`pollIntervalSeconds` | `60` | `"pollIntervalSeconds": 120` | Seconds between polls. |
+| <a id="github-issues"></a>`githubIssues` | `false` | `"githubIssues": true` | Also work on the repository's GitHub issues that you open or comment `/superlinear-do` on. See [GitHub issues](lifecycle.md#github-issues). |
+| <a id="selection"></a>`selection` | `"new"` | `"selection": "ready"` | Which issues start agents: `"new"`, those created since the last poll, or `"ready"`, every issue in `readyStates`. See [Selection](lifecycle.md#selection). |
+| <a id="ready-states"></a>`readyStates` | `["unstarted"]` | `"readyStates": ["unstarted", "backlog"]` | In `ready` mode, the Linear state types that mean "build this": any of `triage`, `backlog`, `unstarted`, `started`, `completed`, `canceled` and `duplicate`, usually `unstarted` (Todo). A state name such as `"Todo"` is an error. |
+| <a id="human-labels"></a>`humanLabels` | `["Needs human", "Spike"]` | `"humanLabels": ["Needs human"]` | Labels that keep an issue for a person: no agent starts on it. Matched in any case. See [The ready gate](lifecycle.md#ready-gate). |
+| <a id="autonomy"></a>`autonomy` | `addRelation` is `"auto"`, the rest `"review"` | `"autonomy": { "createIssue": "auto" }` | The trust level of each kind of proposal. See [below](#autonomy-levels). |
+| <a id="proposal-expiry-days"></a>`proposalExpiryDays` | `7` | `"proposalExpiryDays": 14` | Days after which a proposal that waits in Linear with no answer expires, counted from when it was [put in Linear](planning.md#standup). At least `1`. |
+| <a id="planning"></a>`planning` | `{ "enabled": false }` | `"planning": { "enabled": true }` | The [planning job](planning.md#daily-planning). See [below](#planning-keys). |
+| <a id="stacking"></a>`stacking` | `true` | `"stacking": false` | Whether an issue whose one open blocker has an agent's pull request, not a draft, with CI passing, starts on top of that pull request. See [Stacks](lifecycle.md#stacks). |
+| <a id="max-stack-depth"></a>`maxStackDepth` | `3` | `"maxStackDepth": 2` | How many pull requests one stack may hold, the bottom one included. An issue that would make a stack deeper waits for a merge. At least `1`, which stacks nothing. |
+
+<a id="autonomy-levels"></a>
+### `autonomy`
+
+A map from a kind of [proposal](planning.md#proposal-kinds) to its trust level. Kinds left out keep their defaults.
 
 ```json
-"autonomy": { "createIssue": "auto", "postProjectUpdate": "never" }
+"autonomy": {
+  "createIssue": "review",
+  "editIssue": "review",
+  "closeIssue": "review",
+  "addRelation": "auto",
+  "promoteIssue": "review",
+  "changeSpec": "review",
+  "postProjectUpdate": "never"
+}
 ```
+
+| Level | What happens |
+| --- | --- |
+| `"auto"` | Applied at once. It is still listed in `superlinear status` and the [audit log](planning.md#audit-log). |
+| `"review"` | [Put in Linear](planning.md#standup) for you to answer. The default for every kind but `addRelation`. |
+| `"never"` | Not proposed at all. |
+
+An unknown kind or level is an error, so a misspelt kind cannot leave its default in force unseen. `"standup"`, the old name of `"review"`, is still read.
+
+<a id="planning-keys"></a>
+### `planning`
+
+```json
+"planning": {
+  "enabled": true,
+  "specDocumentURL": "https://linear.app/statustician/document/statustician-spec-274852337e82"
+}
+```
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | Turns on the [planning job](planning.md#daily-planning) for the workspace. `superlinear plan --workspace <name>` runs it even when this is `false`. |
+| `specDocumentURL` | none | The Linear document with the project's spec. The planning job reads it and may propose changes to it, and your [comments on it](planning.md#spec-comments) are answered. |
 
 <a id="config-changes"></a>
 ## Changing the config
 
-Edits take effect on their own. The daemon checks the file every five seconds; when it changes to a config that loads, the daemon exits and launchd restarts it on the new one, with agents in flight carrying on. An edit that does not load — invalid JSON, a missing key, no workspaces — is logged once and ignored until fixed. A daemon run in the foreground only logs that a restart is needed.
-
-`--config <path>` on any command overrides the default path.
+Edits take effect on their own. The daemon reads the file every five seconds. When it changes to a config that loads, the daemon exits and launchd restarts it on the new one; agents in flight carry on. An edit that does not load, such as invalid JSON or a missing key, is logged once and ignored until it is fixed. A daemon run in the foreground only logs that it needs a restart.
 
 <a id="files"></a>
 ## Files
 
 | Path | Contents |
 | --- | --- |
-| `~/.config/superlinear/config.json` | Configuration, including API keys. |
-| `~/.local/share/superlinear/state.json` | Last poll time, processed issue IDs, runs in flight, issues awaiting their pull request's merge, with the pull request each is stacked on, blocked and human-labeled issues, proposals with where they wait in Linear, 30 days of what the daemon did, for `superlinear status`, and the last 30 planning jobs, per workspace. |
-| `~/.local/share/superlinear/planning.json` | Per workspace, the planning jobs `superlinear plan` ran and the proposals they stored, for the daemon to take in. |
-| `~/.local/share/superlinear/audit/<workspace>.jsonl` | Each change superlinear applied in Linear, with the proposal and Linear's response. |
-| `~/.local/share/superlinear/daemon.lock` | Held by the running daemon, so a second one exits. |
-| `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. A planning job also keeps what it was given and the proposals file its session writes, until it is taken in. |
-| `~/.local/share/superlinear/daemon.log` | Daemon output. |
-| `~/.local/share/superlinear/logs/<ISSUE-ID>.log` | Agent output for one issue. A resumed run appends to it. |
-| `~/.local/share/superlinear/logs/planning-<workspace>.log` | Output of the workspace's planning sessions, appended across jobs. |
-| `~/.local/share/superlinear/logs/<ISSUE-ID>.work.log` | Output of `work` itself for one issue, such as worktree setup, teardown after the merge, and errors. |
+| `~/.config/superlinear/config.json` | The config, with the API keys. |
+| `~/.local/share/superlinear/state.json` | For each workspace: the last poll, processed issues, runs in flight, issues awaiting their pull request's merge (with the pull request each is stacked on), blocked and human-labeled issues, proposals and where they wait in Linear, the comments answered, 30 days of what the daemon did, and the last 30 planning jobs. |
+| `~/.local/share/superlinear/planning.json` | The jobs that `superlinear plan` ran and the proposals they made, for the daemon to take in. |
+| `~/.local/share/superlinear/audit/<workspace>.jsonl` | Each change superlinear made in Linear, with its proposal and Linear's response. |
+| `~/.local/share/superlinear/daemon.lock` | Held by the running daemon, so that a second one exits. |
+| `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. A planning job also keeps its context and its proposals file until they are taken in. |
+| `~/.local/share/superlinear/daemon.log` | The daemon's output. |
+| `~/.local/share/superlinear/logs/<ISSUE-ID>.log` | An issue's agent output. A resumed run appends to it. |
+| `~/.local/share/superlinear/logs/<ISSUE-ID>.work.log` | The output of `work` for an issue: worktree setup, teardown after the merge, and errors. |
+| `~/.local/share/superlinear/logs/planning-<workspace>.log` | The output of the workspace's planning sessions. |
+| `~/.local/share/superlinear/logs/comments-<workspace>.log` | The output of the sessions that answer comments. |
 | `<worktree>/.superlinear/followups.json` | Work an agent found outside its issue, read when it exits. See [Follow-ups from agents](planning.md#follow-ups). |
 
-Per-issue logs are written only when the agent exits. `claude -p` buffers its output, so following the file during a run shows nothing.
+Agent logs are written only when the agent exits: `claude -p` keeps its output until then, so a log shows nothing while its agent runs.
