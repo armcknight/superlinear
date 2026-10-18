@@ -76,7 +76,8 @@ enum PlanCommand {
 
         var (record, ingest) = job.finish(run, status: status, now: Date())
         for refusal in ingest.refused { say("  Refused \(refusal)") }
-        let engine = ProposalEngine(workspace: name, autonomy: workspace.autonomy, linear: linear, audit: AuditLog())
+        let engine = ProposalEngine(
+            workspace: name, autonomy: workspace.autonomy, linear: linear, audit: AuditLog(), duplicates: ClaudeDuplicateJudge())
         var existing = state.proposals(workspace: name)
         var stored: [Proposal] = []
         for draft in ingest.drafts {
@@ -89,6 +90,17 @@ enum PlanCommand {
                     record.proposed += 1
                     let applied = proposal.status == .applied ? " (applied)" : ""
                     say("  Proposed \(proposal.kind.rawValue)\(applied): \(proposal.reason)")
+                case .merge(let merged):
+                    // Only a proposal of this job is this command's to change;
+                    // the daemon keeps the rest.
+                    if let index = stored.firstIndex(where: { $0.id == merged.id }) {
+                        stored[index] = merged
+                        existing = existing.map { $0.id == merged.id ? merged : $0 }
+                        say("  Merged a \(draft.payload.kind.rawValue) proposal into one of this job's, the same work: \(draft.reason)")
+                    } else {
+                        say("  Not proposing \(draft.payload.kind.rawValue): it repeats the daemon's pending proposal \(merged.id)")
+                    }
+                    record.skipped += 1
                 case .skip(let reason):
                     record.skipped += 1
                     say("  Not proposing \(draft.payload.kind.rawValue): \(reason)")

@@ -31,3 +31,24 @@ extension LinearWriting {
     func removeLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue { .null }
     func proposalIssues(ids: [LinearIssue.ID]) async throws -> [ProposalIssueSnapshot] { [] }
 }
+
+/// A duplicate check that gives one verdict, or fails, and records the
+/// questions it was asked.
+final class StubDuplicates: DuplicateJudging, @unchecked Sendable {
+    private let lock = NSLock()
+    private var asked: [DuplicateQuestion] = []
+    let verdict: DuplicateVerdict?
+
+    /// Fails each check when `verdict` is nil.
+    init(_ verdict: DuplicateVerdict? = .distinct) {
+        self.verdict = verdict
+    }
+
+    var questions: [DuplicateQuestion] { lock.withLock { asked } }
+
+    func judge(_ question: DuplicateQuestion) async throws -> DuplicateVerdict {
+        lock.withLock { asked.append(question) }
+        guard let verdict else { throw DuplicateCheckError.claudeFailed("offline") }
+        return verdict
+    }
+}

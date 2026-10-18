@@ -113,6 +113,16 @@ enum ProposalForm {
         }
     }
 
+    /// The comment on a proposed issue that lists the open issues and
+    /// proposals that may be the same work.
+    static func possibleDuplicatesComment(_ duplicates: [PossibleDuplicate]) -> String {
+        (["**Possible duplicates.** superlinear found these, which may be the same work as this issue:", ""]
+            + duplicates.map(\.line)
+            + ["", "If this issue repeats one of them, mark it a duplicate of that issue in Linear: superlinear then rejects this proposal, "
+                + "and proposes to add what this issue says to that one. Otherwise accept or decline it as usual."])
+            .joined(separator: "\n")
+    }
+
     /// The note left on a proposed issue that expired.
     static func expiryNote(days: Int, now: Date) -> String {
         "**Expired \(time(now)).** superlinear proposed this issue, and canceled it after \(days) days without an answer."
@@ -143,12 +153,12 @@ enum ProposalAnswer: Equatable {
             switch snapshot.stateType {
             case .triage, .unknown: return .none
             case .canceled: return .reject(reason: "declined in Linear")
-            case .duplicate: return .reject(reason: "marked a duplicate in Linear")
+            case .duplicate: return .reject(reason: duplicateReason(snapshot))
             default: return .approve
             }
         case .backlogIssue:
             if snapshot.stateType == .canceled { return .reject(reason: "canceled in Linear") }
-            if snapshot.stateType == .duplicate { return .reject(reason: "marked a duplicate in Linear") }
+            if snapshot.stateType == .duplicate { return .reject(reason: duplicateReason(snapshot)) }
             if snapshot.stateType == .unknown { return .none }
             let labeled = snapshot.labels.contains { $0.caseInsensitiveCompare(ProposalEngine.proposedLabel) == .orderedSame }
             return snapshot.stateType != .backlog || !labeled ? .approve : .none
@@ -161,6 +171,10 @@ enum ProposalAnswer: Equatable {
             if !mine.isDisjoint(with: ProposalForm.approveEmoji) { return .approve }
             return .none
         }
+    }
+
+    private static func duplicateReason(_ snapshot: ProposalIssueSnapshot) -> String {
+        snapshot.duplicateOf.map { "marked a duplicate of \($0.identifier) in Linear" } ?? "marked a duplicate in Linear"
     }
 }
 
@@ -234,6 +248,14 @@ struct ProposalPoster: Sendable {
         proposal.post = ProposalPost(
             form: triage == nil ? .backlogIssue : .triageIssue, issueId: created.id, issueIdentifier: created.identifier,
             url: created.url, postedAt: now)
+        // The issue is there: a failure here must not post it again.
+        if let duplicates = proposal.possibleDuplicates, !duplicates.isEmpty {
+            do {
+                _ = try await linear.createComment(issueId: created.id, body: ProposalForm.possibleDuplicatesComment(duplicates))
+            } catch {
+                warnings.append("Could not list the possible duplicates on \(created.identifier): \(error)")
+            }
+        }
         return Posted(proposal: proposal, warnings: warnings)
     }
 
