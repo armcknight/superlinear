@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Agents, the planning job and the sessions that answer the owner's comments
-  get the workspace's Linear key in `LINCTL_API_KEY` and `LINEAR_API_KEY`,
+  get the workspace's Linear key in `LINCTL_API_KEY`,
   in place of any key in the daemon's environment, so `linctl` reads the
   right workspace without an `.envrc`.
 - The planning job and the comment answer sessions may read the workspace's

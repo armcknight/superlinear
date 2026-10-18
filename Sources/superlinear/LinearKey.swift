@@ -9,19 +9,19 @@ import Foundation
 /// The key goes only in the environment: never in a prompt, a log, an
 /// argument or the state file.
 enum LinearKey {
-    /// The variables that `linctl` and other Linear tools read the key from.
-    static let variables = ["LINCTL_API_KEY", "LINEAR_API_KEY"]
+    /// The variable that `linctl` reads the key from.
+    static let variable = "LINCTL_API_KEY"
 
     /// `base` with the workspace's key in place of any key the daemon's own
     /// environment has.
     static func environment(_ base: [String: String], apiKey: String) -> [String: String] {
-        base.merging(variables.map { ($0, apiKey) }, uniquingKeysWith: { $1 })
+        base.merging([variable: apiKey], uniquingKeysWith: { $1 })
     }
 
     /// `base` without a Linear key, for a session that belongs to no
     /// workspace.
     static func withoutKey(_ base: [String: String]) -> [String: String] {
-        base.filter { !variables.contains($0.key) }
+        base.filter { $0.key != variable }
     }
 
     /// The `linctl` commands that only read, for the sessions that only read.

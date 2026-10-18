@@ -195,7 +195,7 @@ enum CommentAnswerPrompt {
         return identifiers
     }
 
-    static func render(_ question: CommentQuestion, openIssues: [String] = [], namedIssues: [PlanningIssue] = []) -> String {
+    static func render(_ question: CommentQuestion, openIssues: [String], namedIssues: [PlanningIssue]) -> String {
         var sections = [preamble]
         let revision: String?
         switch question.subject {

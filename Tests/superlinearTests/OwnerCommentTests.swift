@@ -451,7 +451,7 @@ struct OwnerCommentTests {
             subject: .proposal(proposal, issueId: "tem-15"),
             comment: FreshComment(comment: comment("q", "What would it cost?", at: at(10))),
             thread: [comment("before", "Earlier note", at: at(5)), comment("q", "What would it cost?", at: at(10))], key: "tem-15", since: at(0))
-        let text = CommentAnswerPrompt.render(question)
+        let text = CommentAnswerPrompt.render(question, openIssues: [], namedIssues: [])
         #expect(text.contains("You only read"))
         #expect(text.contains("vapor-ci.yml: an optional Postgres service for tests"))
         #expect(text.contains("Source: agent session session for TEM-3"))
@@ -471,7 +471,7 @@ struct OwnerCommentTests {
         let linctl = tools.filter { $0.contains("linctl") }
         #expect(Set(linctl) == Set(["get", "list", "search"].map { "Bash(linctl issue \($0):*)" }))
         #expect(!tools.contains { $0.contains("linctl issue update") || $0.contains("linctl comment") || $0 == "Bash(linctl:*)" })
-        #expect(CommentAnswerPrompt.render(triageQuestion("Hi")).contains(LinearKey.promptLine))
+        #expect(CommentAnswerPrompt.render(triageQuestion("Hi"), openIssues: [], namedIssues: []).contains(LinearKey.promptLine))
     }
 
     @Test("A comment's prompt has the workspace's issues it and the proposal name, not other teams' or its own")
@@ -486,10 +486,10 @@ struct OwnerCommentTests {
             stateName: "Todo", stateType: .unstarted, priority: nil, teamId: "team", teamKey: "TEM", projectId: nil,
             projectName: nil, milestone: nil, labels: ["ci"],
             relations: [PlanningRelation(type: .blocks, identifier: "TEM-30", direction: .outgoing)], updatedAt: at(0))
-        let text = CommentAnswerPrompt.render(question, namedIssues: [duplicate])
+        let text = CommentAnswerPrompt.render(question, openIssues: [], namedIssues: [duplicate])
         #expect(text.contains("- TEM-22: Postgres for the tests\n  - State: Todo\n  - Labels: ci\n  - Relations: blocks TEM-30"))
         #expect(text.contains("A database service in CI."))
-        #expect(!CommentAnswerPrompt.render(question).contains("issues that the comment names"))
+        #expect(!CommentAnswerPrompt.render(question, openIssues: [], namedIssues: []).contains("issues that the comment names"))
     }
 
     @Test("A comment names at most a few issues")
