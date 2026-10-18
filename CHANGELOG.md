@@ -250,6 +250,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A comment in a pull request's conversation that starts with an
+  @-mention, such as the `@sentry review` an agent posts as you, no longer
+  queues a review agent that has nothing to do.
+
 - The daemon no longer crashes when it reads the token use of a session
   with no subagents, such as the one that answers a comment. It crashed
   at every restart, before any comment was answered.
