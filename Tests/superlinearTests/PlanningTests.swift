@@ -368,6 +368,26 @@ struct PlanningTests {
         #expect(!FileManager.default.fileExists(atPath: runner.contextFile("s1")))
     }
 
+    // A session with no subagents has no directory for their transcripts;
+    // reading its usage once crashed the daemon, at every restart.
+    @Test("A session's usage is read with and without its subagents' transcripts")
+    func usageWithoutSubagents() throws {
+        let home = scratch()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let runner = PlanningRunner(home: home.path, environment: [:])
+        let project = home.appendingPathComponent(".claude/projects/-repo")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let line = #"{"type":"assistant","timestamp":"2026-10-18T00:00:00Z","message":{"id":"m1","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}}}"#
+        try Data((line + "\n").utf8).write(to: project.appendingPathComponent("s1.jsonl"))
+        #expect(runner.usage("s1")?.outputTokens == 5)
+        #expect(runner.usage("missing") == nil)
+
+        let subagents = project.appendingPathComponent("s1/subagents")
+        try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
+        try Data((line.replacingOccurrences(of: "m1", with: "m2") + "\n").utf8).write(to: subagents.appendingPathComponent("a.jsonl"))
+        #expect(runner.usage("s1")?.outputTokens == 10)
+    }
+
     // MARK: Each kind of proposal
 
     @Test("closeIssue: an open issue, with the commit as its source")

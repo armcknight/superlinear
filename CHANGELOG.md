@@ -250,6 +250,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The daemon no longer crashes when it reads the token use of a session
+  with no subagents, such as the one that answers a comment. It crashed
+  at every restart, before any comment was answered.
+
 - Proposals reach Linear again. Linear's `duplicate` state type, which every
   team has, failed the decoding of a team's states, so no proposal could be
   put in Linear. A state type Linear adds later is now `unknown` rather than

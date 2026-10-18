@@ -167,7 +167,10 @@ struct PlanningRunner: Sendable {
             transcripts.append((data, false))
             // Subagents' transcripts, under a directory named after the session.
             let subagents = "\(projects)/\(directory)/\(sessionId)"
-            for case let path as String in fm.enumerator(atPath: subagents) ?? NSEnumerator() where path.hasSuffix(".jsonl") {
+            // Not `enumerator(atPath:) ?? NSEnumerator()`: with no such
+            // directory, the fallback is an abstract class, and enumerating
+            // it raises an exception that ends the daemon.
+            for path in (try? fm.subpathsOfDirectory(atPath: subagents)) ?? [] where path.hasSuffix(".jsonl") {
                 if let data = fm.contents(atPath: "\(subagents)/\(path)") { transcripts.append((data, true)) }
             }
         }
