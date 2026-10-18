@@ -167,6 +167,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `make install` restarts a daemon that launchd runs from the installed path,
+  with `launchctl kickstart -k`. launchd's own restart of the replaced binary
+  could fail with `OS_REASON_CODESIGNING` and leave the daemon down.
 - A pull request already attached to its Linear issue, as by hand or before
   the daemon kept records of its links, is recorded as linked. Linear refuses
   to attach it again, so the daemon tried and failed every poll.
