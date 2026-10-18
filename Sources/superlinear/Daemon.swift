@@ -177,10 +177,13 @@ actor Daemon {
         Set((state.workspaces[workspace]?.processedIssueIds ?? []).map(LinearIssue.ID.init(rawValue:)))
     }
 
-    /// Queues an agent to address new reviews on the pull request of an issue
-    /// awaiting its merge. It works in the issue's existing worktree, under a
+    /// Queues an agent to address new reviews and comments on the pull
+    /// request of an issue awaiting its merge. It works in the issue's existing worktree, under a
     /// new Claude session, and the issue awaits its merge again once it ends.
-    func enqueueReview(of pending: PendingMerge, pullRequest: PullRequest, workspace: WorkspaceConfig) {
+    func enqueueReview(
+        of pending: PendingMerge, pullRequest: PullRequest, feedback: [PullRequestFeedback]? = nil,
+        workspace: WorkspaceConfig
+    ) {
         // The watch may have ended while the reviews were being read.
         guard state.workspaces[workspace.name]?.pendingMerges[pending.issueId] != nil else { return }
         let run = AgentRun(
@@ -189,7 +192,7 @@ actor Daemon {
             branchName: pending.branchName,
             sessionId: UUID().uuidString.lowercased(),
             queuedAt: Date(),
-            review: ReviewRequest(number: pullRequest.number, url: pullRequest.url),
+            review: ReviewRequest(number: pullRequest.number, url: pullRequest.url, feedback: feedback),
             stack: pending.stack
         )
         state.startReview(run, workspace: workspace.name)

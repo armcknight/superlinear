@@ -13,7 +13,7 @@ This is a personal tool, published as a reference. It is opinionated about how w
 1. **Selection.** Each configured workspace polls Linear on its own loop for the issues an agent may start on: those created since the last poll, or those moved to Todo. See [Selection](docs/lifecycle.md#selection).
 2. **The ready gate.** Issues that another open issue blocks, and issues with a human label such as "Needs human", wait. With `stacking` on, an issue whose one unmerged blocker has an open pull request starts on top of it instead. See [The ready gate](docs/lifecycle.md#ready-gate) and [Stacks](docs/lifecycle.md#stacks).
 3. **The agent.** Each ready issue is queued, and up to `maxConcurrentAgents` agents run at once. Each runs `claude -p` in its own worktree, with a prompt to plan, implement, commit, open a pull request and see CI through. See [The agent](docs/lifecycle.md#agent).
-4. **Reviews and conflicts.** Review the pull request, or let it conflict with its base branch, and an agent comes back to the same branch to address it. See [Reviews](docs/lifecycle.md#reviews) and [Conflicts](docs/lifecycle.md#conflicts).
+4. **Reviews and conflicts.** Review the pull request or comment on it, or let it conflict with its base branch, and an agent comes back to the same branch to address it. See [Reviews](docs/lifecycle.md#reviews) and [Conflicts](docs/lifecycle.md#conflicts).
 5. **The merge.** You merge; superlinear never does. The issue is then marked done and its worktree removed. See [The merge and completion](docs/lifecycle.md#merge).
 6. **Planning.** superlinear proposes changes to the plan in Linear, where you accept or reject them, or lets them through on their own by trust level. See [Planning](docs/planning.md).
 

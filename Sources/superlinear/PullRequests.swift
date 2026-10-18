@@ -91,6 +91,57 @@ struct PullRequestReview: Codable, Sendable, Equatable {
     }
 }
 
+/// A comment in a pull request's conversation, outside any review, as
+/// `gh pr list --json comments` reports it. GitHub keeps it as a comment on
+/// the issue the pull request is.
+struct PullRequestComment: Codable, Sendable, Equatable {
+    let author: PullRequestReview.Author?
+    let body: String
+    let createdAt: Date?
+    let url: String?
+
+    /// The comments by `login`, made after `date`, with something written.
+    static func unaddressed(_ comments: [PullRequestComment], by login: String, after date: Date) -> [PullRequestComment] {
+        comments.filter { comment in
+            guard comment.author?.login == login,
+                  !comment.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let createdAt = comment.createdAt
+            else { return false }
+            return createdAt > date
+        }
+    }
+}
+
+/// What the owner wrote on a pull request since the issue's last agent
+/// started: reviews, and comments in its conversation. A reply in the thread
+/// of an earlier review is a review of its own on GitHub, with its own
+/// submission time, so it is among the reviews.
+struct PullRequestFeedback: Codable, Sendable, Equatable {
+    enum Kind: String, Codable, Sendable {
+        case review
+        case comment
+    }
+
+    var kind: Kind
+    var at: Date
+    /// A link to it, where GitHub gives one: comments have one, reviews not.
+    var url: String?
+
+    /// The reviews and comments by `login` from after `date` that ask
+    /// for something, oldest first.
+    static func unaddressed(
+        reviews: [PullRequestReview], comments: [PullRequestComment], by login: String, after date: Date
+    ) -> [PullRequestFeedback] {
+        let reviews = PullRequestReview.unaddressed(reviews, by: login, after: date).compactMap { review in
+            review.submittedAt.map { PullRequestFeedback(kind: .review, at: $0) }
+        }
+        let comments = PullRequestComment.unaddressed(comments, by: login, after: date).compactMap { comment in
+            comment.createdAt.map { PullRequestFeedback(kind: .comment, at: $0, url: comment.url) }
+        }
+        return (reviews + comments).sorted { $0.at < $1.at }
+    }
+}
+
 /// A pull request as `gh pr list --json` reports it. Each poll lists a
 /// repository's pull requests once, and its open ones with their reviews
 /// and head commits once more; `superlinear status` lists a
@@ -115,6 +166,8 @@ struct PullRequest: Codable, Sendable, Equatable {
     var mergedAt: Date? = nil
     /// Its reviews, when the listing asked for them.
     var reviews: [PullRequestReview]? = nil
+    /// The comments in its conversation, when the listing asked for them.
+    var comments: [PullRequestComment]? = nil
     /// The commit its branch points at, when the listing asked for it.
     var headRefOid: String? = nil
     /// Lines added and removed, and files changed, when the listing asked.
@@ -178,7 +231,7 @@ struct PullRequestChecker: Sendable {
     }
 
     static let listOpenArguments = [
-        "gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", "number,url,state,headRefName,headRefOid,reviews,mergeable,baseRefName",
+        "gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", "number,url,state,headRefName,headRefOid,reviews,comments,mergeable,baseRefName",
     ]
 
     static let viewerArguments = ["gh", "api", "user", "--jq", ".login"]
@@ -250,7 +303,7 @@ struct PullRequestChecker: Sendable {
     }
 
     /// The repository's open pull requests, newest 1,000, with their
-    /// reviews, which cost GitHub more to list than the rest, head commits,
+    /// reviews and conversation comments, which cost GitHub more to list than the rest, head commits,
     /// base branches and whether they conflict with them. Not their commit lists: those cost so much that GitHub
     /// refuses a page of 100 pull requests as over the rate limit.
     func openPullRequestsWithReviews(repoPath: String) async throws -> [PullRequest] {

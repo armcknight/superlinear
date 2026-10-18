@@ -606,7 +606,8 @@ struct WorkspaceProcessor: Sendable {
     }
 
     /// Queues an agent for the open pull request when `gh`'s own user has
-    /// reviewed it since the issue's last agent started.
+    /// reviewed it, or commented in its conversation, since the issue's last
+    /// agent started.
     private func checkReviews(of pending: PendingMerge, pullRequests: [PullRequest], repoPath: String) async -> ReviewCheck {
         guard let pullRequest = pullRequests.first(where: { $0.state == .open }) else { return .none }
         // A watch from before reviews were followed counts from the pull
@@ -625,13 +626,15 @@ struct WorkspaceProcessor: Sendable {
         }
         let handledThrough = await daemon.reviewsHandledThrough(
             pending, lastCommit: lastCommit, workspace: workspace.name)
-        guard let reviews = pullRequest.reviews, !reviews.isEmpty else { return .none }
+        let reviews = pullRequest.reviews ?? []
+        let comments = pullRequest.comments ?? []
+        guard !reviews.isEmpty || !comments.isEmpty else { return .none }
         let login: String
         do {
             login = try await daemon.viewerLogin(repoPath: repoPath)
         } catch {
             if await pausedForRateLimit(error, repoPath: repoPath) { return .failed }
-            await logOnce("Could not find the GitHub user whose reviews to address: \(error)")
+            await logOnce("Could not find the GitHub user whose reviews and comments to address: \(error)")
             return .failed
         }
         // A daemon from before the Claude pause took the reviews of an agent
@@ -645,10 +648,13 @@ struct WorkspaceProcessor: Sendable {
             await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
             return .queued
         }
-        let unaddressed = PullRequestReview.unaddressed(reviews, by: login, after: handledThrough)
+        let unaddressed = PullRequestFeedback.unaddressed(
+            reviews: reviews, comments: comments, by: login, after: handledThrough)
         guard !unaddressed.isEmpty else { return .none }
-        log("\(pending.identifier) has \(unaddressed.count) new review(s) from \(login) on \(pullRequest.url)")
-        await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
+        let reviewCount = unaddressed.filter { $0.kind == .review }.count
+        log("\(pending.identifier) has \(reviewCount) new review(s) and \(unaddressed.count - reviewCount) new comment(s) "
+            + "from \(login) on \(pullRequest.url)")
+        await daemon.enqueueReview(of: pending, pullRequest: pullRequest, feedback: unaddressed, workspace: workspace)
         return .queued
     }
 
@@ -678,9 +684,9 @@ struct WorkspaceProcessor: Sendable {
     }
 
     private enum ReviewCheck {
-        /// An agent is queued to address new reviews.
+        /// An agent is queued to address new reviews or comments.
         case queued
-        /// No review needs an agent.
+        /// No review or comment needs an agent.
         case none
         /// The reviews could not be checked; tried again next poll.
         case failed
