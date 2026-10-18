@@ -109,6 +109,7 @@ What the agents' work took is not part of the report: see [Stats](#stats).
 - **Per pull request:** the total, median, minimum and maximum of each measure, and a histogram of its values in 16 equal ranges from minimum to maximum, over the agents' pull requests — those of finished tasks that are open or merged, and the open ones listed for review. The measures are lines added and removed and files changed; tokens, cache reads and agent time, from the Claude transcripts; and CI time.
 - **All tracked tasks:** the tokens, cache reads, agent time and CI time of every task, with or without a pull request.
 - **Comment answers:** how many read-only sessions [answered the owner's comments](lifecycle.md#linear-comments), and their tokens, cache reads and agent time, from the latest 100 such sessions of each workspace that the state file keeps.
+- **Planning jobs:** how many [planning jobs](planning.md#daily-planning) ran, and their tokens, cache reads and agent time, from the latest 30 jobs of each workspace that the state file keeps for the daemon and `planning.json` keeps for `superlinear plan`.
 - **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
 
 Problems that left the stats incomplete, such as Linear, GitHub or the CI runs being out of reach, are printed first as warnings, each with its workspace's name. Like `status`, it takes no daemon lock, so it runs beside a daemon.
