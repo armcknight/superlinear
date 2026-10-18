@@ -921,10 +921,24 @@ actor Daemon {
     @discardableResult
     func propose(_ draft: ProposalDraft, workspace: WorkspaceConfig) async throws -> Proposal? {
         let screening = try await proposalEngine(workspace).screen(draft, existing: state.proposals(workspace: workspace.name))
-        guard case .store(let proposal, let applyNow) = screening else {
-            if case .skip(let reason) = screening {
-                log("Not proposing \(draft.payload.kind.rawValue): \(reason)", workspace: workspace.name)
+        let proposal: Proposal, applyNow: Bool
+        switch screening {
+        case .store(let stored, let now):
+            (proposal, applyNow) = (stored, now)
+        case .merge(let merged):
+            // Unless it was put in Linear, or decided, while the screening waited.
+            guard let current = state.proposals(workspace: workspace.name).first(where: { $0.id == merged.id }),
+                  current.status == .pending, current.post == nil
+            else {
+                log("Not proposing \(draft.payload.kind.rawValue): it repeats proposal \(merged.id), which was put in Linear meanwhile", workspace: workspace.name)
+                return nil
             }
+            state.recordProposal(merged, workspace: workspace.name)
+            save()
+            log("Merged a \(draft.payload.kind.rawValue) proposal into \(merged.id), the same work: \(draft.reason)", workspace: workspace.name)
+            return merged
+        case .skip(let reason):
+            log("Not proposing \(draft.payload.kind.rawValue): \(reason)", workspace: workspace.name)
             return nil
         }
         // Another proposal may have been stored while the screening waited on Linear.
@@ -955,7 +969,7 @@ actor Daemon {
     private func proposalEngine(_ workspace: WorkspaceConfig) -> ProposalEngine {
         ProposalEngine(
             workspace: workspace.name, autonomy: workspace.autonomy,
-            linear: LinearClient(apiKey: workspace.apiKey), audit: AuditLog()
+            linear: LinearClient(apiKey: workspace.apiKey), audit: AuditLog(), duplicates: ClaudeDuplicateJudge()
         )
     }
 
@@ -1010,6 +1024,9 @@ actor Daemon {
                         if snapshot != nil, let rejected = state.proposals(workspace: name).first(where: { $0.id == proposal.id }) {
                             await settle(rejected, poster: poster, workspace: workspace, now: now)
                         }
+                        if let original = snapshot?.duplicateOf {
+                            await proposeMerge(proposal, into: original, client: client, workspace: workspace)
+                        }
                     }
                 }
             } catch {
@@ -1025,6 +1042,23 @@ actor Daemon {
         save()
         for proposal in expired {
             await settle(proposal, poster: poster, workspace: workspace, now: now)
+        }
+    }
+
+    /// Proposes to add the text of a proposed issue, which the owner marked
+    /// a duplicate of `original` in Linear, to `original`, so that what it
+    /// says is not lost. A failure is logged; the proposal stays rejected.
+    private func proposeMerge(
+        _ proposal: Proposal, into original: ProposalIssueSnapshot.Related, client: LinearClient, workspace: WorkspaceConfig
+    ) async {
+        guard proposal.kind == .createIssue, let post = proposal.post else { return }
+        do {
+            let text = try await client.editableIssue(id: post.issueId).description
+            let issue = try await client.editableIssue(id: original.id)
+            guard !issue.handsOff, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            try await propose(IssueMerge.draft(merging: proposal, text: text, into: issue), workspace: workspace)
+        } catch {
+            log("Could not propose to merge \(post.issueIdentifier ?? post.issueId.rawValue) into \(original.identifier): \(error)", workspace: workspace.name)
         }
     }
 

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A new issue is compared with the open issues and proposals by an agent,
+  for the same work in other words, not by its title alone. This replaces
+  the close-title match. The candidates are the open issues that Linear's
+  search finds for its title, and the team's pending and rejected proposed
+  issues. A duplicate is merged, not dropped: what it adds to an open issue
+  becomes an `editIssue` proposal for that issue, and what it adds to a
+  pending proposal goes into it. A new issue that may be a duplicate is
+  proposed for review, with a comment on it that links each candidate. Mark
+  it a duplicate of one in Linear, and superlinear rejects it, names that
+  issue in the reason, and proposes to add its text to that issue.
 - `superlinear stats` shows how many sessions answered the owner's comments,
   and the tokens, cache reads and agent time they used.
 - superlinear answers the owner's comments in Linear. A question or a

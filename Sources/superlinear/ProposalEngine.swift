@@ -16,11 +16,14 @@ struct EditableIssue: Sendable, Equatable {
     var handsOff: Bool { labels.contains { $0.caseInsensitiveCompare(ProposalEngine.handsOffLabel) == .orderedSame } }
 }
 
-/// An open issue whose title may match a new one's.
+/// An open issue that Linear's search found for a new one's title, which
+/// may be the same work.
 struct IssueMatch: Sendable, Equatable {
     var id: LinearIssue.ID
     var identifier: String
     var title: String
+    var description: String = ""
+    var url: String?
 }
 
 /// A project's description or a document, as a spec change needs it.
@@ -89,6 +92,13 @@ struct ProposalIssueSnapshot: Sendable, Equatable {
     var stateType: LinearStateType
     var labels: [String]
     var comments: [Comment]
+    /// The issue it is marked a duplicate of, when it is.
+    var duplicateOf: Related?
+
+    struct Related: Sendable, Equatable {
+        var id: LinearIssue.ID
+        var identifier: String
+    }
 }
 
 /// The reads and writes in Linear that proposals need. `LinearClient` does
@@ -97,8 +107,8 @@ protocol LinearWriting: Sendable {
     /// The user the API key belongs to, whose reactions answer proposals.
     func viewerId() async throws -> LinearUser.ID
     func editableIssue(id: LinearIssue.ID) async throws -> EditableIssue
-    /// Open issues in the team whose titles look like `title`, as Linear's
-    /// search finds them.
+    /// Open issues in the team that Linear's search finds for `title`, with
+    /// their descriptions.
     func openIssues(like title: String, teamId: LinearTeam.ID) async throws -> [IssueMatch]
     /// The ID of the label with this name in the team or the workspace,
     /// created in the team when there is none.
@@ -168,39 +178,66 @@ struct ProposalEngine: Sendable {
     let autonomy: Autonomy
     let linear: any LinearWriting
     let audit: AuditLog
+    /// Decides whether a new issue is the same work as an open issue or a
+    /// proposal.
+    let duplicates: any DuplicateJudging
 
     enum Screening: Equatable {
         /// Store this proposal, and apply it at once when `applyNow`.
         case store(Proposal, applyNow: Bool)
+        /// Keep this pending proposal, not yet in Linear, in place of the one
+        /// with its ID: a new issue that repeats it merged into it.
+        case merge(Proposal)
         case skip(reason: String)
     }
 
-    /// What to do with `draft`, given the workspace's proposals so far. A new
-    /// issue like an open one becomes a relation between that one and the
-    /// issue the new one follows from, or nothing when it follows from none.
+    /// What to do with `draft`, given the workspace's proposals so far.
+    ///
+    /// A new issue is first compared with the open issues that Linear's
+    /// search finds for its title, and with the team's pending and rejected
+    /// proposed issues, by `duplicates`. One that is the same work as an
+    /// open issue becomes an edit that adds what it says to that issue; when
+    /// it adds nothing, a relation between that issue and the one the new
+    /// one follows from, or nothing when it follows from none. One that is
+    /// the same work as a pending proposal not yet in Linear is merged into
+    /// it, and one the same as a rejected proposal is not proposed. One that
+    /// may be the same work as some candidates is proposed for review, with
+    /// them listed; so is each when they could not be compared.
     func screen(_ draft: ProposalDraft, existing: [Proposal], now: Date = Date()) async throws -> Screening {
         // Before Linear's search, which a draft made again each poll, such
         // as one for a failing workflow, would otherwise repeat.
         if let repeated = Self.repeated(draft, in: existing) { return repeated }
         var draft = draft
-        if case .createIssue(let teamId, _, let title, _, let relatedIssueId) = draft.payload {
+        var possibleDuplicates: [PossibleDuplicate] = []
+        if case .createIssue(let teamId, _, let title, let description, _) = draft.payload {
             let matches = try await linear.openIssues(like: title, teamId: teamId)
-            if let match = matches.first(where: { TitleMatch.isClose($0.title, title) }) {
-                guard let relatedIssueId, relatedIssueId != match.id else {
-                    return .skip(reason: "\(match.identifier) is already open: \(match.title)")
+            let candidates = DuplicateCandidate.gather(teamId: teamId, matches: matches, existing: existing)
+            if !candidates.isEmpty {
+                let verdict: DuplicateVerdict
+                do {
+                    verdict = try await duplicates.judge(DuplicateQuestion(title: title, description: description, candidates: candidates))
+                } catch {
+                    print("[\(workspace)] Could not compare the proposed issue \"\(title)\" with \(candidates.count) candidate(s); listing them all for review: \(error)")
+                    verdict = .possible(keys: candidates.map(\.key))
                 }
-                draft = ProposalDraft(
-                    payload: .addRelation(relatedIssueId: match.id, type: "related"),
-                    target: .issue(relatedIssueId),
-                    reason: "\(match.identifier) already covers the proposed issue \"\(title)\". \(draft.reason)",
-                    source: draft.source
-                )
+                switch verdict {
+                case .distinct:
+                    break
+                case .possible(let keys):
+                    possibleDuplicates = candidates.filter { keys.contains($0.key) }.map(\.possible)
+                case .duplicate(let key, let added):
+                    guard let candidate = candidates.first(where: { $0.key == key }) else { break }
+                    switch try await repeating(draft, candidate: candidate, added: added) {
+                    case .screening(let screening): return screening
+                    case .draft(let replacement): draft = replacement
+                    }
+                }
             }
         }
 
         if let repeated = Self.repeated(draft, in: existing) { return repeated }
 
-        let trust = autonomy.level(for: draft.payload.kind)
+        var trust = autonomy.level(for: draft.payload.kind)
         guard trust != .never else {
             return .skip(reason: "\(draft.payload.kind.rawValue) proposals are set to never")
         }
@@ -208,7 +245,58 @@ struct ProposalEngine: Sendable {
         if trust == .review, case .postProjectUpdate(_, nil) = draft.payload {
             return .skip(reason: "a project update proposal needs the project's overview issue to be proposed on")
         }
-        return .store(Proposal(draft, trust: trust, now: now), applyNow: trust == .auto)
+        // The owner decides whether it repeats them.
+        if !possibleDuplicates.isEmpty { trust = .review }
+        var proposal = Proposal(draft, trust: trust, now: now)
+        if !possibleDuplicates.isEmpty { proposal.possibleDuplicates = possibleDuplicates }
+        return .store(proposal, applyNow: trust == .auto)
+    }
+
+    private enum Repeat {
+        case screening(Screening)
+        /// Screen this draft in place of the new issue.
+        case draft(ProposalDraft)
+    }
+
+    /// What becomes of the new issue in `draft`, the same work as `candidate`,
+    /// to which it adds `added`.
+    private func repeating(_ draft: ProposalDraft, candidate: DuplicateCandidate, added: String) async throws -> Repeat {
+        guard case .createIssue(_, _, let title, _, let relatedIssueId) = draft.payload else { return .draft(draft) }
+        let section = IssueMerge.section(title: title, added: added)
+        switch candidate {
+        case .proposal(let earlier) where earlier.status == .rejected:
+            return .screening(.skip(reason: "It is the same work as \"\(candidate.title)\", which was rejected before"))
+        case .proposal(var earlier):
+            guard !added.isEmpty,
+                  case .createIssue(let teamId, let projectId, let earlierTitle, let description, let related) = earlier.payload
+            else { return .screening(.skip(reason: "It is the same work as \"\(candidate.title)\", which is pending already")) }
+            earlier.payload = .createIssue(
+                teamId: teamId, projectId: projectId, title: earlierTitle,
+                description: IssueMerge.appending(section, to: description), relatedIssueId: related)
+            return .screening(.merge(earlier))
+        case .issue(let match):
+            if !added.isEmpty {
+                let issue = try await linear.editableIssue(id: match.id)
+                if !issue.handsOff {
+                    return .draft(ProposalDraft(
+                        payload: IssueMerge.edit(issue, adding: section),
+                        target: .issue(issue.id, name: issue.identifier),
+                        reason: "\(match.identifier) is the same work as the proposed issue \"\(title)\", which adds to it. \(draft.reason)",
+                        source: draft.source,
+                        targetUpdatedAt: issue.updatedAt
+                    ))
+                }
+            }
+            guard let relatedIssueId, relatedIssueId != match.id else {
+                return .screening(.skip(reason: "\(match.identifier) is already open: \(match.title)"))
+            }
+            return .draft(ProposalDraft(
+                payload: .addRelation(relatedIssueId: match.id, type: "related"),
+                target: .issue(relatedIssueId),
+                reason: "\(match.identifier) already covers the proposed issue \"\(title)\". \(draft.reason)",
+                source: draft.source
+            ))
+        }
     }
 
     /// A skip when the same change is pending or was rejected.

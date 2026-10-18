@@ -172,8 +172,8 @@ struct ProposalSource: Codable, Sendable, Equatable {
 /// text of its managed block, not of the whole description.
 enum ProposalPayload: Codable, Sendable, Equatable {
     /// `relatedIssueId` is the issue the new one follows from, if any. Should
-    /// an open issue like the new one exist already, a relation to it is
-    /// proposed instead.
+    /// an open issue that is the same work, with nothing to add to it, exist
+    /// already, a relation to it is proposed instead.
     case createIssue(
         teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
         relatedIssueId: LinearIssue.ID?
@@ -274,6 +274,9 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
     /// one is yet to be posted; state files from before proposals were
     /// reviewed in Linear have none.
     var post: ProposalPost?
+    /// For a new issue, the open issues and proposals that may be the same
+    /// work, listed for the owner on the proposed issue.
+    var possibleDuplicates: [PossibleDuplicate]?
 
     /// Whether it waits for the owner's answer in Linear.
     var isPosted: Bool { status == .pending && post != nil }
@@ -301,7 +304,7 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
         var key = "\(payload.kind.rawValue) \(target.kind.rawValue):\(target.rawID)"
         switch payload {
         case .createIssue(_, _, let title, _, _):
-            key += " " + TitleMatch.normalized(title)
+            key += " " + normalized(title)
         case .addRelation(let relatedIssueId, let type):
             key += " \(type) \(relatedIssueId)"
         default:
@@ -309,46 +312,13 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
         }
         return key
     }
-}
 
-/// Whether two issue titles name the same work: equal once case, punctuation
-/// and spacing are set aside, or close by the Sørensen–Dice coefficient of
-/// their letter pairs, which forgives plurals and small rewordings.
-///
-/// TODO: SPL-24. A title match misses the same intent in other words; an
-/// agent is to find such duplicates and propose them for review.
-enum TitleMatch {
-    static let closeness = 0.8
-
+    /// A title without case, punctuation or extra spacing.
     static func normalized(_ title: String) -> String {
         title.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-    }
-
-    static func isClose(_ a: String, _ b: String) -> Bool {
-        similarity(a, b) >= closeness
-    }
-
-    static func similarity(_ a: String, _ b: String) -> Double {
-        let (a, b) = (normalized(a), normalized(b))
-        if a == b { return 1 }
-        let (pairsA, pairsB) = (bigrams(a), bigrams(b))
-        guard !pairsA.isEmpty, !pairsB.isEmpty else { return 0 }
-        let shared = pairsA.reduce(0) { sum, entry in sum + min(entry.value, pairsB[entry.key] ?? 0) }
-        let total = pairsA.values.reduce(0, +) + pairsB.values.reduce(0, +)
-        return Double(2 * shared) / Double(total)
-    }
-
-    private static func bigrams(_ text: String) -> [String: Int] {
-        let characters = Array(text)
-        guard characters.count > 1 else { return [:] }
-        var pairs: [String: Int] = [:]
-        for index in 0..<(characters.count - 1) {
-            pairs[String(characters[index...index + 1]), default: 0] += 1
-        }
-        return pairs
     }
 }
 

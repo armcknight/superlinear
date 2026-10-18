@@ -38,8 +38,31 @@ The workspace's [`autonomy`](configuration.md#autonomy) config sets what happens
 - **Your text is yours.** In an issue without the `superlinear` label, an edit changes only the managed block between `<!-- superlinear -->` and `<!-- /superlinear -->`, which Linear does not show; it adds the block at the end when there is none. The rest of the description is left exactly as it was. In an issue with the label, an edit replaces the description.
 - **Hands off.** An issue with the label `superlinear: hands off` is never edited, closed, promoted or related. A proposal to change one is rejected.
 - **No lost updates.** A proposal records the target's `updatedAt` when it was worked out. Before an edit, closure, promotion or spec change, superlinear reads the target again. If it changed after that time, the proposal is not applied but stays pending, sent back for review with a note, even when its kind is `auto`: it is [asked again in Linear](#standup), against the target as it is now. A proposal without the time is checked against the old text instead. Times within a second count as the same, as the state file keeps dates to the second.
-- **No duplicates.** Before a new issue is proposed, Linear's search looks for open issues in its team with the same title or a close one, by the [Sørensen–Dice coefficient](https://en.wikipedia.org/wiki/Dice-S%C3%B8rensen_coefficient) of their letter pairs, at 0.8 or more, once case and punctuation are set aside. When one is found, nothing is proposed, or, for an issue that follows from another, a `related` relation between that one and the open one. A change already pending, or rejected before, is not proposed again: the same kind and target, and for a new issue the same title, for a relation the same other issue and type.
+- **No duplicates.** A change already pending, or rejected before, is not proposed again: the same kind and target, and for a new issue the same title once case and punctuation are set aside, for a relation the same other issue and type. A new issue is also compared with the open issues and proposals by an agent, for the same work in other words: see [Duplicate issues](#duplicate-check).
 - **Proposals expire.** A proposal still pending [`proposalExpiryDays`](configuration.md#proposal-expiry-days) days after it was [put in Linear](#standup) expires: its comment says so, or its issue is canceled with a note. One not yet in Linear does not expire. Applied and expired proposals drop out of the state file 30 days after; rejected ones stay, to keep the change from coming back.
+
+<a id="duplicate-check"></a>
+### Duplicate issues
+
+Before a new issue is proposed, superlinear looks for the same work under another title. Its candidates are:
+
+- the open issues in its team that Linear's search finds for its title, at most 10;
+- the team's proposed issues that are pending or were rejected, at most 20, newest first. One already in Linear counts as the issue it is.
+
+When there is one or more, a short headless Claude session, `claude -p` with no tools, gets the new issue's title and description and each candidate's, and says whether the new issue is the same work as one of them, may be the same work as some, or is the same work as none. Two issues are the same work when doing one would do the other: "Retry failed syncs" and "Make sync robust to network errors" are. Duplicates can say different things, so superlinear merges them, rather than keeping one and losing the other:
+
+| The new issue is | What is proposed |
+| --- | --- |
+| The same work as an open issue, and says something that issue does not | An `editIssue` proposal that adds what it says to that issue, under the heading `Also from "<title>"`: to the description of an issue superlinear created, or else to the managed block. |
+| The same work as an open issue, and adds nothing | Nothing, or, for an issue that follows from another, a `related` relation between that one and the open one. |
+| The same work as a pending proposal not yet in Linear | Nothing new: what it adds goes into that proposal's description. |
+| The same work as a rejected proposal | Nothing. |
+| Maybe the same work as some candidates | The new issue, for review even when `createIssue` is `auto`, with a comment on the proposed issue that links each candidate. |
+| The same work as none | The new issue. |
+
+The session's answer names the candidates by their keys, and keys it does not know are dropped. When the session fails or its answer cannot be read, the daemon logs it and proposes the new issue for review, with every candidate listed. A hands-off issue gets no edit.
+
+On a proposed issue that lists possible duplicates, you decide: accept it, decline it, or mark it a duplicate of one of them in Linear. Marking it a duplicate rejects the proposal, with the issue it duplicates in the reason, and proposes an `editIssue` that adds the proposed issue's description to that issue, so that nothing it says is lost. Reject that edit with 👎 when the issue says it all already.
 
 <a id="audit-log"></a>
 ### The audit log
@@ -106,7 +129,7 @@ Agents find bugs and missing work outside their issue. Every agent's prompt — 
 
 `kind` is `bug`, `task`, `test` or `spec`. `evidence` is the file and line, the failing command, or a log excerpt. `relatedIssue` is optional: the issue the work blocks or relates to. Before each launch, the daemon adds `/.superlinear/` to the repository's `info/exclude`, which every worktree shares, so git ignores the file.
 
-When an agent exits, the daemon reads the file and stores each entry as a `createIssue` proposal in the team of the agent's issue. Its description has the entry's description, kind, evidence and related issue, and its source is the agent's session, issue and pull request. The new issue follows from `relatedIssue`, or else from the agent's issue, so an open issue with a close title becomes an `addRelation` proposal between the two instead. Entries that could not be proposed, as when Linear is down, stay in the file for the next agent on the issue; the rest are removed with it. A malformed file — not a JSON array of entries, an unknown `kind`, or a blank title, description or evidence — is logged, nothing in it is proposed, and it stays where it is for inspection.
+When an agent exits, the daemon reads the file and stores each entry as a `createIssue` proposal in the team of the agent's issue. Its description has the entry's description, kind, evidence and related issue, and its source is the agent's session, issue and pull request. The new issue follows from `relatedIssue`, or else from the agent's issue, so an open issue that is the [same work](#duplicate-check), with nothing to add to it, becomes an `addRelation` proposal between the two instead. Entries that could not be proposed, as when Linear is down, stay in the file for the next agent on the issue; the rest are removed with it. A malformed file — not a JSON array of entries, an unknown `kind`, or a blank title, description or evidence — is logged, nothing in it is proposed, and it stays where it is for inspection.
 
 Two more sources make `createIssue` proposals:
 
@@ -120,7 +143,7 @@ Proposals that need you are reviewed in Linear, where the rest of your triage ha
 
 | Kind | In Linear | Approve | Reject |
 | --- | --- | --- | --- |
-| `createIssue` | The issue itself, created at once in the team's **Triage** state, with the labels `superlinear` and `superlinear: proposed`, its reason and its source. | Accept it from Triage, into any state. | Decline or cancel it, or mark it a duplicate. |
+| `createIssue` | The issue itself, created at once in the team's **Triage** state, with the labels `superlinear` and `superlinear: proposed`, its reason and its source, and a comment that links its [possible duplicates](#duplicate-check), if any. | Accept it from Triage, into any state. | Decline or cancel it, or mark it a duplicate. Marking it a duplicate of an issue proposes to add its text to that issue. |
 | `editIssue`, `closeIssue`, `addRelation`, `promoteIssue` | A comment on the target issue, written by superlinear: what it proposes, the reason, the source, and for an edit the diff of the managed block. The issue gets the label `superlinear: proposed` while it waits. | React 👍 on the comment. | React 👎 on the comment. |
 | `changeSpec` | An issue in Triage, labeled `superlinear: spec` as well, with the diff of the spec and a link to the document or the project. | Accept it from Triage. The change is applied to the document or project, and the issue completed. | Decline or cancel it, or mark it a duplicate. |
 | `postProjectUpdate` | A comment on the project's overview issue, as above. | React 👍. | React 👎. |

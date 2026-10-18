@@ -525,7 +525,7 @@ struct PlanningTests {
         #expect(result.drafts.map(\.payload.kind) == PlanningPrompt.kinds)
         let audit = scratch()
         defer { try? FileManager.default.removeItem(at: audit) }
-        let engine = ProposalEngine(workspace: "w", autonomy: Autonomy(), linear: linear, audit: AuditLog(directory: audit))
+        let engine = ProposalEngine(workspace: "w", autonomy: Autonomy(), linear: linear, audit: AuditLog(directory: audit), duplicates: StubDuplicates())
         var stored: [Proposal] = []
         for draft in result.drafts {
             guard case .store(let proposal, let applyNow) = try await engine.screen(draft, existing: stored) else {
