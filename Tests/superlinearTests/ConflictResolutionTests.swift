@@ -79,7 +79,7 @@ struct ConflictResolutionTests {
         #expect(PullRequestChecker.listOpenArguments.last?.contains("mergeable") == true)
     }
 
-    @Test("A conflicting pull request says so under Awaiting review, and so does an agent resolving it")
+    @Test("A conflicting pull request says so under Waiting on you, and so does an agent resolving it")
     func rendered() {
         func pullRequest(_ number: PullRequest.Number, branch: String) -> ReviewablePullRequest {
             ReviewablePullRequest(
@@ -102,7 +102,7 @@ struct ConflictResolutionTests {
         )
         #expect(report.rendered() == """
         w
-          Awaiting review
+          Waiting on you
             SL-1  #4 PR 4
                   agent resolving conflicts · conflicts with main · no CI · https://github.com/o/r/pull/4
             SL-2  #5 PR 5

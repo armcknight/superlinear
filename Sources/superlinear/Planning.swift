@@ -17,7 +17,7 @@ struct PlanningRun: Codable, Sendable, Equatable {
     var resumes: Int = 0
 }
 
-/// What one planning job did, kept for the trigger and the standup.
+/// What one planning job did, kept for the trigger and `superlinear status`.
 struct PlanningRunRecord: Codable, Sendable, Equatable {
     var sessionId: ClaudeSession.ID
     var startedAt: Date
@@ -121,9 +121,9 @@ struct WorkspacePlanning: Codable, Sendable, Equatable {
     }
 }
 
-/// The file `superlinear plan` writes, per workspace. Like the standup's, it
-/// is apart from the state file, which only the daemon writes; the daemon
-/// reads this one at each poll and takes in the proposals it lacks.
+/// The file `superlinear plan` writes, per workspace. It is apart from the
+/// state file, which only the daemon writes; the daemon reads this one at
+/// each poll and takes in the proposals it lacks.
 struct PlanningRecord: Codable, Sendable, Equatable {
     var workspaces: [String: WorkspacePlanning] = [:]
 

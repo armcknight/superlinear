@@ -30,8 +30,8 @@ struct WorkspaceConfig: Decodable, Sendable {
     let humanLabels: [String]
     /// The trust level of each kind of proposal.
     let autonomy: Autonomy
-    /// Days after which a pending proposal expires, counted from the first
-    /// standup that showed it.
+    /// Days after which a pending proposal expires, counted from when it was
+    /// put in Linear.
     let proposalExpiryDays: Int
     /// Planning settings.
     let planning: PlanningConfig
@@ -90,9 +90,8 @@ struct WorkspaceConfig: Decodable, Sendable {
 struct PlanningConfig: Decodable, Sendable, Equatable {
     /// Whether the planning job runs.
     var enabled = false
-    /// The Linear document holding the project's spec. The planning job reads
-    /// it, and decisions entered at standup are added to it as well as to
-    /// their issues.
+    /// The Linear document holding the project's spec, which the planning
+    /// job reads and may propose changes to.
     var specDocumentURL: String?
 
     init(enabled: Bool = false, specDocumentURL: String? = nil) {

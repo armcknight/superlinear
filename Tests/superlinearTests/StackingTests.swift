@@ -234,7 +234,7 @@ struct StackingTests {
         )
         #expect(report.rendered() == """
         w
-          Awaiting review
+          Waiting on you
             SL-1  #1 PR 1
                   not reviewed · no CI · https://github.com/o/r/pull/1
               SL-2  #2 PR 2
@@ -246,24 +246,30 @@ struct StackingTests {
         """)
     }
 
-    @Test("The standup lists a draft whose lower pull request was closed, for a decision")
-    func standupListsDraftedForDecision() {
+    @Test("The status lists a draft whose lower pull request was closed, for a decision")
+    func statusListsDraftedForDecision() {
         var drafted = base
         drafted.drafted = true
         var state = WorkspaceState()
+        state.processedIssueIds = ["id-SL-2"]
         state.pendingMerges = ["id-SL-2": PendingMerge(
             issueId: "id-SL-2", identifier: "SL-2", branchName: "b-SL-2", reviewsHandledThrough: nil, conflictAttempt: nil, stack: drafted)]
-        let draft = ReviewablePullRequest(
+        var draft = upper
+        draft.isDraft = true
+        let issue = LinearIssueStatus(
+            id: "id-SL-2", identifier: "SL-2", title: "Two", branchName: "b-SL-2", state: .init(name: "In Progress", type: "started"))
+        let reviewable = ReviewablePullRequest(
             number: 2, url: "https://github.com/o/r/pull/2", title: "Two", headRefName: "b-SL-2", isDraft: true,
             reviewDecision: "", latestReviews: nil, statusCheckRollup: nil, baseRefName: "b-SL-1")
-        let other = ReviewablePullRequest(
-            number: 5, url: "https://github.com/o/r/pull/5", title: "Five", headRefName: "b-5", isDraft: true,
-            reviewDecision: "", latestReviews: nil, statusCheckRollup: nil, baseRefName: "main")
-        let waiting = Standup.waitingOnYou([draft, other], state: state)
-        #expect(waiting.map(\.pullRequest.number) == [2])
-        #expect(waiting.first?.baseClosed == 1)
-        let text = StandupView.describe(waiting[0]).joined(separator: "\n")
-        #expect(text.contains("draft: stacked on #1, closed without a merge; decide what becomes of it"))
+        // Not waiting on you: it is listed with the drafts, for a decision.
+        #expect(StatusReview.waitingOnYou([reviewable], state: state).isEmpty)
+        let report = WorkspaceReport(
+            name: "w",
+            entries: WorkspaceReport.entries(state: state, issues: [issue], pullRequests: [draft], runner: AgentRunner(home: "/home")),
+            reviews: [ReviewEntry(issue: issue, pullRequest: reviewable)],
+            warnings: []
+        )
+        #expect(report.rendered().contains("stacked on #1, closed without a merge: decide what becomes of it"))
     }
 
     // MARK: Git

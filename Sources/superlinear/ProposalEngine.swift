@@ -29,9 +29,66 @@ struct SpecText: Sendable, Equatable {
     var updatedAt: Date
 }
 
+/// A team's workflow states, as a new issue needs them to find Triage or
+/// Backlog.
+struct TeamStates: Sendable, Equatable {
+    struct State: Sendable, Equatable {
+        var id: LinearState.ID
+        var type: LinearStateType
+        var position: Double
+    }
+
+    var triageEnabled: Bool
+    var states: [State]
+
+    /// The first state of `type`, by position.
+    func first(_ type: LinearStateType) -> State? {
+        states.filter { $0.type == type }.min { $0.position < $1.position }
+    }
+}
+
+/// What Linear answered when an issue was created.
+struct CreatedIssue: Sendable, Equatable {
+    var id: LinearIssue.ID
+    var identifier: String
+    var url: String?
+    var response: JSONValue
+}
+
+/// What Linear answered when a comment was created.
+struct CreatedComment: Sendable, Equatable {
+    var id: LinearComment.ID
+    var url: String?
+    var response: JSONValue
+}
+
+/// An issue a proposal waits on, as a poll reads it: where it is, its labels,
+/// and its comments with their reactions.
+struct ProposalIssueSnapshot: Sendable, Equatable {
+    struct Comment: Sendable, Equatable {
+        var id: LinearComment.ID
+        var reactions: [Reaction]
+    }
+
+    struct Reaction: Sendable, Equatable {
+        /// The emoji, as Linear names it: `👍`, `+1` or `thumbsup`, with or
+        /// without a skin tone.
+        var emoji: String
+        var userId: LinearUser.ID?
+    }
+
+    var id: LinearIssue.ID
+    var identifier: String
+    var stateType: LinearStateType
+    var labels: [String]
+    var comments: [Comment]
+}
+
 /// The reads and writes in Linear that proposals need. `LinearClient` does
 /// them for real; tests stand in for it. Each write returns Linear's response.
 protocol LinearWriting: Sendable {
+    /// The user the API key belongs to, whose reactions answer proposals.
+    func viewerId() async throws -> LinearUser.ID
     func editableIssue(id: LinearIssue.ID) async throws -> EditableIssue
     /// Open issues in the team whose titles look like `title`, as Linear's
     /// search finds them.
@@ -39,15 +96,32 @@ protocol LinearWriting: Sendable {
     /// The ID of the label with this name in the team or the workspace,
     /// created in the team when there is none.
     func labelId(named name: String, teamId: LinearTeam.ID) async throws -> LinearLabel.ID
+    func teamStates(id: LinearTeam.ID) async throws -> TeamStates
+    /// Turns on Triage for the team. Throws when the API key may not.
+    func enableTriage(teamId: LinearTeam.ID) async throws
+    /// Creates an issue, in the team's default state when `stateId` is nil.
     func createIssue(
-        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String, labelIds: [LinearLabel.ID]
-    ) async throws -> JSONValue
+        teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
+        labelIds: [LinearLabel.ID], stateId: LinearState.ID?
+    ) async throws -> CreatedIssue
     func updateIssueDescription(id: LinearIssue.ID, description: String) async throws -> JSONValue
     /// Moves the issue to its team's first canceled state.
     func closeIssue(id: LinearIssue.ID) async throws -> JSONValue
     /// Moves the issue to its team's first unstarted state, such as Todo.
     func promoteIssue(id: LinearIssue.ID) async throws -> JSONValue
+    /// Moves the issue to its team's first completed state. Returns false
+    /// when it was completed or canceled already.
+    func completeIssue(id: LinearIssue.ID) async throws -> Bool
+    /// Moves the issue to its team's first state of `type`.
+    func moveIssue(id: LinearIssue.ID, toFirst type: LinearStateType) async throws -> JSONValue
     func createRelation(issueId: LinearIssue.ID, relatedIssueId: LinearIssue.ID, type: String) async throws -> JSONValue
+    func createComment(issueId: LinearIssue.ID, body: String) async throws -> CreatedComment
+    func updateComment(id: LinearComment.ID, body: String) async throws -> JSONValue
+    func addLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue
+    func removeLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue
+    /// The issues with these IDs, with their comments and reactions. Issues
+    /// Linear no longer has, as when deleted or archived, are absent.
+    func proposalIssues(ids: [LinearIssue.ID]) async throws -> [ProposalIssueSnapshot]
     func spec(of target: ProposalTarget) async throws -> SpecText
     func updateSpec(of target: ProposalTarget, content: String) async throws -> JSONValue
     func postProjectUpdate(projectId: LinearProject.ID, body: String) async throws -> JSONValue
@@ -71,6 +145,11 @@ struct ProposalEngine: Sendable {
     static let label = "superlinear"
     /// An issue with this label is never changed.
     static let handsOffLabel = "superlinear: hands off"
+    /// The label on each issue that holds a pending proposal: one superlinear
+    /// created to propose, or one with a proposal's comment.
+    static let proposedLabel = "superlinear: proposed"
+    /// The label on an issue that proposes a spec change.
+    static let specLabel = "superlinear: spec"
     /// The state file keeps dates to the second, and Linear to the
     /// millisecond, so an `updatedAt` within this much of the one proposed
     /// counts as the same.
@@ -116,6 +195,10 @@ struct ProposalEngine: Sendable {
         guard trust != .never else {
             return .skip(reason: "\(draft.payload.kind.rawValue) proposals are set to never")
         }
+        // Without an issue to comment on, there is nowhere in Linear to ask.
+        if trust == .review, case .postProjectUpdate(_, nil) = draft.payload {
+            return .skip(reason: "a project update proposal needs the project's overview issue to be proposed on")
+        }
         return .store(Proposal(draft, trust: trust, now: now), applyNow: trust == .auto)
     }
 
@@ -133,6 +216,10 @@ struct ProposalEngine: Sendable {
     /// applied; rejected, when its issue is hands off; or pending, sent back
     /// for review when its target changed since it was proposed, or with the
     /// error when the write failed. Each applied change goes in the audit log.
+    ///
+    /// A proposal sent back for review takes the target's `updatedAt` as it
+    /// is now, so that approving it again applies it to the target as the
+    /// owner saw it, unless it changes once more.
     func apply(_ proposal: Proposal, now: Date = Date()) async -> Proposal {
         var proposal = proposal
         proposal.lastError = nil
@@ -151,9 +238,10 @@ struct ProposalEngine: Sendable {
                 proposal.status = .rejected
                 proposal.decidedAt = now
                 proposal.rejectionReason = "\(identifier) has the label \"\(Self.handsOffLabel)\""
-            case .changed(let note):
-                proposal.trust = .standup
+            case .changed(let note, let updatedAt):
+                proposal.trust = .review
                 proposal.reviewNote = note
+                proposal.targetUpdatedAt = updatedAt
             }
         } catch {
             proposal.lastError = "\(error)"
@@ -164,20 +252,26 @@ struct ProposalEngine: Sendable {
     private enum Outcome {
         case applied(JSONValue)
         case handsOff(String)
-        case changed(String)
+        /// The target changed in Linear; `updatedAt` is its time now.
+        case changed(String, updatedAt: Date)
     }
 
     private func write(_ proposal: Proposal) async throws -> Outcome {
         let target = proposal.target
         switch proposal.payload {
         case .createIssue(let teamId, let projectId, let title, let description, _):
+            // One proposed in Linear exists already: accepting it is the change.
+            if let post = proposal.post, post.isIssue {
+                let labelId = try await linear.labelId(named: Self.proposedLabel, teamId: teamId)
+                return .applied(try await linear.removeLabel(issueId: post.issueId, labelId: labelId))
+            }
             let labelId = try await linear.labelId(named: Self.label, teamId: teamId)
             let body = [description, proposal.source.line]
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .joined(separator: "\n\n")
             return .applied(try await linear.createIssue(
-                teamId: teamId, projectId: projectId, title: title, description: body, labelIds: [labelId]
-            ))
+                teamId: teamId, projectId: projectId, title: title, description: body, labelIds: [labelId], stateId: nil
+            ).response)
 
         case .editIssue(let oldText, let newText):
             let issue = try await issue(target, for: proposal)
@@ -186,7 +280,7 @@ struct ProposalEngine: Sendable {
             // against tells whether the issue changed.
             let current = issue.createdBySuperlinear ? issue.description : ManagedBlock.contents(of: issue.description) ?? ""
             if proposal.targetUpdatedAt == nil, current != oldText {
-                return .changed(changedNote(target, name: issue.identifier))
+                return .changed(changedNote(target, name: issue.identifier), updatedAt: issue.updatedAt)
             }
             let description = issue.createdBySuperlinear ? newText : ManagedBlock.replacing(in: issue.description, with: newText)
             return .applied(try await linear.updateIssueDescription(id: issue.id, description: description))
@@ -200,7 +294,7 @@ struct ProposalEngine: Sendable {
             let issue = try await issue(target, for: proposal)
             if let refusal = refusal(of: proposal, on: issue) { return refusal }
             guard issue.stateType == .backlog else {
-                return .changed("\(issue.identifier) is no longer in the backlog")
+                return .changed("\(issue.identifier) is no longer in the backlog", updatedAt: issue.updatedAt)
             }
             return .applied(try await linear.promoteIssue(id: issue.id))
 
@@ -219,10 +313,10 @@ struct ProposalEngine: Sendable {
             } else {
                 spec.content != oldText
             }
-            if changed { return .changed(changedNote(target)) }
+            if changed { return .changed(changedNote(target), updatedAt: spec.updatedAt) }
             return .applied(try await linear.updateSpec(of: target, content: newText))
 
-        case .postProjectUpdate(let body):
+        case .postProjectUpdate(let body, _):
             guard case .project(let projectId, _) = target else {
                 throw ProposalError.unsupportedTarget(proposal.kind, target.kind)
             }
@@ -241,7 +335,7 @@ struct ProposalEngine: Sendable {
         if issue.handsOff { return .handsOff(issue.identifier) }
         if let proposed = proposal.targetUpdatedAt,
            issue.updatedAt > proposed.addingTimeInterval(Self.updatedAtTolerance) {
-            return .changed(changedNote(proposal.target, name: issue.identifier))
+            return .changed(changedNote(proposal.target, name: issue.identifier), updatedAt: issue.updatedAt)
         }
         return nil
     }

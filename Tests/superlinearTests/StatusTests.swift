@@ -213,7 +213,7 @@ struct StatusTests {
         """)
     }
 
-    @Test("A pull request whose review an agent addresses says so under Awaiting review")
+    @Test("A pull request whose review an agent addresses says so under Waiting on you")
     func awaitingAgent() {
         let pullRequest = ReviewablePullRequest(
             number: 4, url: "https://github.com/o/r/pull/4", title: "Four", headRefName: "linear/sl-1",
@@ -227,7 +227,7 @@ struct StatusTests {
         )
         #expect(report.rendered() == """
         w
-          Awaiting review
+          Waiting on you
             SL-1  #4 Four
                   agent addressing review · no CI · https://github.com/o/r/pull/4
           Addressing review
@@ -237,7 +237,7 @@ struct StatusTests {
         // The note follows the task the filter leaves out.
         #expect(report.filtered(to: [.awaitingReview]).rendered() == """
         w
-          Awaiting review
+          Waiting on you
             SL-1  #4 Four
                   agent addressing review · no CI · https://github.com/o/r/pull/4
         """)
@@ -331,6 +331,19 @@ struct StatusTests {
             old
               merged in #4
         """)
+    }
+
+    @Test("A filter keeps what waits on you, what was done and the risks only when named")
+    func filteredReviewSections() {
+        var report = WorkspaceReport(name: "w", entries: [], warnings: [])
+        report.done = ["started SL-1"]
+        report.risks = ["CI fails on main"]
+        let done = report.filtered(to: [.done])
+        #expect(done.done == ["started SL-1"])
+        #expect(done.risks == nil)
+        let risks = report.filtered(to: [.risks])
+        #expect(risks.done == nil)
+        #expect(risks.rendered() == "w\n  Risks\n    CI fails on main")
     }
 
     @Test("Blocked and human-labeled issues are listed from the state file, with their blockers and labels")

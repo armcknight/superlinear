@@ -135,7 +135,6 @@ struct ClaudeUsageLimitTests {
         #expect(stopped.resumes == 1)
         #expect(stopped.launchFailures == 2)
         #expect(stopped.queuedAt == now)
-        #expect(!stopped.isFresh)
         // A second limit right after the resume changes nothing more.
         run = stopped
         run.pid = 43
@@ -143,7 +142,7 @@ struct ClaudeUsageLimitTests {
         #expect(run.stoppedByUsageLimit() == stopped)
     }
 
-    @Test("Interrupted sessions resume first, ahead of older and standup-ranked runs")
+    @Test("Interrupted sessions resume first, ahead of older runs")
     func interruptedFirst() {
         func run(_ id: String, at seconds: TimeInterval, limited: Bool = false) -> (String, AgentRun) {
             var run = AgentRun(
@@ -152,11 +151,11 @@ struct ClaudeUsageLimitTests {
             if limited { run = run.stoppedByUsageLimit() }
             return ("w", run)
         }
-        let runs = [run("old", at: 1), run("ranked", at: 2), run("limited", at: 50, limited: true)]
-        let next = AgentRunner.nextQueued(runs) { _, run in run.issueId == "ranked" ? 0 : nil }
+        let runs = [run("old", at: 1), run("newer", at: 2), run("limited", at: 50, limited: true)]
+        let next = AgentRunner.nextQueued(runs)
         #expect(next?.1.identifier == "limited")
         #expect(next?.1.sessionId == "limited")
-        #expect(AgentRunner.nextQueued(Array(runs.prefix(2))) { _, run in run.issueId == "ranked" ? 0 : nil }?.1.identifier == "ranked")
+        #expect(AgentRunner.nextQueued(Array(runs.prefix(2)))?.1.identifier == "old")
     }
 
     @Test("The pause is kept in the state file, and lifted by resume")

@@ -298,17 +298,11 @@ struct AgentRunner: Sendable {
     }
 
     /// The waiting run to launch next: one the Claude usage limit stopped,
-    /// then the new issue a standup moved furthest up, by `rank`, then the
-    /// run queued longest ago.
-    static func nextQueued<Key>(
-        _ runs: [(Key, AgentRun)], rank: (Key, AgentRun) -> Int? = { _, _ in nil }
-    ) -> (Key, AgentRun)? {
+    /// then the run queued longest ago.
+    static func nextQueued<Key>(_ runs: [(Key, AgentRun)]) -> (Key, AgentRun)? {
         runs.filter { $0.1.isQueued }.min { a, b in
             let (limitedA, limitedB) = (a.1.usageLimited == true, b.1.usageLimited == true)
             if limitedA != limitedB { return limitedA }
-            let rankA = (a.1.isFresh ? rank(a.0, a.1) : nil) ?? .max
-            let rankB = (b.1.isFresh ? rank(b.0, b.1) : nil) ?? .max
-            if rankA != rankB { return rankA < rankB }
             let (dateA, dateB) = (a.1.queuedAt ?? .distantPast, b.1.queuedAt ?? .distantPast)
             return dateA == dateB ? a.1.identifier < b.1.identifier : dateA < dateB
         }

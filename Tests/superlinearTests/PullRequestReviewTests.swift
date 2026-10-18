@@ -75,7 +75,7 @@ struct PullRequestReviewTests {
             warnings: []
         )
         let text = report.rendered()
-        #expect(text.contains("Awaiting review"))
+        #expect(text.contains("Waiting on you"))
         #expect(text.contains("#2 feat: status"))
         #expect(text.contains("not reviewed · CI passing · https://github.com/o/r/pull/2"))
         #expect(text.contains("Draft pull requests"))

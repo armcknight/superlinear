@@ -8,10 +8,9 @@ let usage = """
 Usage: superlinear [--config <path>]
        superlinear install [--force]
        superlinear uninstall
-       superlinear status [--status <names>] [--workspace <names>] [--config <path>]
+       superlinear status [--since <duration>] [--status <names>] [--workspace <names>] [--config <path>]
        superlinear stats [--config <path>]
        superlinear proposals [--workspace <name>] [--config <path>]
-       superlinear standup [--print] [--workspace <name>] [--config <path>]
        superlinear plan [--workspace <name>] [--config <path>]
        superlinear resume
 
@@ -24,17 +23,22 @@ Subcommands:
               binary leaves an agent that runs a local build in place;
               --force replaces it anyway.
   uninstall   Unload the launchd agent and remove it.
-  status      List each workspace's open pull requests for Linear issues,
-              awaiting review with review and CI state, and drafts; then
-              its tasks: agents running or queued, and tasks completed,
-              with pull request URLs. A task is completed once its pull
-              request is merged and its Linear issue is done. --status
-              shows only the named sections, comma-separated: awaiting-
-              review, drafts, running, addressing-review, resolving-
-              conflicts, interrupted, queued, blocked, needs-human,
-              open-pull-requests, merged, no-pull-request, completed,
-              closed, stale. --workspace shows only the named workspaces,
-              comma-separated. Either option may repeat.
+  status      List, for each workspace, what waits on you: open pull
+              requests for Linear issues, those holding back the most work
+              first, with review and CI state, and the proposals waiting in
+              Linear; drafts; then its tasks: agents running or queued, and
+              tasks completed, with pull request URLs. A task is completed
+              once its pull request is merged and its Linear issue is done.
+              Then what superlinear did on its own since --since (default
+              24h), and the risks: pauses, CI failing on the default branch,
+              the GitHub rate limit.
+              --status shows only the named sections, comma-separated:
+              awaiting-review (what waits on you), drafts, running,
+              addressing-review, resolving-conflicts, interrupted, queued,
+              blocked, needs-human, open-pull-requests, merged,
+              no-pull-request, completed, closed, done, risks, stale.
+              --workspace shows only the named workspaces, comma-separated.
+              Either option may repeat.
   stats       Measure the agents' work: how many items each status section
               holds across all workspaces; per pull request, the lines,
               files, tokens, agent time and CI time, with medians and
@@ -42,22 +46,15 @@ Subcommands:
               by project. Reads the Claude transcripts, the CI runs and the
               local repositories, so it takes longer than status.
   proposals   List the changes to Linear that superlinear proposed: those
-              pending, then those applied, rejected or expired in the last
-              7 days, with reasons, sources and diffs. --workspace limits
-              it to one workspace.
-  standup     Review what superlinear did since the last standup, the pull
-              requests waiting on you, and pending proposals to approve,
-              edit, reject or defer; sign off issues that need a human;
-              and adjust the plan for today. Applies your decisions at the
-              end. --print shows what superlinear did, the proposals, the
-              issues needing a human and the plan, without prompts.
-              When the default branch moved or issues were completed
-              since the last planning job, it offers to run one first.
+              pending, with where they wait in Linear, then those applied,
+              rejected or expired in the last 7 days, with reasons, sources
+              and diffs. --workspace limits it to one workspace.
   plan        Run the planning job now and wait for it: Claude reviews
               the default branch's new commits, the completed and open
               issues and the spec, and proposes changes to Linear, which
-              come up at the next standup. Without --workspace, runs it
-              for each workspace with planning on.
+              the daemon puts in Linear for you to accept or reject.
+              Without --workspace, runs it for each workspace with
+              planning on.
   resume      End the pause of Claude sessions that the Claude usage limit
               started, at once, as when you bought more usage. The daemon
               also checks every 15 minutes, and resumes at the reset time.
@@ -102,10 +99,10 @@ case .uninstall:
         exit(1)
     }
 
-case .status(let path, let filter):
+case .status(let path, let filter, let since):
     // Reads the state file and Linear; it takes no daemon lock, so it runs
     // beside a daemon.
-    Task { exit(await StatusCommand.run(configPath: path, filter: filter)) }
+    Task { exit(await StatusCommand.run(configPath: path, filter: filter, since: since)) }
     dispatchMain()
 
 case .stats(let path):
@@ -114,10 +111,6 @@ case .stats(let path):
 
 case .proposals(let path, let workspace):
     exit(ProposalsCommand.run(configPath: path, workspace: workspace))
-
-case .standup(let path, let workspace, let printOnly):
-    Task { exit(await StandupCommand.run(configPath: path, workspace: workspace, printOnly: printOnly)) }
-    dispatchMain()
 
 case .plan(let path, let workspace):
     Task { exit(await PlanCommand.run(configPath: path, workspace: workspace)) }
