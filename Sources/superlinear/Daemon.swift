@@ -205,13 +205,13 @@ actor Daemon {
         guard state.workspaces[workspace.name]?.pendingMerges[pending.issueId] != nil else { return }
         var context: CommentContext?
         if let comments {
-            let fresh = stillFresh(comments.fresh, key: pending.issueId, workspace: workspace.name)
+            let fresh = stillFresh(comments.fresh, key: .init(rawValue: pending.issueId), workspace: workspace.name)
             // Handled meanwhile: an agent is queued only for the pull request's feedback.
             guard !fresh.isEmpty || feedback != nil else { return }
             if !fresh.isEmpty {
                 context = CommentContext(
                     thread: comments.context.thread, new: fresh.map { PromptComment($0.comment, previousBody: $0.previousBody) })
-                state.handleComments(fresh, key: pending.issueId, since: Date(), workspace: workspace.name)
+                state.handleComments(fresh, key: .init(rawValue: pending.issueId), since: Date(), workspace: workspace.name)
             }
         }
         let run = AgentRun(
@@ -240,7 +240,7 @@ actor Daemon {
               state.workspaces[name]?.inFlight[ended.issueId.rawValue] == nil,
               state.workspaces[name]?.pendingMerges[ended.issueId.rawValue] == nil
         else { return }
-        let fresh = stillFresh(comments.fresh, key: ended.issueId.rawValue, workspace: name)
+        let fresh = stillFresh(comments.fresh, key: .init(ended.issueId), workspace: name)
         guard !fresh.isEmpty else { return }
         let run = AgentRun(
             issueId: ended.issueId.rawValue,
@@ -250,7 +250,7 @@ actor Daemon {
             queuedAt: Date(),
             comments: CommentContext(thread: comments.context.thread, new: fresh.map { PromptComment($0.comment, previousBody: $0.previousBody) })
         )
-        state.handleComments(fresh, key: ended.issueId.rawValue, since: Date(), workspace: name)
+        state.handleComments(fresh, key: .init(ended.issueId), since: Date(), workspace: name)
         state.workspaces[name]?.endedAgents[ended.issueId] = nil
         state.recordRun(run, workspace: name)
         log("Queued \(ended.identifier) to act on \(fresh.count) comment(s) from the owner in Linear; its last agent "
@@ -262,9 +262,9 @@ actor Daemon {
     /// Those of `comments` that the ledger does not have as handled with
     /// the text they have now: another task may have handled them since the
     /// poll read the ledger.
-    private func stillFresh(_ comments: [FreshComment], key: String, workspace: String) -> [FreshComment] {
+    private func stillFresh(_ comments: [FreshComment], key: CommentLedger.Key, workspace: String) -> [FreshComment] {
         let handled = state.workspaces[workspace]?.commentLedgers[key]?.handled ?? [:]
-        return comments.filter { handled[$0.comment.id.rawValue] != $0.comment.body }
+        return comments.filter { handled[$0.comment.id] != $0.comment.body }
     }
 
     /// Queues an agent to merge the base branch into the branch of an issue
@@ -1114,7 +1114,7 @@ actor Daemon {
     /// The owner's questions on the spec document to answer. The document's
     /// first check counts only comments from then on.
     func specQuestions(_ document: DocumentComments, url: String?, viewer: LinearUser.ID, workspace: String, now: Date) -> [CommentQuestion] {
-        let key = CommentTriage.documentKey(document.id)
+        let key = CommentLedger.Key.document(document.id)
         guard let ledger = state.workspaces[workspace]?.commentLedgers[key] else {
             state.workspaces[workspace, default: WorkspaceState()].commentLedgers[key] = CommentLedger(since: now)
             save()

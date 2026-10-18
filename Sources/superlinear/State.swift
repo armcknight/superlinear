@@ -144,8 +144,8 @@ struct WorkspaceState: Codable, Sendable {
     /// The planning jobs the daemon ran, oldest first.
     var planningRuns: [PlanningRunRecord]
     /// What superlinear handled of the owner's comments, by issue ID, or by
-    /// `CommentTriage.documentKey` for the spec document.
-    var commentLedgers: [String: CommentLedger]
+    /// `CommentLedger.Key.document` for the spec document.
+    var commentLedgers: [CommentLedger.Key: CommentLedger]
     /// Issues whose last agent ended without a pull request, by issue ID.
     var endedAgents: [LinearIssue.ID: EndedAgent]
     /// The sessions that answered the owner's comments, oldest first.
@@ -189,7 +189,7 @@ struct WorkspaceState: Codable, Sendable {
         spendingLimit = try container.decodeIfPresent(SpendingLimitStop.self, forKey: .spendingLimit)
         planningRun = try container.decodeIfPresent(PlanningRun.self, forKey: .planningRun)
         planningRuns = try container.decodeIfPresent([PlanningRunRecord].self, forKey: .planningRuns) ?? []
-        commentLedgers = try container.decodeIfPresent([String: CommentLedger].self, forKey: .commentLedgers) ?? [:]
+        commentLedgers = try container.decodeIfPresent([CommentLedger.Key: CommentLedger].self, forKey: .commentLedgers) ?? [:]
         endedAgents = try container.decodeIfPresent([LinearIssue.ID: EndedAgent].self, forKey: .endedAgents) ?? [:]
         commentAnswers = try container.decodeIfPresent([CommentAnswerRecord].self, forKey: .commentAnswers) ?? []
     }
@@ -497,14 +497,14 @@ struct State: Codable, Sendable {
     /// completed or canceled. The spec document's ledger is kept.
     mutating func recordCommentWatch(_ plan: CommentTriage.Plan, workspace: String) {
         var ledgers = workspaces[workspace, default: WorkspaceState()].commentLedgers
-        ledgers = ledgers.filter { plan.watched.contains($0.key) || $0.key.hasPrefix("document:") }
+        ledgers = ledgers.filter { plan.watched.contains($0.key) || $0.key.isDocument }
         ledgers.merge(plan.baselines) { current, _ in current }
         workspaces[workspace, default: WorkspaceState()].commentLedgers = ledgers
         for id in plan.finished { workspaces[workspace]?.endedAgents[id] = nil }
     }
 
     /// Records the comments as handled, each with the text it has now.
-    mutating func handleComments(_ comments: [FreshComment], key: String, since: Date, workspace: String) {
+    mutating func handleComments(_ comments: [FreshComment], key: CommentLedger.Key, since: Date, workspace: String) {
         var ledger = workspaces[workspace, default: WorkspaceState()].commentLedgers[key] ?? CommentLedger(since: since)
         ledger.handle(comments)
         workspaces[workspace, default: WorkspaceState()].commentLedgers[key] = ledger

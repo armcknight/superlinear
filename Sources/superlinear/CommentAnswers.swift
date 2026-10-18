@@ -15,11 +15,11 @@ struct CommentQuestion: Sendable, Equatable {
     /// The comments before it that it may refer to, oldest first, with it.
     var thread: [LinearThreadComment]
     /// The key of the ledger that records it handled.
-    var key: String
+    var key: CommentLedger.Key
     /// The ledger's baseline, should it have none yet.
     var since: Date
 
-    init(subject: Subject, comment: FreshComment, thread: [LinearThreadComment], key: String, since: Date) {
+    init(subject: Subject, comment: FreshComment, thread: [LinearThreadComment], key: CommentLedger.Key, since: Date) {
         self.subject = subject
         self.comment = comment
         self.thread = thread
@@ -30,7 +30,7 @@ struct CommentQuestion: Sendable, Equatable {
     init(_ answer: CommentTriage.Answer, since: Date) {
         self.init(
             subject: .proposal(answer.proposal, issueId: answer.issueId), comment: answer.comment, thread: answer.thread,
-            key: answer.issueId.rawValue, since: since)
+            key: .init(answer.issueId), since: since)
     }
 
     /// The questions in the owner's fresh comments on the spec document,
@@ -41,7 +41,7 @@ struct CommentQuestion: Sendable, Equatable {
                 $0.rootId == fresh.comment.rootId && ($0.createdAt < fresh.comment.createdAt || $0.id == fresh.comment.id)
             }
             return CommentQuestion(
-                subject: .spec(document, url: url), comment: fresh, thread: thread, key: CommentTriage.documentKey(document.id),
+                subject: .spec(document, url: url), comment: fresh, thread: thread, key: .document(document.id),
                 since: ledger.since)
         }
     }

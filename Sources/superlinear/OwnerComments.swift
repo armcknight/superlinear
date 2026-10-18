@@ -1,4 +1,5 @@
 import Foundation
+import Tagged
 
 /// A comment in Linear, on an issue or a document, as superlinear reads it to
 /// find the owner's.
@@ -85,10 +86,13 @@ struct FreshComment: Sendable, Equatable {
 /// comments, with the text each had then, and from when comments count at
 /// all, so that old comments are not all answered at once after an upgrade.
 struct CommentLedger: Codable, Sendable, Equatable {
+    /// Which issue or document a ledger is for, as the state file keys it.
+    typealias Key = Tagged<CommentLedger, String>
+
     /// Comments created at or before this time count only once handled.
     var since: Date
     /// The text of each comment handled, by comment ID.
-    var handled: [String: String] = [:]
+    var handled: [LinearComment.ID: String] = [:]
 
     /// The owner's comments to handle: those by `viewer`, not superlinear's
     /// own, that are new since `since` and not yet handled, or whose text
@@ -96,7 +100,7 @@ struct CommentLedger: Codable, Sendable, Equatable {
     func fresh(_ comments: [LinearThreadComment], viewer: LinearUser.ID) -> [FreshComment] {
         comments.compactMap { comment in
             guard comment.userId == viewer, !CommentMarker.isOwn(comment.body) else { return nil }
-            if let body = handled[comment.id.rawValue] {
+            if let body = handled[comment.id] {
                 return body == comment.body ? nil : FreshComment(comment: comment, previousBody: body)
             }
             return comment.createdAt > since ? FreshComment(comment: comment) : nil
@@ -104,8 +108,19 @@ struct CommentLedger: Codable, Sendable, Equatable {
     }
 
     mutating func handle(_ comments: [FreshComment]) {
-        for fresh in comments { handled[fresh.comment.id.rawValue] = fresh.comment.body }
+        for fresh in comments { handled[fresh.comment.id] = fresh.comment.body }
     }
+}
+
+extension Tagged where Tag == CommentLedger, RawValue == String {
+    /// The key of an issue's ledger: its ID.
+    init(_ issueId: LinearIssue.ID) { self.init(rawValue: issueId.rawValue) }
+
+    /// The key of the spec document's ledger.
+    static func document(_ id: LinearDocument.ID) -> Self { Self(rawValue: "document:\(id.rawValue)") }
+
+    /// Whether it is the key of a document's ledger, rather than an issue's.
+    var isDocument: Bool { rawValue.hasPrefix("document:") }
 }
 
 /// An issue whose last agent ended with no pull request, and no Claude usage
@@ -167,11 +182,11 @@ enum CommentTriage {
         var ended: [EndedAgent]
         /// Runs queued or running, by issue ID.
         var runs: [AgentRun]
-        var ledgers: [String: CommentLedger]
+        var ledgers: [CommentLedger.Key: CommentLedger]
 
         init(
             proposals: [Proposal] = [], pendingMerges: [PendingMerge] = [], ended: [EndedAgent] = [], runs: [AgentRun] = [],
-            ledgers: [String: CommentLedger] = [:]
+            ledgers: [CommentLedger.Key: CommentLedger] = [:]
         ) {
             self.proposals = proposals
             self.pendingMerges = pendingMerges
@@ -201,9 +216,9 @@ enum CommentTriage {
         /// ended without a pull request.
         var newAgents: [Comments] = []
         /// Ledgers for issues watched for the first time, with their baselines.
-        var baselines: [String: CommentLedger] = [:]
+        var baselines: [CommentLedger.Key: CommentLedger] = [:]
         /// Every issue whose ledger is kept; the others' are dropped.
-        var watched: Set<String> = []
+        var watched: Set<CommentLedger.Key> = []
         /// Ended agents whose issues were completed or canceled.
         var finished: Set<LinearIssue.ID> = []
     }
@@ -239,18 +254,18 @@ enum CommentTriage {
         let running = Set(inputs.runs.map(\.issueId))
 
         // Baselines: the issue's last proposal post or agent start.
-        var starts: [String: Date] = [:]
-        func start(_ id: String, _ date: Date?) {
+        var starts: [CommentLedger.Key: Date] = [:]
+        func start(_ id: CommentLedger.Key, _ date: Date?) {
             let date = date ?? now
             starts[id] = max(starts[id] ?? .distantPast, date)
         }
-        for proposal in inputs.posted { if let post = proposal.post { start(post.issueId.rawValue, post.postedAt) } }
-        for pending in inputs.pendingMerges { start(pending.issueId, pending.reviewsHandledThrough) }
-        for ended in inputs.ended { start(ended.issueId.rawValue, ended.startedAt) }
-        for run in inputs.runs { start(run.issueId, run.launchedAt ?? run.queuedAt) }
+        for proposal in inputs.posted { if let post = proposal.post { start(.init(post.issueId), post.postedAt) } }
+        for pending in inputs.pendingMerges { start(.init(rawValue: pending.issueId), pending.reviewsHandledThrough) }
+        for ended in inputs.ended { start(.init(ended.issueId), ended.startedAt) }
+        for run in inputs.runs { start(.init(rawValue: run.issueId), run.launchedAt ?? run.queuedAt) }
         plan.watched = Set(starts.keys)
         for (id, date) in starts where inputs.ledgers[id] == nil { plan.baselines[id] = CommentLedger(since: date) }
-        func ledger(_ id: String) -> CommentLedger { inputs.ledgers[id] ?? plan.baselines[id] ?? CommentLedger(since: now) }
+        func ledger(_ id: CommentLedger.Key) -> CommentLedger { inputs.ledgers[id] ?? plan.baselines[id] ?? CommentLedger(since: now) }
 
         // Proposal comments, whose threads are the proposals' own.
         var proposalThreads: [String: Proposal] = [:]
@@ -260,7 +275,7 @@ enum CommentTriage {
 
         for proposal in inputs.posted {
             guard let post = proposal.post, let issue = byId[post.issueId] else { continue }
-            let fresh = ledger(post.issueId.rawValue).fresh(issue.comments, viewer: viewer)
+            let fresh = ledger(.init(post.issueId)).fresh(issue.comments, viewer: viewer)
             let thread: [LinearThreadComment]
             let asked: [FreshComment]
             if let commentId = post.commentId {
@@ -278,7 +293,7 @@ enum CommentTriage {
 
         let proposedIssues = Set(inputs.posted.compactMap { $0.post?.isIssue == true ? $0.post?.issueId.rawValue : nil })
         func agentComments(_ issue: IssueComments) -> [FreshComment] {
-            ledger(issue.id.rawValue).fresh(issue.comments, viewer: viewer).filter { fresh in
+            ledger(.init(issue.id)).fresh(issue.comments, viewer: viewer).filter { fresh in
                 proposalThreads[fresh.comment.rootId.rawValue] == nil
             }
         }
@@ -304,7 +319,4 @@ enum CommentTriage {
         }
         return plan
     }
-
-    /// The ledger key of the spec document.
-    static func documentKey(_ id: LinearDocument.ID) -> String { "document:\(id.rawValue)" }
 }
