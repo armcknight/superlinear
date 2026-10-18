@@ -2,11 +2,11 @@ import Foundation
 import Testing
 @testable import superlinear
 
-// The summary is the one place to see what the agents cost. Counting a
+// The stats are the one place to see what the agents cost. Counting a
 // message twice, or a night's sleep as work, would make that look worse than
 // it is.
-@Suite("Status summary")
-struct StatusSummaryTests {
+@Suite("Stats")
+struct StatsTests {
     private func line(_ time: String, id: String? = nil, input: Int = 0, cacheWrite: Int = 0, cacheRead: Int = 0, output: Int = 0) -> String {
         guard let id else { return #"{"type":"user","timestamp":"\#(time)"}"# }
         return #"{"type":"assistant","timestamp":"\#(time)","message":{"id":"\#(id)","usage":{"input_tokens":\#(input),"cache_creation_input_tokens":\#(cacheWrite),"cache_read_input_tokens":\#(cacheRead),"output_tokens":\#(output)}}}"#
@@ -199,19 +199,19 @@ struct StatusSummaryTests {
 
     @Test("Numbers and durations are compact")
     func formatting() {
-        #expect(StatusSummary.compact(950) == "950")
-        #expect(StatusSummary.compact(12_345) == "12.3k")
-        #expect(StatusSummary.compact(123_456) == "123k")
-        #expect(StatusSummary.compact(4_500_000) == "4.5M")
-        #expect(StatusSummary.compact(1_200_000_000) == "1.2B")
-        #expect(StatusSummary.duration(29) == "0m")
-        #expect(StatusSummary.duration(14 * 60) == "14m")
-        #expect(StatusSummary.duration(2 * 3600 + 5 * 60) == "2h 05m")
-        #expect(StatusSummary.duration(3 * 86400 + 4 * 3600) == "3d 04h")
+        #expect(Stats.compact(950) == "950")
+        #expect(Stats.compact(12_345) == "12.3k")
+        #expect(Stats.compact(123_456) == "123k")
+        #expect(Stats.compact(4_500_000) == "4.5M")
+        #expect(Stats.compact(1_200_000_000) == "1.2B")
+        #expect(Stats.duration(29) == "0m")
+        #expect(Stats.duration(14 * 60) == "14m")
+        #expect(Stats.duration(2 * 3600 + 5 * 60) == "2h 05m")
+        #expect(Stats.duration(3 * 86400 + 4 * 3600) == "3d 04h")
     }
 
-    private func metric(_ values: [Double]) -> StatusSummary.Metric {
-        StatusSummary.Metric(name: "m", values: values, format: { "\($0)" })
+    private func metric(_ values: [Double]) -> Stats.Metric {
+        Stats.Metric(name: "m", values: values, format: { "\($0)" })
     }
 
     @Test("Median, minimum and maximum")
@@ -227,13 +227,13 @@ struct StatusSummaryTests {
     func histogram() {
         // Bins one wide: 0 in the first, 8 in the ninth, 16 in the last.
         let bars = metric([0, 0, 0, 0, 0, 0, 0, 0, 8, 16]).histogram
-        #expect(bars.count == StatusSummary.Metric.bins)
+        #expect(bars.count == Stats.Metric.bins)
         #expect(bars == "█       ▁      ▁")
         #expect(metric([3, 3]).histogram == "█")
         #expect(metric([]).histogram == "")
     }
 
-    @Test("The summary counts sections across workspaces, then gives per pull request and per project figures")
+    @Test("The stats count sections across workspaces, then give per pull request and per project figures")
     func rendering() {
         var merged = task("A-1", .completed, pr: pullRequest(1, .merged, additions: 10))
         merged.usage = AgentUsage(inputTokens: 1000, outputTokens: 500, cacheReadTokens: 9000, activeTime: 600)
@@ -248,32 +248,31 @@ struct StatusSummaryTests {
         let two = WorkspaceReport(name: "two", entries: [task("B-1", .openPullRequest, pr: pullRequest(9, .open))], warnings: [])
         let empty = WorkspaceReport(name: "three", entries: [], warnings: [])
 
-        #expect(StatusSummary(reports: [one, two, empty]).rendered() == """
-        Summary
-          Projects             3
-          Awaiting review      1
-          Draft pull requests  1
-          Queued               1
-          Open pull requests   1
-          Completed            1
-          Out of sync: 1 of one's pull requests carry unpushed commits from local main
+        #expect(Stats(reports: [one, two, empty]).rendered() == """
+        Projects             3
+        Awaiting review      1
+        Draft pull requests  1
+        Queued               1
+        Open pull requests   1
+        Completed            1
+        Out of sync: 1 of one's pull requests carry unpushed commits from local main
 
-          Per pull request (3 from agents: 2 open, 1 merged)
-                           total  median   min  distribution      max
-            Lines added       47      10     7  █ █            █  30
-            Lines removed      2       1     1  █                 1
-            Files changed      2       1     1  █                 1
-            Tokens          1.5k    1.5k  1.5k  █                 1.5k
-            Cache reads     9.0k    9.0k  9.0k  █                 9.0k
-            Agent time       10m     10m   10m  █                 10m
-            CI time           2m      2m    2m  █                 2m
+        Per pull request (3 from agents: 2 open, 1 merged)
+                         total  median   min  distribution      max
+          Lines added       47      10     7  █ █            █  30
+          Lines removed      2       1     1  █                 1
+          Files changed      2       1     1  █                 1
+          Tokens          1.5k    1.5k  1.5k  █                 1.5k
+          Cache reads     9.0k    9.0k  9.0k  █                 9.0k
+          Agent time       10m     10m   10m  █                 10m
+          CI time           2m      2m    2m  █                 2m
 
-          All 4 tracked tasks: 1.5k tokens, 9.0k cache reads, 10m agent time, 2m CI time
+        All 4 tracked tasks: 1.5k tokens, 9.0k cache reads, 10m agent time, 2m CI time
 
-          By project
-                 tasks  PRs  +lines  -lines  tokens  agent time  CI time
-            one      3    3      47       2    1.5k         10m       2m
-            two      1    0       0       0       -           -        -
+        By project
+               tasks  PRs  +lines  -lines  tokens  agent time  CI time
+          one      3    3      47       2    1.5k         10m       2m
+          two      1    0       0       0       -           -        -
         """)
     }
 }

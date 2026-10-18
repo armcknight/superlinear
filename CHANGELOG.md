@@ -27,10 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comma-separated or repeated: `awaiting-review`, `drafts`, `running`,
   `addressing-review`, `resolving-conflicts`, `interrupted`, `queued`,
   `blocked`, `needs-human`, `open-pull-requests`, `merged`,
-  `no-pull-request`, `completed`, `closed` and `stale`. The summary counts
-  and measures cover only what is shown. `--workspace <names>` shows only
-  the named workspaces, comma-separated or repeated, instead of every
-  configured one.
+  `no-pull-request`, `completed`, `closed` and `stale`. `--workspace
+  <names>` shows only the named workspaces, comma-separated or repeated,
+  instead of every configured one.
 - Pause and resume at the provider limits. When a Claude session ends at
   the Claude plan's usage limit, every Claude session pauses, in all
   workspaces, until the reset time in the message, or for an hour when it
@@ -179,6 +178,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The summary that ended `superlinear status` is now its own command,
+  `superlinear stats`: the counts of each section across workspaces, the
+  measures per pull request with medians and histograms, the totals over
+  every tracked task, and the figures by project. `status` no longer reads
+  the Claude transcripts, lists the CI runs or diffs the open branches, so
+  it is quicker; `stats` does, and warns when a local base branch is ahead
+  of origin.
 - Agents work on Opus. The daemon sets `ANTHROPIC_MODEL=opus` for them, as
   `work` passes no model and the default in Claude's settings can be another.
 - A pending proposal expires `proposalExpiryDays` after the first standup

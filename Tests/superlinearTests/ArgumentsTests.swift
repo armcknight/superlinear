@@ -19,6 +19,8 @@ struct ArgumentsTests {
         #expect(Command.parse(["uninstall"]) == .uninstall)
         #expect(Command.parse(["status"]) == .status(configPath: nil, filter: StatusFilter()))
         #expect(Command.parse(["status", "--config", "/c.json"]) == .status(configPath: "/c.json", filter: StatusFilter()))
+        #expect(Command.parse(["stats"]) == .stats(configPath: nil))
+        #expect(Command.parse(["stats", "--config", "/c.json"]) == .stats(configPath: "/c.json"))
         #expect(Command.parse(["proposals"]) == .proposals(configPath: nil, workspace: nil))
         #expect(Command.parse(["proposals", "--workspace", "w", "--config", "/c.json"])
             == .proposals(configPath: "/c.json", workspace: "w"))
@@ -52,7 +54,7 @@ struct ArgumentsTests {
 
     @Test("Anything unknown is an error, not a daemon")
     func unknownIsInvalid() {
-        for arguments in [["stats"], ["status", "--json"], ["--verbose"], ["--config"], ["install", "--now"], ["uninstall", "x"], ["proposals", "--all"], ["proposals", "--workspace"], ["status", "--status"], ["status", "--status", ","], ["status", "--workspace"]] {
+        for arguments in [["stat"], ["status", "--json"], ["stats", "--workspace", "w"], ["stats", "--status", "running"], ["--verbose"], ["--config"], ["install", "--now"], ["uninstall", "x"], ["proposals", "--all"], ["proposals", "--workspace"], ["status", "--status"], ["status", "--status", ","], ["status", "--workspace"]] {
             guard case .invalid = Command.parse(arguments) else {
                 Issue.record("\(arguments) should be invalid")
                 continue

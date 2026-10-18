@@ -9,6 +9,7 @@ enum Command: Equatable {
     case install(force: Bool)
     case uninstall
     case status(configPath: String?, filter: StatusFilter)
+    case stats(configPath: String?)
     case proposals(configPath: String?, workspace: String?)
     case standup(configPath: String?, workspace: String?, printOnly: Bool)
     case resume
@@ -34,14 +35,15 @@ enum Command: Equatable {
         case "uninstall":
             if let extra = rest.dropFirst().first { return .invalid("unknown option for uninstall: \(extra)") }
             return .uninstall
-        case "status":
+        case .some(let command) where ["status", "stats"].contains(command):
             rest = rest.dropFirst()
             var configPath: String?
             var filter = StatusFilter()
             while let argument = rest.first {
                 rest = rest.dropFirst()
-                guard ["--config", "--status", "--workspace"].contains(argument) else {
-                    return .invalid("unknown option for status: \(argument)")
+                let options = command == "status" ? ["--config", "--status", "--workspace"] : ["--config"]
+                guard options.contains(argument) else {
+                    return .invalid("unknown option for \(command): \(argument)")
                 }
                 guard let value = rest.first else {
                     return .invalid(argument == "--config" ? "--config needs a path" : "\(argument) needs a name")
@@ -65,7 +67,7 @@ enum Command: Equatable {
                     filter.sections = (filter.sections ?? []).union([section])
                 }
             }
-            return .status(configPath: configPath, filter: filter)
+            return command == "status" ? .status(configPath: configPath, filter: filter) : .stats(configPath: configPath)
         case "proposals":
             rest = rest.dropFirst()
             var configPath: String?

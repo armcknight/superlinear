@@ -286,7 +286,7 @@ struct StatusTests {
         #expect(StatusSection(name: "Running") == nil)
     }
 
-    @Test("A filter keeps the named sections, and the pull requests of what it keeps")
+    @Test("A filter keeps the named sections")
     func filtered() {
         let open = pullRequest(2, branch: "two", state: "OPEN")
         let merged = pullRequest(10, branch: "ten", state: "MERGED")
@@ -306,11 +306,6 @@ struct StatusTests {
                 TaskEntry(identifier: "SL-10", title: "Ten", category: .completed, detail: merged.url, pullRequest: merged),
             ],
             reviews: [ReviewEntry(issue: issue("SL-2"), pullRequest: reviewable), ReviewEntry(issue: issue("SL-3"), pullRequest: draft)],
-            pullRequestStats: [
-                PullRequestStats(url: open.url, merged: false),
-                PullRequestStats(url: draft.url, merged: false),
-                PullRequestStats(url: merged.url, merged: true),
-            ],
             stale: [StaleBranch(branch: "old", reason: .merged(4), hasWorktree: false, lastCommit: nil, unpushedCommits: 0)],
             warnings: []
         )
@@ -318,14 +313,12 @@ struct StatusTests {
         let running = report.filtered(to: [.task(.running)])
         #expect(running.entries.map(\.identifier) == ["SL-1"])
         #expect(running.reviews == nil)
-        #expect(running.pullRequestStats.isEmpty)
         #expect(running.stale.isEmpty)
         #expect(running.rendered() == "w\n  Running\n    SL-1  One")
 
         let drafts = report.filtered(to: [.drafts, .task(.completed)])
         #expect(drafts.reviews?.map(\.pullRequest.number) == [3])
         #expect(drafts.entries.map(\.identifier) == ["SL-10"])
-        #expect(drafts.pullRequestStats.map(\.url) == [draft.url, merged.url])
 
         // Not listed for review, the open pull request shows as a task.
         let openTasks = report.filtered(to: [.task(.openPullRequest), .stale])
@@ -338,7 +331,6 @@ struct StatusTests {
             old
               merged in #4
         """)
-        #expect(openTasks.pullRequestStats.map(\.url) == [open.url])
     }
 
     @Test("Blocked and human-labeled issues are listed from the state file, with their blockers and labels")
