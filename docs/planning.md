@@ -120,9 +120,9 @@ Proposals that need you are reviewed in Linear, where the rest of your triage ha
 
 | Kind | In Linear | Approve | Reject |
 | --- | --- | --- | --- |
-| `createIssue` | The issue itself, created at once in the team's **Triage** state, with the labels `superlinear` and `superlinear: proposed`, its reason and its source. | Accept it from Triage, into any state. | Decline or cancel it. |
+| `createIssue` | The issue itself, created at once in the team's **Triage** state, with the labels `superlinear` and `superlinear: proposed`, its reason and its source. | Accept it from Triage, into any state. | Decline or cancel it, or mark it a duplicate. |
 | `editIssue`, `closeIssue`, `addRelation`, `promoteIssue` | A comment on the target issue, written by superlinear: what it proposes, the reason, the source, and for an edit the diff of the managed block. The issue gets the label `superlinear: proposed` while it waits. | React 👍 on the comment. | React 👎 on the comment. |
-| `changeSpec` | An issue in Triage, labeled `superlinear: spec` as well, with the diff of the spec and a link to the document or the project. | Accept it from Triage. The change is applied to the document or project, and the issue completed. | Decline or cancel it. |
+| `changeSpec` | An issue in Triage, labeled `superlinear: spec` as well, with the diff of the spec and a link to the document or the project. | Accept it from Triage. The change is applied to the document or project, and the issue completed. | Decline or cancel it, or mark it a duplicate. |
 | `postProjectUpdate` | A comment on the project's overview issue, as above. | React 👍. | React 👎. |
 
 A team with Triage off: superlinear turns Triage on when the API key may, and logs once when it may not. Then the issue is created in Backlog with the same labels; moving it out of Backlog, or removing the `superlinear: proposed` label, approves it, and canceling it rejects it. Deleting a proposed issue, or a proposal's comment, rejects it too.
