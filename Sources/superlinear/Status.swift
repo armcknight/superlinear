@@ -220,6 +220,9 @@ struct WorkspaceReport: Sendable {
     /// The latest read-only sessions that answered the owner's comments,
     /// oldest first, for `superlinear stats`.
     var commentAnswers: [CommentAnswerRecord] = []
+    /// The latest planning jobs of the daemon and of `superlinear plan`,
+    /// oldest first, for `superlinear stats`.
+    var planningRuns: [PlanningRunRecord] = []
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
     var warnings: [String]
@@ -655,11 +658,14 @@ enum StatusCommand {
     }
 
     /// One line for each active pause: of Claude sessions at the usage limit,
-    /// and of CI at the GitHub Actions spending limit.
+    /// of Fable at its own limit, and of CI at the GitHub Actions spending limit.
     static func pauseLines(state: State, workspaces: [String], now: Date) -> [String] {
         var lines: [String] = []
         if let pause = state.claudePause, !pause.isOver(now: now) {
             lines.append(pause.rendered(waiting: state.queuedRuns.count, now: now))
+        }
+        if let limit = state.fableLimit, !limit.isOver(now: now) {
+            lines.append(limit.rendered(now: now))
         }
         if let line = SpendingLimitStop.rendered(workspaces.compactMap { state.workspaces[$0]?.spendingLimit }, now: now) {
             lines.append(line)

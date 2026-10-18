@@ -334,9 +334,12 @@ struct PlanningTests {
 
     @Test("A new session gets its ID; an interrupted one is resumed")
     func claudeArguments() {
-        let start = PlanningRunner.claudeArguments(sessionId: "s1", mode: .start, runsDirectory: "/runs")
-        #expect(start == ["claude", "-p", "--session-id", "s1", "--allowedTools", PlanningRunner.allowedTools, "--add-dir", "/runs"])
-        #expect(PlanningRunner.claudeArguments(sessionId: "s1", mode: .resume, runsDirectory: "/runs").contains("--resume"))
+        let start = PlanningRunner.claudeArguments(sessionId: "s1", mode: .start, model: .fable, runsDirectory: "/runs")
+        #expect(start == [
+            "claude", "-p", "--session-id", "s1", "--model", "fable", "--allowedTools", PlanningRunner.allowedTools, "--add-dir", "/runs",
+        ])
+        let resume = PlanningRunner.claudeArguments(sessionId: "s1", mode: .resume, model: .opus, runsDirectory: "/runs")
+        #expect(resume.starts(with: ["claude", "-p", "--resume", "s1", "--model", "opus"]))
     }
 
     @Test("A finished job's proposals are read back against its context; a failed one records why")
