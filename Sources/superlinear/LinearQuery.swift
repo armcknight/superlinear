@@ -222,7 +222,7 @@ enum LinearQuery: CaseIterable, Sendable {
         case .similarIssues: """
             query SimilarIssues($term: String!, $teamId: String) {
               searchIssues(term: $term, teamId: $teamId, first: 25) {
-                nodes { id identifier title state { type } }
+                nodes { id identifier title description url state { type } }
               }
             }
             """
@@ -379,6 +379,7 @@ enum LinearQuery: CaseIterable, Sendable {
                   state { type }
                   labels(first: 50) { nodes { name } }
                   comments(first: 100) { nodes { id reactions { emoji user { id } } } }
+                  relations(first: 10) { nodes { type relatedIssue { id identifier } } }
                 }
                 pageInfo { hasNextPage endCursor }
               }
@@ -587,6 +588,8 @@ extension LinearQuery {
             let id: LinearIssue.ID
             let identifier: String
             let title: String
+            let description: String?
+            let url: String?
             let state: State
         }
 
@@ -770,6 +773,7 @@ extension LinearQuery {
         let state: State
         let labels: Nodes<Label>
         let comments: Nodes<Comment>
+        let relations: Nodes<Relation>?
 
         struct State: Decodable {
             let type: LinearStateType
@@ -777,6 +781,16 @@ extension LinearQuery {
 
         struct Label: Decodable {
             let name: String
+        }
+
+        struct Relation: Decodable {
+            let type: String
+            let relatedIssue: RelatedIssue
+        }
+
+        struct RelatedIssue: Decodable {
+            let id: LinearIssue.ID
+            let identifier: String
         }
 
         struct Comment: Decodable {
@@ -798,7 +812,9 @@ extension LinearQuery {
                 id: id, identifier: identifier, stateType: state.type, labels: labels.nodes.map(\.name),
                 comments: comments.nodes.map {
                     .init(id: $0.id, reactions: $0.reactions.map { .init(emoji: $0.emoji, userId: $0.user?.id) })
-                })
+                },
+                duplicateOf: relations?.nodes.first { $0.type == "duplicate" }
+                    .map { .init(id: $0.relatedIssue.id, identifier: $0.relatedIssue.identifier) })
         }
     }
 

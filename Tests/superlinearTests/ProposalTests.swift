@@ -95,17 +95,18 @@ private func draft(
     ProposalDraft(payload: payload, target: target, reason: "because", source: source, targetUpdatedAt: updatedAt)
 }
 
-private func newIssue(_ title: String, relatedTo related: LinearIssue.ID? = nil) -> ProposalDraft {
+private func newIssue(_ title: String, relatedTo related: LinearIssue.ID? = nil, description: String = "Do it.") -> ProposalDraft {
     draft(
-        .createIssue(teamId: "team", projectId: nil, title: title, description: "Do it.", relatedIssueId: related),
+        .createIssue(teamId: "team", projectId: nil, title: title, description: description, relatedIssueId: related),
         target: .team("team"), updatedAt: nil
     )
 }
 
 private func engine(
-    _ linear: FakeLinear, autonomy: Autonomy = Autonomy(), audit: AuditLog = AuditLog(directory: scratch())
+    _ linear: FakeLinear, autonomy: Autonomy = Autonomy(), audit: AuditLog = AuditLog(directory: scratch()),
+    duplicates: StubDuplicates = StubDuplicates()
 ) -> ProposalEngine {
-    ProposalEngine(workspace: "w", autonomy: autonomy, linear: linear, audit: audit)
+    ProposalEngine(workspace: "w", autonomy: autonomy, linear: linear, audit: audit, duplicates: duplicates)
 }
 
 private func scratch() -> URL {
@@ -199,10 +200,30 @@ struct ProposalDuplicateTests {
         _ = try stored(await engine(linear).screen(newIssue("Add retries"), existing: [proposal]))
     }
 
-    @Test("A new issue like an open one is not proposed")
+    @Test("A new issue with no candidates is not compared")
+    func noCandidates() async throws {
+        let duplicates = StubDuplicates(.possible(keys: ["SPL-9"]))
+        let (proposal, _) = try stored(await engine(FakeLinear(), duplicates: duplicates).screen(newIssue("Retry failed syncs"), existing: []))
+        #expect(proposal.kind == .createIssue)
+        #expect(proposal.possibleDuplicates == nil)
+        #expect(duplicates.questions.isEmpty)
+    }
+
+    @Test("The agent compares a new issue with the open issues Linear's search finds")
+    func distinct() async throws {
+        let duplicates = StubDuplicates(.distinct)
+        let linear = FakeLinear(openMatches: [match("Rewrite the status report")])
+        let (proposal, _) = try stored(await engine(linear, duplicates: duplicates).screen(newIssue("Retry failed syncs"), existing: []))
+        #expect(proposal.kind == .createIssue)
+        #expect(duplicates.questions.map { $0.candidates.map(\.key) } == [["SPL-9"]])
+        #expect(duplicates.questions.first?.candidates.first?.description == "The report.")
+    }
+
+    @Test("A new issue that is the same work as an open one, adding nothing, is not proposed")
     func duplicateIssueDropped() async throws {
-        let linear = FakeLinear(openMatches: [IssueMatch(id: "i9", identifier: "SPL-9", title: "Add retries to the sync")])
-        let screening = try await engine(linear).screen(newIssue("Add retry to the sync"), existing: [])
+        let linear = FakeLinear(openMatches: [match("Make sync robust to network errors")])
+        let screening = try await engine(linear, duplicates: StubDuplicates(.duplicate(key: "SPL-9", added: "")))
+            .screen(newIssue("Retry failed syncs"), existing: [])
         guard case .skip(let reason) = screening else {
             Issue.record("A duplicate issue was stored: \(screening)")
             return
@@ -210,31 +231,144 @@ struct ProposalDuplicateTests {
         #expect(reason.contains("SPL-9"))
     }
 
-    @Test("A new issue like an open one, following from another, becomes a relation")
+    @Test("A new issue that is the same work as an open one, following from another, becomes a relation")
     func duplicateBecomesRelation() async throws {
-        let linear = FakeLinear(openMatches: [IssueMatch(id: "i9", identifier: "SPL-9", title: "Add retries to the sync")])
-        let (proposal, applyNow) = try stored(await engine(linear).screen(
-            newIssue("Add retries to the sync", relatedTo: "i3"), existing: []
-        ))
+        let linear = FakeLinear(openMatches: [match("Make sync robust to network errors")])
+        let (proposal, applyNow) = try stored(await engine(linear, duplicates: StubDuplicates(.duplicate(key: "SPL-9", added: "")))
+            .screen(newIssue("Retry failed syncs", relatedTo: "i3"), existing: []))
         #expect(proposal.payload == .addRelation(relatedIssueId: "i9", type: "related"))
         #expect(proposal.target == .issue("i3"))
         #expect(applyNow)
     }
 
-    @Test("An open issue with an unlike title does not stop a new one")
-    func unlikeTitle() async throws {
-        let linear = FakeLinear(openMatches: [IssueMatch(id: "i9", identifier: "SPL-9", title: "Rewrite the status report")])
-        let (proposal, _) = try stored(await engine(linear).screen(newIssue("Add retries to the sync"), existing: []))
-        #expect(proposal.kind == .createIssue)
+    @Test("What a duplicate adds is merged into the open issue's managed block")
+    func duplicateMergedIntoBlock() async throws {
+        let open = issue("i9", description: "Mine.\n\n<!-- superlinear -->\nNotes.\n<!-- /superlinear -->")
+        let linear = FakeLinear(issues: [open], openMatches: [match("Make sync robust to network errors")])
+        let (proposal, applyNow) = try stored(await engine(linear, duplicates: StubDuplicates(.duplicate(key: "SPL-9", added: "Back off 5 s.")))
+            .screen(newIssue("Retry failed syncs", relatedTo: "i3"), existing: []))
+        #expect(proposal.payload == .editIssue(oldText: "Notes.", newText: "Notes.\n\n### Also from \"Retry failed syncs\"\n\nBack off 5 s."))
+        #expect(proposal.target == .issue("i9", name: "I9"))
+        #expect(proposal.targetUpdatedAt == proposedAt)
+        #expect(proposal.reason.contains("SPL-9"))
+        #expect(!applyNow)
     }
 
-    @Test("Titles match regardless of case and punctuation, and closely")
-    func titleMatch() {
-        #expect(TitleMatch.isClose("Add retries to the sync", "add retries to the sync."))
-        #expect(TitleMatch.isClose("Add retries to the sync", "Add retry to the sync"))
-        #expect(!TitleMatch.isClose("Add retries to the sync", "Remove the sync"))
-        #expect(!TitleMatch.isClose("Fix login", "Fix logout crash on launch"))
+    @Test("What a duplicate adds is merged into the description of an issue superlinear created")
+    func duplicateMergedIntoDescription() async throws {
+        let open = issue("i9", description: "Make it robust.", labels: ["superlinear"])
+        let linear = FakeLinear(issues: [open], openMatches: [match("Make sync robust to network errors")])
+        let (proposal, _) = try stored(await engine(linear, duplicates: StubDuplicates(.duplicate(key: "SPL-9", added: "Back off.")))
+            .screen(newIssue("Retry failed syncs"), existing: []))
+        #expect(proposal.payload == .editIssue(
+            oldText: "Make it robust.", newText: "Make it robust.\n\n### Also from \"Retry failed syncs\"\n\nBack off."))
     }
+
+    @Test("A duplicate of a hands-off issue is not merged into it")
+    func duplicateOfHandsOff() async throws {
+        let open = issue("i9", labels: ["superlinear: hands off"])
+        let linear = FakeLinear(issues: [open], openMatches: [match("Make sync robust to network errors")])
+        let screening = try await engine(linear, duplicates: StubDuplicates(.duplicate(key: "SPL-9", added: "Back off.")))
+            .screen(newIssue("Retry failed syncs"), existing: [])
+        guard case .skip = screening else {
+            Issue.record("A duplicate of a hands-off issue was stored: \(screening)")
+            return
+        }
+    }
+
+    @Test("A new issue that is the same work as a rejected proposal is not proposed")
+    func duplicateOfRejected() async throws {
+        var earlier = Proposal(newIssue("Make sync robust"), trust: .review, now: proposedAt)
+        earlier.status = .rejected
+        let duplicates = StubDuplicates(.duplicate(key: DuplicateCandidate.Key(rawValue: "proposal-\(earlier.id.rawValue.prefix(8))"), added: "More."))
+        let screening = try await engine(FakeLinear(), duplicates: duplicates).screen(newIssue("Retry failed syncs"), existing: [earlier])
+        guard case .skip(let reason) = screening else {
+            Issue.record("A duplicate of a rejected proposal was stored: \(screening)")
+            return
+        }
+        #expect(reason.contains("rejected"))
+    }
+
+    @Test("A new issue that is the same work as a pending proposal not yet in Linear is merged into it")
+    func duplicateOfPending() async throws {
+        let earlier = Proposal(newIssue("Make sync robust", description: "Robust."), trust: .review, now: proposedAt)
+        let duplicates = StubDuplicates(.duplicate(key: DuplicateCandidate.Key(rawValue: "proposal-\(earlier.id.rawValue.prefix(8))"), added: "Back off."))
+        let screening = try await engine(FakeLinear(), duplicates: duplicates).screen(newIssue("Retry failed syncs"), existing: [earlier])
+        guard case .merge(let merged) = screening else {
+            Issue.record("A duplicate of a pending proposal was not merged: \(screening)")
+            return
+        }
+        #expect(merged.id == earlier.id)
+        #expect(merged.payload == .createIssue(
+            teamId: "team", projectId: nil, title: "Make sync robust",
+            description: "Robust.\n\n### Also from \"Retry failed syncs\"\n\nBack off.", relatedIssueId: nil))
+    }
+
+    @Test("A proposed issue in Linear is compared as the issue it is, once")
+    func postedProposalIsAnIssue() async throws {
+        var earlier = Proposal(newIssue("Make sync robust", description: "Robust."), trust: .review, now: proposedAt)
+        earlier.post = ProposalPost(form: .triageIssue, issueId: "i9", issueIdentifier: "SPL-9", url: "https://l/SPL-9", postedAt: proposedAt)
+        var rejected = Proposal(newIssue("Old idea"), trust: .review, now: proposedAt)
+        rejected.status = .rejected
+        let candidates = DuplicateCandidate.gather(
+            teamId: "team", matches: [match("Make sync robust"), IssueMatch(id: "i10", identifier: "SPL-10", title: "Other")],
+            existing: [earlier, rejected])
+        #expect(candidates.map(\.key) == ["SPL-9", DuplicateCandidate.Key(rawValue: "proposal-\(rejected.id.rawValue.prefix(8))"), "SPL-10"])
+        #expect(candidates.first?.description == "Robust.")
+        #expect(candidates[1].possible.note == "rejected proposal")
+    }
+
+    @Test("A new issue that may repeat others waits for review, with them listed")
+    func possibleDuplicates() async throws {
+        let linear = FakeLinear(openMatches: [match("Make sync robust"), IssueMatch(id: "i10", identifier: "SPL-10", title: "Other")])
+        let autonomy = Autonomy(overrides: [.createIssue: .auto])
+        let (proposal, applyNow) = try stored(await engine(linear, autonomy: autonomy, duplicates: StubDuplicates(.possible(keys: ["SPL-9"])))
+            .screen(newIssue("Retry failed syncs"), existing: []))
+        #expect(proposal.kind == .createIssue)
+        #expect(proposal.possibleDuplicates == [PossibleDuplicate(name: "SPL-9", title: "Make sync robust", url: "https://l/SPL-9")])
+        #expect(proposal.trust == .review)
+        #expect(!applyNow)
+    }
+
+    @Test("A new issue that could not be compared lists every candidate")
+    func checkFailed() async throws {
+        let linear = FakeLinear(openMatches: [match("Make sync robust"), IssueMatch(id: "i10", identifier: "SPL-10", title: "Other")])
+        let (proposal, _) = try stored(await engine(linear, duplicates: StubDuplicates(nil)).screen(newIssue("Retry failed syncs"), existing: []))
+        #expect(proposal.possibleDuplicates?.map(\.name) == ["SPL-9", "SPL-10"])
+    }
+
+    @Test("The agent's answer is read, and keys that are not candidates dropped")
+    func verdicts() throws {
+        let keys: [DuplicateCandidate.Key] = ["SPL-9", "SPL-10"]
+        #expect(try DuplicatePrompt.verdict(from: #"{"verdict": "distinct", "of": []}"#, keys: keys) == .distinct)
+        #expect(try DuplicatePrompt.verdict(
+            from: "Here:\n```json\n{\"verdict\": \"duplicate\", \"of\": [\"SPL-9\"], \"added\": \" More. \"}\n```", keys: keys)
+            == .duplicate(key: "SPL-9", added: "More."))
+        #expect(try DuplicatePrompt.verdict(from: #"{"verdict": "possible", "of": ["SPL-9", "SPL-1"]}"#, keys: keys) == .possible(keys: ["SPL-9"]))
+        #expect(try DuplicatePrompt.verdict(from: #"{"verdict": "duplicate", "of": ["SPL-9", "SPL-10"]}"#, keys: keys)
+            == .possible(keys: ["SPL-9", "SPL-10"]))
+        #expect(try DuplicatePrompt.verdict(from: #"{"verdict": "duplicate", "of": ["SPL-1"]}"#, keys: keys) == .distinct)
+        #expect(throws: DuplicateCheckError.self) { try DuplicatePrompt.verdict(from: "No idea", keys: keys) }
+        #expect(throws: DuplicateCheckError.self) { try DuplicatePrompt.verdict(from: #"{"verdict": "maybe"}"#, keys: keys) }
+    }
+
+    @Test("The prompt gives the new issue and each candidate, with long descriptions cut short")
+    func prompt() {
+        var rejected = Proposal(newIssue("Old idea"), trust: .review, now: proposedAt)
+        rejected.status = .rejected
+        let long = String(repeating: "x", count: DuplicateQuestion.maxDescription + 10)
+        let prompt = DuplicatePrompt.render(DuplicateQuestion(
+            title: "Retry failed syncs", description: "Retry.", candidates: [.issue(match("Make sync robust", description: long)), .proposal(rejected)]))
+        #expect(prompt.contains("Title: Retry failed syncs"))
+        #expect(prompt.contains("### SPL-9: Make sync robust"))
+        #expect(prompt.contains("(Cut short.)"))
+        #expect(!prompt.contains(long))
+        #expect(prompt.contains("### proposal-\(rejected.id.rawValue.prefix(8)): Old idea\n(A proposal the owner rejected.)"))
+    }
+}
+
+private func match(_ title: String, description: String = "The report.") -> IssueMatch {
+    IssueMatch(id: "i9", identifier: "SPL-9", title: title, description: description, url: "https://l/SPL-9")
 }
 
 @Suite("Proposal expiry")

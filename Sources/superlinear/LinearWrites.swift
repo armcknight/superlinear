@@ -23,7 +23,7 @@ extension LinearClient: LinearWriting {
         ).searchIssues.nodes
         return nodes
             .filter { !LinearStateType.closed.contains($0.state.type) }
-            .map { IssueMatch(id: $0.id, identifier: $0.identifier, title: $0.title) }
+            .map { IssueMatch(id: $0.id, identifier: $0.identifier, title: $0.title, description: $0.description ?? "", url: $0.url) }
     }
 
     func labelId(named name: String, teamId: LinearTeam.ID) async throws -> LinearLabel.ID {
