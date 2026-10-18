@@ -48,7 +48,7 @@ To start an agent, the daemon picks a Claude session ID, writes the prompt to a 
 work start --headless --prompt-file <prompt> --log-file <log> --session-id <uuid> <issue-branch-name>
 ```
 
-This creates a worktree at `worktrees/<branch>`, runs `make init`, and pipes the prompt into `claude -p` under that session ID. Branch names come from Linear's own `branchName` field, so the branch matches what the Linear UI shows.
+This creates a worktree at `worktrees/<branch>`, runs `make init`, and pipes the prompt into `claude -p` under that session ID. Agents work on Opus: the daemon sets `ANTHROPIC_MODEL=opus` for them, whatever the default model in Claude's settings is. Branch names come from Linear's own `branchName` field, so the branch matches what the Linear UI shows.
 
 The prompt instructs the agent to run `/armcknight-claude:start`, implement the change, run `/armcknight-claude:commit`, then run `/armcknight-claude:pr --autonomous` to open a pull request and see CI through. The agent is told not to pause for confirmation. The target repository's `CLAUDE.md` tells it how the project is built and tested.
 
