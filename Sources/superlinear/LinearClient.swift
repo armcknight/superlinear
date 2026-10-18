@@ -104,6 +104,9 @@ enum LinearMilestone {
     typealias Name = Tagged<LinearMilestone, String>
 }
 enum LinearDocument { typealias ID = Tagged<LinearDocument, String> }
+enum LinearState { typealias ID = Tagged<LinearState, String> }
+enum LinearComment { typealias ID = Tagged<LinearComment, String> }
+enum LinearUser { typealias ID = Tagged<LinearUser, String> }
 enum LinearLabel {
     typealias ID = Tagged<LinearLabel, String>
     typealias Name = Tagged<NameTag, String>
@@ -134,6 +137,11 @@ enum GitCommit {
 extension Tagged where Tag == GitCommit, RawValue == String {
     /// The first 7 characters, as git shows a SHA.
     var short: String { String(rawValue.prefix(7)) }
+}
+
+/// A git branch, for the tag on its name.
+enum GitBranch {
+    typealias Name = Tagged<GitBranch, String>
 }
 
 /// A Claude Code session, for the tag on its ID. Lowercase, as Claude names
@@ -178,9 +186,9 @@ struct LinearClient: Sendable {
     func fetchReadyIssues(states: [LinearStateType], teamIds: [String]) async throws -> [LinearIssue] {
         let states = states.map(\.rawValue)
         if teamIds.isEmpty {
-            return try await fetchAll(.readyIssues, variables: ["states": states])
+            return try await fetchAll(.readyIssues, variables: [.states: states])
         }
-        return try await fetchAll(.readyIssuesInTeams, variables: ["states": states, "teamIds": teamIds])
+        return try await fetchAll(.readyIssuesInTeams, variables: [.states: states, .teamIds: teamIds])
     }
 
     /// The issues with these IDs, with what it takes to decide whether an
@@ -189,7 +197,7 @@ struct LinearClient: Sendable {
         var issues: [LinearIssue] = []
         for start in stride(from: 0, to: ids.count, by: 25) {
             let batch = ids[start..<min(start + 25, ids.count)].map(\.rawValue)
-            issues += try await fetchAll(.candidatesById, variables: ["ids": batch])
+            issues += try await fetchAll(.candidatesById, variables: [.ids: batch])
         }
         return issues
     }
@@ -207,7 +215,7 @@ struct LinearClient: Sendable {
         guard !pairs.isEmpty else { return [] }
         let issues: [LinearIssueStatus] = try await fetchAll(
             .issuesByNumber,
-            variables: ["numbers": Array(Set(pairs.map(\.1))), "keys": Array(Set(pairs.map(\.0)))]
+            variables: [.numbers: Array(Set(pairs.map(\.1))), .keys: Array(Set(pairs.map(\.0)))]
         )
         let wanted = Set(identifiers)
         return issues.filter { wanted.contains($0.identifier) }
@@ -219,16 +227,16 @@ struct LinearClient: Sendable {
         if teamIds.isEmpty {
             return try await fetchAll(.startedIssues, variables: [:])
         }
-        return try await fetchAll(.startedIssuesInTeams, variables: ["teamIds": teamIds])
+        return try await fetchAll(.startedIssuesInTeams, variables: [.teamIds: teamIds])
     }
 
     func fetchNewIssues(since: Date, teamIds: [String]) async throws -> [LinearIssue] {
         let formatter = ISO8601DateFormatter()
-        var variables: [String: Any] = [
-            "after": ["gt": formatter.string(from: since)]
+        var variables: [LinearVariable: Any] = [
+            .after: [LinearVariable.gt: formatter.string(from: since)]
         ]
         if !teamIds.isEmpty {
-            variables["teamIds"] = teamIds
+            variables[.teamIds] = teamIds
         }
         return try await fetchAll(teamIds.isEmpty ? .newIssues : .newIssuesInTeams, variables: variables)
     }
@@ -239,20 +247,20 @@ struct LinearClient: Sendable {
         var issues: [LinearIssueStatus] = []
         for start in stride(from: 0, to: ids.count, by: 50) {
             let batch = Array(ids[start..<min(start + 50, ids.count)])
-            issues += try await fetchAll(.issuesById, variables: ["ids": batch])
+            issues += try await fetchAll(.issuesById, variables: [.ids: batch])
         }
         return issues
     }
 
     /// Runs an `issues` query, following its pages to the end.
-    func fetchAll<Node: Decodable>(_ query: LinearQuery, variables: [String: Any]) async throws -> [Node] {
+    func fetchAll<Node: Decodable>(_ query: LinearQuery, variables: [LinearVariable: Any]) async throws -> [Node] {
         var allNodes: [Node] = []
         var cursor: String? = nil
 
         repeat {
             var pageVariables = variables
             if let cursor {
-                pageVariables["cursor"] = cursor
+                pageVariables[.cursor] = cursor
             }
 
             let result = try await execute(query, variables: pageVariables, as: LinearQuery.IssuesData<Node>.self).issues
@@ -287,26 +295,26 @@ struct LinearClient: Sendable {
     /// nil when it changed nothing.
     func move(id: String, toFirst type: String, unlessIn skipped: Set<String> = []) async throws -> JSONValue? {
         let issue = try await execute(
-            .issueState, variables: ["id": id, "type": type], as: LinearQuery.IssueStateData.self
+            .issueState, variables: [.id: id, .type: type], as: LinearQuery.IssueStateData.self
         ).issue
         guard !skipped.contains(issue.state.type) else { return nil }
         guard let target = issue.team.states.nodes.min(by: { $0.position < $1.position }) else {
             throw LinearClientError.apiError(["The issue's team has no \(type) state"])
         }
-        return try await mutate(.moveIssue, variables: ["id": id, "stateId": target.id], field: "issueUpdate")
+        return try await mutate(.moveIssue, variables: [.id: id, .stateId: target.id], field: .issueUpdate)
     }
 
     /// Attaches `url` to the issue. Linear keeps one attachment per URL on an
     /// issue, so linking a URL twice changes nothing.
     func linkURL(issueId: String, url: String, title: String) async throws {
         try await mutate(
-            .linkURL, variables: ["issueId": issueId, "url": url, "title": title], field: "attachmentLinkURL"
+            .linkURL, variables: [.issueId: issueId, .url: url, .title: title], field: .attachmentLinkURL
         )
     }
 
     /// The URLs attached to the issue.
     func attachmentURLs(issueId: String) async throws -> Set<String> {
-        let data = try await execute(.attachments, variables: ["id": issueId], as: LinearQuery.AttachmentsData.self)
+        let data = try await execute(.attachments, variables: [.id: issueId], as: LinearQuery.AttachmentsData.self)
         return Set(data.issue.attachments.nodes.map(\.url))
     }
 
@@ -328,17 +336,17 @@ struct LinearClient: Sendable {
         return team.id
     }
 
-    func execute<T: Decodable>(_ query: LinearQuery, variables: [String: Any], as type: T.Type) async throws -> T {
+    func execute<T: Decodable>(_ query: LinearQuery, variables: [LinearVariable: Any], as type: T.Type) async throws -> T {
         try await send(query, variables: variables).decoded(as: T.self)
     }
 
     /// Runs a mutation whose result `field` reports `success`, failing when it
     /// does not, and returns the whole of Linear's answer, for the audit log.
     @discardableResult
-    func mutate(_ query: LinearQuery, variables: [String: Any], field: String) async throws -> JSONValue {
+    func mutate(_ query: LinearQuery, variables: [LinearVariable: Any], field: LinearField) async throws -> JSONValue {
         let response = try await send(query, variables: variables)
         let results = try response.decoded(as: [String: LinearQuery.Success].self)
-        guard results[field]?.success == true else { throw LinearClientError.invalidResponse }
+        guard results[field.rawValue]?.success == true else { throw LinearClientError.invalidResponse }
         return try response.decoded(as: JSONValue.self)
     }
 
@@ -363,16 +371,26 @@ struct LinearClient: Sendable {
         }
     }
 
-    private func send(_ query: LinearQuery, variables: [String: Any]) async throws -> Response {
+    private func send(_ query: LinearQuery, variables: [LinearVariable: Any]) async throws -> Response {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "Authorization")
 
-        let body: [String: Any] = ["query": query.text, "variables": variables]
+        let body: [String: Any] = ["query": query.text, "variables": Self.encoded(variables)]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, _) = try await URLSession.shared.data(for: request)
         return Response(data: data)
+    }
+
+    /// The variables as JSON takes them, with each name, also in the inputs
+    /// and filters nested in them, spelled out.
+    static func encoded(_ value: Any) -> Any {
+        if let variables = value as? [LinearVariable: Any] {
+            return Dictionary(uniqueKeysWithValues: variables.map { ($0.key.rawValue, encoded($0.value)) })
+        }
+        if let values = value as? [Any] { return values.map(encoded) }
+        return value
     }
 }

@@ -17,8 +17,15 @@ struct ArgumentsTests {
         #expect(Command.parse(["install"]) == .install(force: false))
         #expect(Command.parse(["install", "--force"]) == .install(force: true))
         #expect(Command.parse(["uninstall"]) == .uninstall)
-        #expect(Command.parse(["status"]) == .status(configPath: nil))
-        #expect(Command.parse(["status", "--config", "/c.json"]) == .status(configPath: "/c.json"))
+        #expect(Command.parse(["status"]) == .status(configPath: nil, filter: StatusFilter(), since: nil))
+        #expect(Command.parse(["status", "--config", "/c.json"]) == .status(configPath: "/c.json", filter: StatusFilter(), since: nil))
+        #expect(Command.parse(["status", "--since", "7d", "--config", "/c.json"])
+            == .status(configPath: "/c.json", filter: StatusFilter(), since: 7 * 24 * 60 * 60 as TimeInterval))
+        #expect(Command.parse(["status", "--since", "soon"]) == .invalid("--since needs a duration such as 24h, 7d or 90m"))
+        #expect(Command.parse(["standup"]) == .invalid("unknown command: standup"))
+        #expect(Command.parse(["stats"]) == .stats(configPath: nil))
+        #expect(Command.parse(["stats", "--config", "/c.json"]) == .stats(configPath: "/c.json"))
+        #expect(Command.parse(["stats", "--since", "7d"]) == .invalid("unknown option for stats: --since"))
         #expect(Command.parse(["proposals"]) == .proposals(configPath: nil, workspace: nil))
         #expect(Command.parse(["proposals", "--workspace", "w", "--config", "/c.json"])
             == .proposals(configPath: "/c.json", workspace: "w"))
@@ -28,9 +35,31 @@ struct ArgumentsTests {
         #expect(Command.parse(["-h"]) == .help)
     }
 
+    @Test("status takes sections and workspaces, comma-separated or repeated")
+    func statusFilter() {
+        #expect(Command.parse(["status", "--status", "running,blocked", "--status", "stale"])
+            == .status(configPath: nil, filter: StatusFilter(sections: [.task(.running), .task(.blocked), .stale]), since: nil))
+        #expect(Command.parse(["status", "--status", "awaiting-review, completed"])
+            == .status(configPath: nil, filter: StatusFilter(sections: [.awaitingReview, .task(.completed)]), since: nil))
+        #expect(Command.parse(["status", "--workspace", "a,b", "--workspace", "c", "--config", "/c.json"])
+            == .status(configPath: "/c.json", filter: StatusFilter(workspaces: ["a", "b", "c"]), since: nil))
+        #expect(Command.parse(["status", "--status", "closed", "--workspace", "a"])
+            == .status(configPath: nil, filter: StatusFilter(sections: [.task(.closed)], workspaces: ["a"]), since: nil))
+    }
+
+    @Test("An unknown status names the ones there are")
+    func unknownStatus() {
+        guard case .invalid(let message) = Command.parse(["status", "--status", "running,finished"]) else {
+            Issue.record("should be invalid")
+            return
+        }
+        #expect(message.hasPrefix("unknown status: finished. Statuses: awaiting-review, drafts, running, "))
+        #expect(message.hasSuffix(", completed, closed, done, risks, stale"))
+    }
+
     @Test("Anything unknown is an error, not a daemon")
     func unknownIsInvalid() {
-        for arguments in [["stats"], ["status", "--json"], ["--verbose"], ["--config"], ["install", "--now"], ["uninstall", "x"], ["proposals", "--all"], ["proposals", "--workspace"]] {
+        for arguments in [["stat"], ["status", "--json"], ["stats", "--workspace", "w"], ["stats", "--status", "running"], ["--verbose"], ["--config"], ["install", "--now"], ["uninstall", "x"], ["proposals", "--all"], ["proposals", "--workspace"], ["status", "--status"], ["status", "--status", ","], ["status", "--workspace"]] {
             guard case .invalid = Command.parse(arguments) else {
                 Issue.record("\(arguments) should be invalid")
                 continue

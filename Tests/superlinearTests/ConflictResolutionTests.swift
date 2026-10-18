@@ -61,9 +61,9 @@ struct ConflictResolutionTests {
     func category() {
         var queued = run(conflict: request)
         queued.pid = nil
-        #expect(TaskCategory.of(run: run(conflict: request), running: true, issue: nil, pullRequest: nil) == .resolvingConflicts)
-        #expect(TaskCategory.of(run: queued, running: false, issue: nil, pullRequest: nil) == .resolvingConflicts)
-        #expect(TaskCategory.of(run: run(conflict: request), running: false, issue: nil, pullRequest: nil) == .interrupted)
+        #expect(TaskCategory.of(run: run(conflict: request), running: true, issue: nil, pullRequest: nil, pending: nil) == .resolvingConflicts)
+        #expect(TaskCategory.of(run: queued, running: false, issue: nil, pullRequest: nil, pending: nil) == .resolvingConflicts)
+        #expect(TaskCategory.of(run: run(conflict: request), running: false, issue: nil, pullRequest: nil, pending: nil) == .interrupted)
     }
 
     @Test("GitHub's mergeable state is read from the open listing")
@@ -79,7 +79,7 @@ struct ConflictResolutionTests {
         #expect(PullRequestChecker.listOpenArguments.last?.contains("mergeable") == true)
     }
 
-    @Test("A conflicting pull request says so under Awaiting review, and so does an agent resolving it")
+    @Test("A conflicting pull request says so under Waiting on you, and so does an agent resolving it")
     func rendered() {
         func pullRequest(_ number: PullRequest.Number, branch: String) -> ReviewablePullRequest {
             ReviewablePullRequest(
@@ -102,7 +102,7 @@ struct ConflictResolutionTests {
         )
         #expect(report.rendered() == """
         w
-          Awaiting review
+          Waiting on you
             SL-1  #4 PR 4
                   agent resolving conflicts · conflicts with main · no CI · https://github.com/o/r/pull/4
             SL-2  #5 PR 5

@@ -31,9 +31,9 @@ struct StatusTests {
     @Test("A run in flight is running, interrupted, or queued, whatever its pull request")
     func runsInFlight() {
         let merged = pullRequest(1, state: "MERGED")
-        #expect(TaskCategory.of(run: launched, running: true, issue: nil, pullRequest: merged) == .running)
-        #expect(TaskCategory.of(run: launched, running: false, issue: nil, pullRequest: merged) == .interrupted)
-        #expect(TaskCategory.of(run: queued, running: false, issue: nil, pullRequest: merged) == .queued)
+        #expect(TaskCategory.of(run: launched, running: true, issue: nil, pullRequest: merged, pending: nil) == .running)
+        #expect(TaskCategory.of(run: launched, running: false, issue: nil, pullRequest: merged, pending: nil) == .interrupted)
+        #expect(TaskCategory.of(run: queued, running: false, issue: nil, pullRequest: merged, pending: nil) == .queued)
     }
 
     @Test("A run addressing a review has its own category while running or queued, and resumes as usual when interrupted")
@@ -43,9 +43,9 @@ struct StatusTests {
         running.review = request
         var waiting = queued
         waiting.review = request
-        #expect(TaskCategory.of(run: running, running: true, issue: nil, pullRequest: nil) == .addressingReview)
-        #expect(TaskCategory.of(run: waiting, running: false, issue: nil, pullRequest: nil) == .addressingReview)
-        #expect(TaskCategory.of(run: running, running: false, issue: nil, pullRequest: nil) == .interrupted)
+        #expect(TaskCategory.of(run: running, running: true, issue: nil, pullRequest: nil, pending: nil) == .addressingReview)
+        #expect(TaskCategory.of(run: waiting, running: false, issue: nil, pullRequest: nil, pending: nil) == .addressingReview)
+        #expect(TaskCategory.of(run: running, running: false, issue: nil, pullRequest: nil, pending: nil) == .interrupted)
     }
 
     @Test("A review run's detail gives its pull request, and its log once launched")
@@ -68,25 +68,25 @@ struct StatusTests {
 
     @Test("A finished task with an open pull request is listed with it")
     func openPullRequest() {
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: pullRequest(1, state: "OPEN")) == .openPullRequest)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: pullRequest(1, state: "OPEN"), pending: nil) == .openPullRequest)
     }
 
     // The issue's own rule: merged is not enough, Linear must agree.
     @Test("A merged pull request is complete only once the Linear issue is done")
     func completionNeedsBoth() {
         let merged = pullRequest(1, state: "MERGED")
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "completed"), pullRequest: merged) == .completed)
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "started"), pullRequest: merged) == .merged)
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "canceled"), pullRequest: merged) == .merged)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "completed"), pullRequest: merged, pending: nil) == .completed)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "started"), pullRequest: merged, pending: nil) == .merged)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "canceled"), pullRequest: merged, pending: nil) == .merged)
     }
 
     @Test("Without an open or merged pull request, the Linear state decides")
     func withoutPullRequest() {
         let closedPR = pullRequest(1, state: "CLOSED")
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: nil) == .noPullRequest)
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: closedPR) == .noPullRequest)
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "completed"), pullRequest: nil) == .closed)
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "canceled"), pullRequest: closedPR) == .closed)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: nil, pending: nil) == .noPullRequest)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: closedPR, pending: nil) == .noPullRequest)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "completed"), pullRequest: nil, pending: nil) == .closed)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "canceled"), pullRequest: closedPR, pending: nil) == .closed)
     }
 
     // MARK: Pull requests
@@ -213,7 +213,7 @@ struct StatusTests {
         """)
     }
 
-    @Test("A pull request whose review an agent addresses says so under Awaiting review")
+    @Test("A pull request whose review an agent addresses says so under Waiting on you")
     func awaitingAgent() {
         let pullRequest = ReviewablePullRequest(
             number: 4, url: "https://github.com/o/r/pull/4", title: "Four", headRefName: "linear/sl-1",
@@ -227,19 +227,123 @@ struct StatusTests {
         )
         #expect(report.rendered() == """
         w
-          Awaiting review
+          Waiting on you
             SL-1  #4 Four
                   agent addressing review · no CI · https://github.com/o/r/pull/4
           Addressing review
             SL-1  One
                   queued, https://github.com/o/r/pull/4
         """)
+        // The note follows the task the filter leaves out.
+        #expect(report.filtered(to: [.awaitingReview]).rendered() == """
+        w
+          Waiting on you
+            SL-1  #4 Four
+                  agent addressing review · no CI · https://github.com/o/r/pull/4
+        """)
+    }
+
+    @Test("A filtered report keeps the note on a draft whose lower pull request was closed")
+    func filteredKeepsClosedBase() {
+        let draft = ReviewablePullRequest(
+            number: 2, url: "https://github.com/o/r/pull/2", title: "Two", headRefName: "b-2",
+            isDraft: true, reviewDecision: nil, latestReviews: nil, statusCheckRollup: nil, baseRefName: "b-1"
+        )
+        let base = StackBase(
+            identifier: "SL-1", branch: "b-1", number: 1, url: "https://github.com/o/r/pull/1", depth: 1, baseHead: nil, drafted: true
+        )
+        let report = WorkspaceReport(
+            name: "w",
+            entries: [TaskEntry(
+                identifier: "SL-2", title: "Two", category: .blocked, detail: nil,
+                pullRequest: pullRequest(2, branch: "b-2", state: "OPEN"), stack: base
+            )],
+            reviews: [ReviewEntry(issue: issue("SL-2"), pullRequest: draft)],
+            warnings: []
+        )
+        let text = report.filtered(to: [.drafts]).rendered()
+        #expect(!text.contains("Blocked"))
+        #expect(text.contains("stacked on #1, closed without a merge: decide what becomes of it"))
     }
 
     @Test("An empty workspace says so, and warnings are shown")
     func emptyAndWarnings() {
         #expect(WorkspaceReport(name: "w", entries: [], warnings: []).rendered() == "w\n  No tasks")
         #expect(WorkspaceReport(name: "w", entries: [], warnings: ["no network"]).rendered() == "w\n  warning: no network")
+    }
+
+    // MARK: Filtering
+
+    @Test("Every section has a distinct name that parses back")
+    func sectionNames() {
+        let names = StatusSection.all.map(\.name)
+        #expect(Set(names).count == names.count)
+        #expect(names.first == "awaiting-review")
+        #expect(names.last == "stale")
+        for section in StatusSection.all {
+            #expect(StatusSection(name: section.name) == section)
+        }
+        #expect(StatusSection(name: "Running") == nil)
+    }
+
+    @Test("A filter keeps the named sections")
+    func filtered() {
+        let open = pullRequest(2, branch: "two", state: "OPEN")
+        let merged = pullRequest(10, branch: "ten", state: "MERGED")
+        let reviewable = ReviewablePullRequest(
+            number: 2, url: open.url, title: "Two", headRefName: "two",
+            isDraft: false, reviewDecision: nil, latestReviews: nil, statusCheckRollup: nil
+        )
+        let draft = ReviewablePullRequest(
+            number: 3, url: "https://github.com/o/r/pull/3", title: "Three", headRefName: "three",
+            isDraft: true, reviewDecision: nil, latestReviews: nil, statusCheckRollup: nil
+        )
+        let report = WorkspaceReport(
+            name: "w",
+            entries: [
+                TaskEntry(identifier: "SL-1", title: "One", category: .running, detail: nil),
+                TaskEntry(identifier: "SL-2", title: "Two", category: .openPullRequest, detail: open.url, pullRequest: open),
+                TaskEntry(identifier: "SL-10", title: "Ten", category: .completed, detail: merged.url, pullRequest: merged),
+            ],
+            reviews: [ReviewEntry(issue: issue("SL-2"), pullRequest: reviewable), ReviewEntry(issue: issue("SL-3"), pullRequest: draft)],
+            stale: [StaleBranch(branch: "old", reason: .merged(4), hasWorktree: false, lastCommit: nil, unpushedCommits: 0)],
+            warnings: []
+        )
+
+        let running = report.filtered(to: [.task(.running)])
+        #expect(running.entries.map(\.identifier) == ["SL-1"])
+        #expect(running.reviews == nil)
+        #expect(running.stale.isEmpty)
+        #expect(running.rendered() == "w\n  Running\n    SL-1  One")
+
+        let drafts = report.filtered(to: [.drafts, .task(.completed)])
+        #expect(drafts.reviews?.map(\.pullRequest.number) == [3])
+        #expect(drafts.entries.map(\.identifier) == ["SL-10"])
+
+        // Not listed for review, the open pull request shows as a task.
+        let openTasks = report.filtered(to: [.task(.openPullRequest), .stale])
+        #expect(openTasks.rendered() == """
+        w
+          Open pull requests
+            SL-2  Two
+                  https://github.com/o/r/pull/2
+          Stale branches and worktrees
+            old
+              merged in #4
+        """)
+    }
+
+    @Test("A filter keeps what waits on you, what was done and the risks only when named")
+    func filteredReviewSections() {
+        var report = WorkspaceReport(name: "w", entries: [], warnings: [])
+        report.done = ["started SL-1"]
+        report.risks = ["CI fails on main"]
+        let done = report.filtered(to: [.done])
+        #expect(done.done == ["started SL-1"])
+        #expect(done.risks == nil)
+        let risks = report.filtered(to: [.risks])
+        #expect(risks.done == nil)
+        #expect(risks.rendered() == "w\n  Risks\n    CI fails on main")
     }
 
     @Test("Blocked and human-labeled issues are listed from the state file, with their blockers and labels")

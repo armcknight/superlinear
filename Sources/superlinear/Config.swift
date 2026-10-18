@@ -13,6 +13,7 @@ struct WorkspaceConfig: Decodable, Sendable {
     static let defaultReadyStates: [LinearStateType] = [.unstarted]
     static let defaultHumanLabels = ["Needs human", "Spike"]
     static let defaultProposalExpiryDays = 7
+    static let defaultMaxStackDepth: StackBase.Depth = 3
 
     let name: String
     let apiKey: String
@@ -29,15 +30,20 @@ struct WorkspaceConfig: Decodable, Sendable {
     let humanLabels: [String]
     /// The trust level of each kind of proposal.
     let autonomy: Autonomy
-    /// Days after which a pending proposal expires, counted from the first
-    /// standup that showed it.
+    /// Days after which a pending proposal expires, counted from when it was
+    /// put in Linear.
     let proposalExpiryDays: Int
     /// Planning settings.
     let planning: PlanningConfig
+    /// Whether an issue whose one unmerged blocker has an open pull request
+    /// starts on top of that pull request's branch.
+    let stacking: Bool
+    /// How many pull requests a stack may hold, the bottom one included.
+    let maxStackDepth: StackBase.Depth
 
     enum CodingKeys: String, CodingKey {
         case name, apiKey, repoPath, teamIds, pollIntervalSeconds, selection, readyStates, humanLabels
-        case autonomy, proposalExpiryDays, planning
+        case autonomy, proposalExpiryDays, planning, stacking, maxStackDepth
     }
 
     init(from decoder: Decoder) throws {
@@ -66,6 +72,9 @@ struct WorkspaceConfig: Decodable, Sendable {
         let expiry = try container.decodeIfPresent(Int.self, forKey: .proposalExpiryDays) ?? Self.defaultProposalExpiryDays
         proposalExpiryDays = max(1, expiry)
         planning = try container.decodeIfPresent(PlanningConfig.self, forKey: .planning) ?? PlanningConfig()
+        stacking = try container.decodeIfPresent(Bool.self, forKey: .stacking) ?? true
+        let depth = try container.decodeIfPresent(StackBase.Depth.self, forKey: .maxStackDepth) ?? Self.defaultMaxStackDepth
+        maxStackDepth = max(1, depth)
     }
 
     /// The Linear state types an issue may be in for an agent to start on it.
@@ -81,9 +90,8 @@ struct WorkspaceConfig: Decodable, Sendable {
 struct PlanningConfig: Decodable, Sendable, Equatable {
     /// Whether the planning job runs.
     var enabled = false
-    /// The Linear document holding the project's spec. The planning job reads
-    /// it, and decisions entered at standup are added to it as well as to
-    /// their issues.
+    /// The Linear document holding the project's spec, which the planning
+    /// job reads and may propose changes to.
     var specDocumentURL: String?
 
     init(enabled: Bool = false, specDocumentURL: String? = nil) {

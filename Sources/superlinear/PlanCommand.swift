@@ -34,11 +34,11 @@ enum PlanCommand {
 
     /// Runs one workspace's planning job and waits for it, then screens its
     /// proposals as the daemon would, applies those whose kind is `auto`, and
-    /// stores them in the planning file, where the daemon and the standup
-    /// take them in. Returns whether the job ran to the end.
+    /// stores them in the planning file, where the daemon takes them in and
+    /// puts them in Linear. Returns whether the job ran to the end.
     static func runJob(_ workspace: WorkspaceConfig, say: (String) -> Void, runner: PlanningRunner = PlanningRunner()) async -> Bool {
         let name = workspace.name
-        let state = State.loadWithStandups()
+        let state = State.loadWithPlanning(from: State.stateFileURL(), planning: PlanningRecord.load())
         var planning = PlanningRecord.load()
         if let reason = busy(state.workspaces[name] ?? WorkspaceState(), planning: planning[name]) {
             say("[\(name)] \(reason)")
@@ -123,8 +123,8 @@ enum PlanCommand {
             return false
         }
         var summary = "[\(name)] The planning job proposed \(record.proposed), skipped \(record.skipped)"
-        if let usage = record.usage { summary += ", and used \(StatusSummary.compact(usage.tokens)) tokens" }
-        say(summary + (record.proposed > 0 ? ". Review them with `superlinear standup`." : "."))
+        if let usage = record.usage { summary += ", and used \(Stats.compact(usage.tokens)) tokens" }
+        say(summary + (record.proposed > 0 ? ". The daemon puts them in Linear at its next poll." : "."))
         return true
     }
 
@@ -132,30 +132,11 @@ enum PlanCommand {
     /// another `plan`'s.
     static func busy(_ state: WorkspaceState, planning: WorkspacePlanning) -> String? {
         if let run = state.planningRun, AgentRunner.isRunning(pid: run.pid, startedAt: run.processStartedAt) {
-            return "The daemon is running the planning job now (session \(run.sessionId)); its proposals come up at the next standup"
+            return "The daemon is running the planning job now (session \(run.sessionId)); its proposals go to Linear when it ends"
         }
         if let run = planning.running, AgentRunner.isRunning(pid: run.pid, startedAt: run.processStartedAt) {
             return "`superlinear plan` is running the planning job now (session \(run.sessionId))"
         }
         return nil
-    }
-
-    /// What the standup says before offering to run the job, or nil when it
-    /// does not offer: planning is off, a job is running, nothing changed
-    /// since the last job, or the check failed.
-    static func standupOffer(
-        _ workspace: WorkspaceConfig, state: WorkspaceState, planning: WorkspacePlanning, linear: any PlanningReading, now: Date
-    ) async -> String? {
-        guard workspace.planning.enabled, busy(state, planning: planning) == nil else { return nil }
-        let history = (state.planningRuns + planning.runs).sorted { $0.startedAt < $1.startedAt }
-        guard let trigger = try? await PlanningGatherer(workspace: workspace, linear: linear).trigger(history: history) else {
-            return nil
-        }
-        guard let last = PlanningHistory.last(history) else {
-            return "No planning job has run for \(workspace.name) yet."
-        }
-        let age = StatusTime.relative(Int(last.startedAt.timeIntervalSince(now).rounded()))
-        let cost = last.usage.map { ", and used \(StatusSummary.compact($0.tokens)) tokens" } ?? ""
-        return "Since the last planning job for \(workspace.name), which ran \(age)\(cost), \(trigger)."
     }
 }
