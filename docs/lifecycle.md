@@ -21,7 +21,7 @@ How an issue in Linear becomes a merged pull request: which issues superlinear p
 Each workspace picks its issues in one of two modes, set by [`selection`](configuration.md#selection).
 
 - **`new`**, the default: issues created since the last poll, in the `backlog` or `unstarted` state, oldest first. Suits a workspace where filing an issue means "build this".
-- **`ready`**: every open issue whose state type is in [`readyStates`](configuration.md#ready-states) — `unstarted`, which is Todo, by default — however old. They start urgent first and no priority last, then by project sort order, milestone sort order and issue sort order, as Linear orders them; an issue outside a project or milestone comes after those in one. When its agent starts, the issue moves to its team's first `started` state, such as In Progress. Suits a planned roadmap: issues wait in Backlog, and moving one to Todo is how you, or a [standup](planning.md#standup), say "build this". This costs one query per poll, which brings each issue's blockers along.
+- **`ready`**: every open issue whose state type is in [`readyStates`](configuration.md#ready-states) — `unstarted`, which is Todo, by default — however old. They start urgent first and no priority last, then by project sort order, milestone sort order and issue sort order, as Linear orders them; an issue outside a project or milestone comes after those in one. When its agent starts, the issue moves to its team's first `started` state, such as In Progress. Suits a planned roadmap: issues wait in Backlog, and moving one to Todo is how you, or an accepted [proposal](planning.md#standup), say "build this". This costs one query per poll, which brings each issue's blockers along.
 
 <a id="first-poll"></a>
 **First poll:** a workspace with no state — just added to the config, or after `make reset` — in `new` mode takes its first poll as the starting point, logs that once, and starts no issue created before it. Without that, its first poll would start an agent for every open issue in the workspace. In `ready` mode the first poll starts every ready issue, which is what Todo means there.
@@ -42,8 +42,8 @@ Each issue is processed once, as Linear's are, and shares the same queue and age
 In both modes, an issue the selection finds starts only when nothing holds it back:
 
 - **Blockers:** an issue that another issue blocks, through a Linear "blocks" relation, does not start while that issue is neither completed nor canceled. It waits in the state file as blocked, and starts on the first poll after its last blocker is closed. With [`stacking`](configuration.md#stacking) on, an issue whose last open blocker has an open pull request from an agent may start on top of that pull request instead: see [Stacks](#stacks).
-- **Human labels:** an issue with a label in [`humanLabels`](configuration.md#human-labels) — "Needs human" or "Spike" by default, in any case — never starts an agent. Should the label come off, it starts like any other issue. These issues are for you: the [standup](planning.md#standup-needs-human) lists them to sign off.
-- **Holds:** an issue held at a [standup](planning.md#standup) does not start until a standup releases it.
+- **Human labels:** an issue with a label in [`humanLabels`](configuration.md#human-labels) — "Needs human" or "Spike" by default, in any case — never starts an agent. Should the label come off, it starts like any other issue. These issues are for you: `superlinear status` lists them under "Needs human", and [marking one Done in Linear](planning.md#standup-needs-human) makes the issues it blocks ready.
+- **Holds:** to hold an issue back, move it to Backlog; moving it to Todo again releases it.
 - **Moving on:** a waiting issue moved out of the states an agent starts from, or archived, stops waiting.
 
 `superlinear status` lists waiting issues under "Blocked", with their open blockers, and "Needs human", with their human labels, as of the daemon's last poll. In `new` mode each poll fetches the waiting issues again, in one more query when there are any; in `ready` mode the ready query brings them.
@@ -51,7 +51,7 @@ In both modes, an issue the selection finds starts only when nothing holds it ba
 <a id="agent"></a>
 ## The agent
 
-Each issue that passes the gate is queued, in the order the selection gives, or in the order the last standup set. While fewer than [`maxConcurrentAgents`](configuration.md#max-concurrent-agents) agents run, the issue queued longest ago starts. The poll does not wait for agents: the next one runs on schedule however long they take.
+Each issue that passes the gate is queued, in the order the selection gives: the Todo order in Linear is the only queue order. While fewer than [`maxConcurrentAgents`](configuration.md#max-concurrent-agents) agents run, the issue queued longest ago starts. The poll does not wait for agents: the next one runs on schedule however long they take.
 
 To start an agent, the daemon picks a Claude session ID, writes the prompt to a file, then runs, in the repository directory:
 
@@ -116,7 +116,7 @@ An issue is **stackable** when:
 
 A stackable issue starts like a ready issue, with these differences. Its branch is created from the blocker's branch on `origin`, fetched first, and `work start` adopts it, so the worktree begins at the lower pull request's head. The prompt says that the work is stacked on the blocker's pull request, which is not merged yet and can change, and tells the agent to open its pull request against that branch, and never to rebase, force-push, or merge the default branch in. An issue with two or more unmerged blockers waits as before, whatever their pull requests. So does one whose blocker's pull request is a draft, has CI failing or running, or would make the stack too deep; the daemon logs why, once. The blocker's pull request is looked up once per poll per blocker, for the few blocked issues that could stack.
 
-`superlinear status` shows each pull request under the one it stacks on, indented, with "stacked on #n". The [standup](planning.md#standup)'s "Waiting on you" orders them by stack, bottom first.
+`superlinear status` shows each pull request under the one it stacks on, indented, with "stacked on #n". Its "Waiting on you" orders them by stack, bottom first.
 
 <a id="no-native-stacks"></a>
 ### Why not GitHub's native stacks
@@ -135,7 +135,7 @@ Each poll looks at every stacked pull request whose agent has ended, lower ones 
 
 - **The lower branch moves**, after a review response, a conflict merge, or a push: the daemon merges the lower branch into the upper one, in its worktree, with a merge commit, and pushes. If the merge conflicts, it is aborted, and a [conflict agent](#conflicts) resolves it on the upper pull request, with the lower branch as the base; the daemon tries once per pair of heads, as for any base.
 - **The lower pull request merges:** the upper pull request now targets what the lower one targeted, the default branch or the next branch down. GitHub retargets it when the lower branch is deleted; when it is not, the daemon runs `gh pr edit --base`. The repositories squash-merge, so the upper branch still holds the lower branch's original commits. The daemon merges the new base into it, a merge commit, never a rebase, which leaves only the upper pull request's own changes in its diff. Its issue's blocker is completed in Linear by the merge.
-- **The lower pull request is closed without a merge:** the upper pull request becomes a draft, its issue goes back to Blocked in `superlinear status`, with why, and the standup's "Waiting on you" lists the draft for a decision: reopen the lower pull request, and the upper one leaves draft; retarget the upper one by hand, and the daemon treats it as merged below; or close it.
+- **The lower pull request is closed without a merge:** the upper pull request becomes a draft, its issue goes back to Blocked in `superlinear status`, with why, and `superlinear status` lists the draft under "Draft pull requests" for a decision: reopen the lower pull request, and the upper one leaves draft; retarget the upper one by hand, and the daemon treats it as merged below; or close it.
 - Conflict detection compares each stacked pull request with its own base, the lower branch, not with the default branch.
 
 The daemon pushes to the upper branch itself for these merges, with a plain push, and only to branches it made. Agents never force-push. A pull request the daemon just pushed to is not checked for conflicts until the next poll, as GitHub's state is of before the push.
@@ -152,9 +152,9 @@ When a session — an agent for a new issue, a review or a conflict — ends wit
 
 - Pauses every Claude session, in all workspaces, as they share one Claude login: until the reset time in the message, or for one hour when it gives none.
 - Records the stopped session as interrupted, not failed. It keeps its session ID, and counts neither as a resume nor as a failed launch.
-- Starts no session while paused, the [planning job](planning.md#daily-planning) included; its trigger holds, so it starts after the pause. Queued, blocked and held issues keep their places and their order. GitHub work that needs no Claude — linking and checking pull requests, reviews, moving issues to Done — goes on.
+- Starts no session while paused, the [planning job](planning.md#daily-planning) included; its trigger holds, so it starts after the pause. Queued and blocked issues keep their places and their order. GitHub work that needs no Claude — linking and checking pull requests, reviews, moving issues to Done — goes on.
 - Every 15 minutes while paused, runs one very small session (`claude -p` with a one-word prompt and no tools), at a cost of a few tokens. When it answers, the limit was lifted, as when you bought more usage: the pause ends at once. When it gives the limit message again, the pause goes on, until its new reset time.
-- Ends the pause at once on [`superlinear resume`](operations.md#usage), which the [standup](planning.md#standup) also offers while a pause is active.
+- Ends the pause at once on [`superlinear resume`](operations.md#usage).
 - When the pause ends — at the reset time, after a check, or on `superlinear resume` — resumes the interrupted sessions first, with their session IDs, then the queue in its usual order. A resumed session that hits the limit again at once pauses everything again, until the new reset time; nothing retries in a loop.
 
 <a id="spending-limit"></a>
@@ -162,7 +162,7 @@ When a session — an agent for a new issue, a review or a conflict — ends wit
 
 When the limit is used up, or a payment fails, GitHub starts no jobs in private repositories: their check runs fail at once with an annotation saying the job was not started because of the spending limit or a billing problem. Public repositories' standard runners are free, so this applies only to private ones. At each poll, for a private repository, the daemon reads the annotations of the failed runs of open pull requests' branches and of the default branch, once per run attempt, and, for runs stopped this way:
 
-- Shows the pull request's CI state as "CI not started: GitHub spending limit", not "CI failing", in [`superlinear status`](operations.md#status) and the standup.
+- Shows the pull request's CI state as "CI not started: GitHub spending limit", not "CI failing", in [`superlinear status`](operations.md#status).
 - Proposes no issue for such a run on the default branch, as it does for [failing CI](planning.md#follow-ups).
 - Tells agents, in their prompts, that such CI is not a failure to fix. Agents go on working: the limit stops CI, not Claude, and agents run the tests locally before they push.
 - Once an hour, reruns the failed jobs of the newest stopped run (`gh run rerun <id> --failed`). When its jobs start, you have raised the limit or the month has changed: it reruns the failed jobs of the other stopped runs, newest first, at most one for each branch.
@@ -170,7 +170,7 @@ When the limit is used up, or a payment fails, GitHub starts no jobs in private 
 
 ### Where pauses show
 
-`superlinear status` begins with one line for each active pause, such as `Claude usage limit: paused until 15:00 (next check 14:15), 3 sessions waiting` and `GitHub Actions spending limit: CI not started in 2 repositories since 10:12`. A macOS notification is posted when a pause starts, and one when it ends. The standup's Risks section lists the active pauses and the work they hold back. Both pauses are kept in the state file, so a restarted daemon keeps them.
+`superlinear status` begins with one line for each active pause, such as `Claude usage limit: paused until 15:00 (next check 14:15), 3 sessions waiting` and `GitHub Actions spending limit: CI not started in 2 repositories since 10:12`. A macOS notification is posted when a pause starts, and one when it ends. Each workspace's Risks section lists the active pauses and the work they hold back. Both pauses are kept in the state file, so a restarted daemon keeps them.
 
 <a id="merge"></a>
 ## The merge and completion

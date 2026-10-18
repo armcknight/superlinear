@@ -15,14 +15,17 @@ struct Stats: Sendable {
         let tasks = reports.flatMap { report in
             report.reviews == nil ? report.entries : report.entries.filter { $0.category != .openPullRequest }
         }
-        let counts = [
-            ("Awaiting review", reviews.filter { !$0.pullRequest.isDraft }.count),
+        let proposals = reports.reduce(0) { $0 + $1.proposalsWaiting.count }
+        var counts: [(String, Int)] = [
+            (WorkspaceReport.waitingHeading, reviews.filter { !$0.pullRequest.isDraft }.count),
+            ("Proposals in Linear", proposals),
             ("Draft pull requests", reviews.filter(\.pullRequest.isDraft).count),
-        ] + TaskCategory.allCases.map { category in
-            (category.heading, tasks.filter { $0.category == category }.count)
+        ]
+        for category in TaskCategory.allCases {
+            counts.append((category.heading, tasks.filter { $0.category == category }.count))
         }
-        let stale: [(String, Int)] = [(WorkspaceReport.staleHeading, reports.map(\.stale.count).reduce(0, +))]
-        return (counts + stale).filter { $0.1 > 0 }
+        counts.append((WorkspaceReport.staleHeading, reports.reduce(0) { $0 + $1.stale.count }))
+        return counts.filter { $0.1 > 0 }
     }
 
     /// A measure taken of each pull request that has it.
@@ -246,7 +249,7 @@ enum StatsCommand {
             print("[superlinear] Failed to load config: \(error)")
             return 1
         }
-        let (reports, header) = await StatusCommand.reports(config: config, state: State.loadWithStandups(), transcripts: Transcripts())
+        let (reports, header) = await StatusCommand.reports(workspaces: config.workspaces, state: State.loadWithPlanning(from: State.stateFileURL(), planning: PlanningRecord.load()), transcripts: Transcripts(), since: StatusReview.defaultSince)
         let warnings = header + reports.flatMap { report in report.warnings.map { "warning: \(report.name): \($0)" } }
         let sections = (warnings.isEmpty ? [] : [warnings.joined(separator: "\n")]) + [Stats(reports: reports).rendered()]
         print(sections.joined(separator: "\n\n"))

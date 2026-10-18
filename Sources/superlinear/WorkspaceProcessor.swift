@@ -9,7 +9,7 @@ struct WorkspaceProcessor: Sendable {
         // Before the query, so an issue created while it runs is not missed.
         let pollTime = Date()
 
-        await daemon.takeInStandups(workspace: workspace.name)
+        await daemon.takeInPlanning(workspace: workspace.name)
         let candidates = try await fetchCandidates(client: client)
         let handled = await daemon.handledIssueIds(workspace: workspace.name)
         var plan = IssueSelection.plan(candidates, workspace: workspace, handled: handled, stackBases: [:])
@@ -22,12 +22,6 @@ struct WorkspaceProcessor: Sendable {
             }
         }
         await daemon.recordWaiting(plan, workspace: workspace.name)
-        let standup = await daemon.standup(workspace: workspace.name)
-        let held = plan.start.filter { standup.held[$0.id] != nil }
-        if !held.isEmpty {
-            log("Holding \(held.map(\.identifier.rawValue).joined(separator: ", ")) until a standup releases them")
-        }
-        plan.start = standup.ordered(plan.start.filter { standup.held[$0.id] == nil }, id: \.id)
 
         if plan.start.isEmpty {
             log("No issues to start")
@@ -42,7 +36,7 @@ struct WorkspaceProcessor: Sendable {
         }
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
-        await daemon.expireProposals(workspace: workspace)
+        await daemon.reviewProposals(workspace, now: Date())
         await daemon.planIfDue(workspace, now: Date())
 
         if workspace.githubIssues, await daemon.gitHubAvailable() { await pollGitHubIssues() }

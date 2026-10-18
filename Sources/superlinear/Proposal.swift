@@ -19,17 +19,31 @@ enum ProposalKind: String, Codable, Sendable, CaseIterable {
 enum TrustLevel: String, Codable, Sendable {
     /// Applied at once, and still listed for review.
     case auto
-    /// Stored for the owner to approve or reject at standup.
-    case standup
+    /// Put in Linear for the owner to approve or reject there.
+    case review
     /// Never proposed.
     case never
+
+    /// Configs and state files from before proposals were reviewed in Linear
+    /// name `review` after the command that once showed them.
+    static let formerReviewName = "standup"
+
+    init(from decoder: Decoder) throws {
+        let name = try decoder.singleValueContainer().decode(String.self)
+        guard let level = TrustLevel(rawValue: name == Self.formerReviewName ? TrustLevel.review.rawValue : name) else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "Unknown trust level \"\(name)\". Known levels: auto, review, never"))
+        }
+        self = level
+    }
 }
 
 /// The trust level of each kind of proposal in a workspace: the config's
 /// `autonomy` map over the defaults, where only `addRelation` is `auto`.
 struct Autonomy: Sendable, Equatable {
     static let defaults: [ProposalKind: TrustLevel] = Dictionary(
-        uniqueKeysWithValues: ProposalKind.allCases.map { ($0, $0 == .addRelation ? .auto : .standup) }
+        uniqueKeysWithValues: ProposalKind.allCases.map { ($0, $0 == .addRelation ? .auto : .review) }
     )
 
     var levels: [ProposalKind: TrustLevel] = Autonomy.defaults
@@ -39,7 +53,7 @@ struct Autonomy: Sendable, Equatable {
     }
 
     func level(for kind: ProposalKind) -> TrustLevel {
-        levels[kind] ?? .standup
+        levels[kind] ?? .review
     }
 }
 
@@ -168,7 +182,9 @@ enum ProposalPayload: Codable, Sendable, Equatable {
     case addRelation(relatedIssueId: LinearIssue.ID, type: String)
     case promoteIssue
     case changeSpec(oldText: String, newText: String)
-    case postProjectUpdate(body: String)
+    /// `overviewIssueId` is the project's overview issue, on which the update
+    /// is proposed as a comment when its kind is not `auto`.
+    case postProjectUpdate(body: String, overviewIssueId: LinearIssue.ID? = nil)
 
     var kind: ProposalKind {
         switch self {
@@ -196,6 +212,33 @@ struct ProposalDraft: Sendable, Equatable {
     var targetUpdatedAt: Date?
 }
 
+/// Where a pending proposal is shown in Linear, and from when. The owner
+/// answers it there: an issue is accepted or declined, a comment reacted to.
+struct ProposalPost: Codable, Sendable, Equatable {
+    enum Form: String, Codable, Sendable {
+        /// An issue superlinear created in its team's Triage state.
+        case triageIssue
+        /// An issue superlinear created in Backlog, for a team with Triage off.
+        case backlogIssue
+        /// A comment on the target issue, answered with a reaction.
+        case comment
+    }
+
+    var form: Form
+    /// The issue created, or the issue the comment is on.
+    var issueId: LinearIssue.ID
+    var issueIdentifier: String?
+    /// The comment, for a `comment`.
+    var commentId: LinearComment.ID?
+    /// A link to the issue or the comment.
+    var url: String?
+    /// When it was put in Linear. Expiry counts from then.
+    var postedAt: Date
+
+    /// Whether the proposal is an issue of its own in Linear.
+    var isIssue: Bool { form != .comment }
+}
+
 /// A proposed change to Linear, kept in the state file from when it is made
 /// until it expires or long after it is decided.
 struct Proposal: Codable, Sendable, Equatable, Identifiable {
@@ -212,7 +255,7 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
     var source: ProposalSource
     var createdAt: Date
     var status: Status
-    /// The trust level when it was made, or `standup` once a change in
+    /// The trust level when it was made, or `review` once a change in
     /// Linear sent it back for review.
     var trust: TrustLevel
     var targetUpdatedAt: Date?
@@ -224,8 +267,13 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
     var reviewNote: String?
     /// The last failure to apply it. It stays pending.
     var lastError: String?
-    /// When a standup first showed it. Expiry counts from then.
-    var firstShownAt: Date?
+    /// Where it waits in Linear, once put there. A pending proposal without
+    /// one is yet to be posted; state files from before proposals were
+    /// reviewed in Linear have none.
+    var post: ProposalPost?
+
+    /// Whether it waits for the owner's answer in Linear.
+    var isPosted: Bool { status == .pending && post != nil }
 
     var kind: ProposalKind { payload.kind }
 
@@ -265,7 +313,7 @@ struct Proposal: Codable, Sendable, Equatable, Identifiable {
 /// their letter pairs, which forgives plurals and small rewordings.
 ///
 /// TODO: SPL-24. A title match misses the same intent in other words; an
-/// agent is to find such duplicates and show them at standup.
+/// agent is to find such duplicates and propose them for review.
 enum TitleMatch {
     static let closeness = 0.8
 

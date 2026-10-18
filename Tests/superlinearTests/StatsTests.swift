@@ -250,7 +250,7 @@ struct StatsTests {
 
         #expect(Stats(reports: [one, two, empty]).rendered() == """
         Projects             3
-        Awaiting review      1
+        Waiting on you       1
         Draft pull requests  1
         Queued               1
         Open pull requests   1

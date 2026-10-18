@@ -38,14 +38,14 @@ Rules:
 | Anchor | Section |
 | --- | --- |
 | [`planning.md#proposals`](planning.md#proposals) | Proposals and trust levels. |
-| [`planning.md#trust-levels`](planning.md#trust-levels) | The trust levels: `auto`, `standup` and `never`. |
+| [`planning.md#trust-levels`](planning.md#trust-levels) | The trust levels: `auto`, `review` and `never`. |
 | [`planning.md#proposal-kinds`](planning.md#proposal-kinds) | The kinds of proposal and their default trust levels. |
 | [`planning.md#proposal-rules`](planning.md#proposal-rules) | The rules for applying a proposal. |
 | [`planning.md#audit-log`](planning.md#audit-log) | The audit log, and `superlinear proposals`. |
 | [`planning.md#daily-planning`](planning.md#daily-planning) | The planning job. |
 | [`planning.md#follow-ups`](planning.md#follow-ups) | Follow-ups from agents. |
-| [`planning.md#standup`](planning.md#standup) | The standup. |
-| [`planning.md#standup-needs-human`](planning.md#standup-needs-human) | Signing off Needs human issues at the standup. |
+| [`planning.md#standup`](planning.md#standup) | Reviewing proposals in Linear. The anchor keeps the name of the command this replaced. |
+| [`planning.md#standup-needs-human`](planning.md#standup-needs-human) | Signing off Needs human issues in Linear. |
 | [`planning.md#project-updates`](planning.md#project-updates) | Project updates. |
 
 ## [Bootstrap](bootstrap.md)

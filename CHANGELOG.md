@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Proposals are reviewed in Linear. A `createIssue` proposal is created at
+  once in the team's Triage state, labeled `superlinear` and `superlinear:
+  proposed`, with its reason and source; accepting it from Triage approves
+  it, declining it rejects it, so it is not proposed again. A team with
+  Triage off has it turned on when the API key may, or takes the issue in
+  Backlog, where moving it or removing the label approves it. An edit, a
+  closure, a relation or a promotion is a comment on its issue, with the
+  reason, source and diff; 👍 from the API key's user applies it, 👎
+  rejects it, and the comment's first line then says which, with the time.
+  A spec change is a Triage issue labeled `superlinear: spec` with the
+  diff, applied to the document when accepted. A proposal whose target
+  changed since is asked again in a new comment. Expiry counts from when
+  the proposal was put in Linear; an expired comment says so, an expired
+  Triage issue is canceled with a note. At the first poll after the
+  upgrade, every pending proposal in the state file goes to Linear. The
+  trust level is now `review`; `standup` in a config still reads as it.
+- `superlinear status` takes over what the standup still had: "Waiting on
+  you" orders the open pull requests by the work they hold back, the bottom
+  of each stack first, and counts the proposals waiting in Linear with a
+  link to each; "Done autonomously" lists what the daemon did since
+  `--since` (default `24h`): agents started, finished, failed or stopped,
+  reviews addressed, conflicts resolved, issues completed, proposals
+  applied with `auto`; "Risks" lists the active pauses, CI failing on the
+  default branch and a low GitHub rate limit.
 - Stacks: dependent work on open pull requests. With the workspace key
   `stacking`, on by default, an issue whose one unmerged blocker has an open pull request
   from an agent, not a draft, with CI passing, starts on top of it: its
@@ -21,8 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and pushed, a conflict goes to a conflict agent, a merged lower pull
   request has the next base retargeted and merged in, and one closed
   without a merge makes the pull requests above it drafts, their issues
-  back to Blocked, for a decision at the standup. `superlinear status`
+  back to Blocked, for a decision. `superlinear status`
   lists each pull request under the one it stacks on.
+- `superlinear status --status <names>` shows only the named sections,
+  comma-separated or repeated: `awaiting-review` (what waits on you),
+  `drafts`, `running`, `addressing-review`, `resolving-conflicts`,
+  `interrupted`, `queued`, `blocked`, `needs-human`, `open-pull-requests`,
+  `merged`, `no-pull-request`, `completed`, `closed`, `done`, `risks` and
+  `stale`. `--workspace <names>` shows only the named workspaces,
+  comma-separated or repeated, instead of every configured one.
 - Pause and resume at the provider limits. When a Claude session ends at
   the Claude plan's usage limit, every Claude session pauses, in all
   workspaces, until the reset time in the message, or for an hour when it
@@ -180,15 +211,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   team, as they have no Linear issue. `superlinear status` lists them as
   `GH-<number>`.
 
+### Removed
+
+- `superlinear standup`, with its holds, queue order, decisions and
+  `~/.local/share/superlinear/standup.json`. Review and triage happen in
+  Linear: mark a Needs human issue Done there and its dependents become
+  ready; move an issue to Backlog to hold it; the Todo order is the queue
+  order. The planning job no longer waits to be offered: it runs when the
+  default branch moves or an issue is completed, and `superlinear plan`
+  runs it now.
+
 ### Changed
 
 - The summary that ended `superlinear status` is now its own command,
   `superlinear stats`: the counts of each section across workspaces, the
   measures per pull request with medians and histograms, the totals over
   every tracked task, and the figures by project. `status` no longer reads
-  the Claude transcripts, lists the CI runs or diffs the open branches, so
-  it is quicker; `stats` does, and warns when a local base branch is ahead
-  of origin.
+  the Claude transcripts or diffs the open branches, and lists the CI runs
+  only to find CI failing on the default branch, so it is quicker; `stats`
+  does, and warns when a local base branch is ahead of origin.
 - Agents work on Opus. The daemon sets `ANTHROPIC_MODEL=opus` for them, as
   `work` passes no model and the default in Claude's settings can be another.
 - A pending proposal expires `proposalExpiryDays` after the first standup

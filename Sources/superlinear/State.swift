@@ -46,10 +46,6 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// since requeued after an interruption.
     var isQueued: Bool { pid == nil }
 
-    /// Queued for a new issue and never launched, so a standup may hold it
-    /// back or move it in the queue.
-    var isFresh: Bool { isQueued && launchedAt == nil && resumes == 0 && review == nil && conflict == nil }
-
     /// The run put back in the queue after its session stopped at the Claude
     /// usage limit. It is interrupted, not failed: it keeps its session ID,
     /// its place in the queue, and its counts of resumes and failed launches.
@@ -135,7 +131,7 @@ struct WorkspaceState: Codable, Sendable {
     var gitHubIssuesSince: Date?
     /// Proposed changes to Linear, pending and decided, oldest first.
     var proposals: [Proposal]
-    /// What the daemon did on its own, oldest first, for the standup.
+    /// What the daemon did on its own, oldest first, for `superlinear status`.
     var activity: [ActivityEvent]
     /// The repository's CI runs the GitHub Actions spending limit stopped,
     /// while there are any.
@@ -162,7 +158,7 @@ struct WorkspaceState: Codable, Sendable {
     // written before pull requests were watched have no `pendingMerges` or
     // `linkedPullRequests`, and those written before blockers and human labels
     // were followed have no `blocked` or `needsHuman`. Those from before
-    // proposals have none, those from before the standup no activity, and
+    // proposals have none, those from before activity was kept none, and
     // those from before the planning job no planning runs.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -417,9 +413,9 @@ struct State: Codable, Sendable {
     /// for good, as they keep the same change from being proposed again.
     static let decidedProposalRetention: TimeInterval = 30 * 24 * 60 * 60
 
-    /// Expires pending proposals that a standup first showed more than `days`
-    /// days ago, and drops applied and expired ones decided more than
-    /// `decidedProposalRetention` ago. A proposal no standup has shown never
+    /// Expires pending proposals put in Linear more than `days` days ago, and
+    /// drops applied and expired ones decided more than
+    /// `decidedProposalRetention` ago. A proposal not yet in Linear never
     /// expires. Returns the proposals it expired.
     @discardableResult
     mutating func expireProposals(olderThanDays days: Int, workspace: String, now: Date = Date()) -> [Proposal] {
@@ -427,7 +423,7 @@ struct State: Codable, Sendable {
         let cutoff = now.addingTimeInterval(-TimeInterval(days) * 24 * 60 * 60)
         var expired: [Proposal] = []
         for index in proposals.indices where proposals[index].status == .pending {
-            guard let shown = proposals[index].firstShownAt, shown < cutoff else { continue }
+            guard let posted = proposals[index].post?.postedAt, posted < cutoff else { continue }
             proposals[index].status = .expired
             proposals[index].decidedAt = now
             expired.append(proposals[index])
@@ -449,18 +445,12 @@ struct State: Codable, Sendable {
         workspaces[workspace, default: WorkspaceState()].activity = activity
     }
 
-    /// The state file with what standups decided, and the proposals of
-    /// `superlinear plan`, taken in, as the daemon takes them in at each
-    /// poll, so a reader sees them at once.
-    static func loadWithStandups(
-        from url: URL = stateFileURL(), standups: StandupRecord = .load(), planning: PlanningRecord = .load()
-    ) -> State {
+    /// The state file with the proposals of `superlinear plan` taken in, as
+    /// the daemon takes them in at each poll, so a reader sees them at once.
+    static func loadWithPlanning(from url: URL, planning: PlanningRecord) -> State {
         var state = load(from: url)
         for (name, record) in planning.workspaces {
             state.takeIn(record, workspace: name, now: Date())
-        }
-        for (name, standup) in standups.workspaces {
-            state.takeIn(standup, workspace: name)
         }
         return state
     }
@@ -491,25 +481,6 @@ struct State: Codable, Sendable {
         workspaces[workspace, default: WorkspaceState()].planningRun = nil
         let runs = workspaces[workspace]?.planningRuns ?? []
         workspaces[workspace]?.planningRuns = PlanningHistory.appending(record, to: runs)
-    }
-
-    /// Takes in what standups decided about the workspace's proposals: the
-    /// time each was first shown, and the outcome of each one decided. A
-    /// proposal no longer pending keeps what became of it.
-    mutating func takeIn(_ standup: WorkspaceStandup, workspace: String) {
-        guard var proposals = workspaces[workspace]?.proposals else { return }
-        let outcomes = Dictionary(standup.proposalOutcomes.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-        for index in proposals.indices {
-            let id = proposals[index].id
-            if proposals[index].firstShownAt == nil, let shown = standup.proposalsShownAt[id] {
-                proposals[index].firstShownAt = shown
-            }
-            if proposals[index].status == .pending, var outcome = outcomes[id] {
-                outcome.firstShownAt = proposals[index].firstShownAt
-                proposals[index] = outcome
-            }
-        }
-        workspaces[workspace]?.proposals = proposals
     }
 
     static func stateFileURL() -> URL {
