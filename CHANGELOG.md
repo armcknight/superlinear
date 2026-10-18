@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An agent answers the comments you write in a pull request's
+  conversation, not only your reviews. A comment from the user `gh` is
+  signed in as, made after the issue's last agent started, queues the same
+  review agent; a comment and a review together queue one agent. Its
+  prompt lists the reviews and comments that queued it, with a link to
+  each comment. `superlinear status` shows "new feedback" on a pull request
+  whose review or comment waits for an agent.
 - Proposals are reviewed in Linear. A `createIssue` proposal is created at
   once in the team's Triage state, labeled `superlinear` and `superlinear:
   proposed`, with its reason and source; accepting it from Triage approves

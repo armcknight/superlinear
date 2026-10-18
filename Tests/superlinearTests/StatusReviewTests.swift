@@ -106,6 +106,33 @@ struct StatusReviewTests {
         }
     }
 
+    @Test("A pull request has new feedback when the owner wrote on it since its issue's last agent started")
+    func newFeedback() {
+        var state = WorkspaceState()
+        for (id, branch, baseline) in [("1", "b-1", 100.0), ("2", "b-2", 100), ("3", "b-3", 300)] {
+            state.pendingMerges[id] = PendingMerge(
+                issueId: id, identifier: .init(rawValue: "SPL-\(id)"), branchName: branch,
+                reviewsHandledThrough: Date(timeIntervalSince1970: baseline), conflictAttempt: nil, stack: nil)
+        }
+        state.pendingMerges["4"] = PendingMerge(
+            issueId: "4", identifier: "SPL-4", branchName: "b-4", reviewsHandledThrough: nil, conflictAttempt: nil, stack: nil)
+        func comment(_ login: String, at seconds: TimeInterval) -> PullRequestComment {
+            PullRequestComment(author: .init(login: login), body: "Why?", createdAt: Date(timeIntervalSince1970: seconds), url: nil)
+        }
+        var pullRequests = (1...5).map { pullRequest(.init(rawValue: $0), head: "b-\($0)") }
+        pullRequests[0].comments = [comment("me", at: 200)]
+        pullRequests[1].comments = [comment("someone", at: 200)]
+        pullRequests[2].reviews = [PullRequestReview(
+            author: .init(login: "me"), state: "COMMENTED", body: "", submittedAt: Date(timeIntervalSince1970: 200))]
+        // No baseline yet, and not watched.
+        pullRequests[3].comments = [comment("me", at: 200)]
+        pullRequests[4].comments = [comment("me", at: 200)]
+        #expect(StatusReview.newFeedback(pullRequests, state: state, by: "me") == [1])
+        pullRequests[2].reviews?[0] = PullRequestReview(
+            author: .init(login: "me"), state: "COMMENTED", body: "", submittedAt: Date(timeIntervalSince1970: 400))
+        #expect(StatusReview.newFeedback(pullRequests, state: state, by: "me") == [1, 3])
+    }
+
     @Test("Waiting on you orders stacks by the work they hold back, bottom first")
     func waitingOnYou() throws {
         let state = try loadState()

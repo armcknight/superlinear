@@ -59,6 +59,9 @@ struct AgentRun: Codable, Sendable, Equatable {
 struct ReviewRequest: Codable, Sendable, Equatable {
     var number: PullRequest.Number
     var url: String
+    /// The reviews and comments that queued the run. Absent in state files
+    /// written before comments were followed.
+    var feedback: [PullRequestFeedback]? = nil
 }
 
 /// A pull request that conflicts with its base branch, for an agent to merge

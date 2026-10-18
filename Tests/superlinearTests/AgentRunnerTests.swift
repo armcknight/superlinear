@@ -33,6 +33,29 @@ struct AgentRunnerTests {
         #expect(AgentRunner.prompt(for: run).contains("/armcknight-claude:start"))
     }
 
+    @Test("A review run's prompt lists the reviews and comments that queued it, with the comments' links")
+    func promptListsFeedback() {
+        var review = run
+        review.review = ReviewRequest(
+            number: 12, url: "https://github.com/o/r/pull/12",
+            feedback: [
+                PullRequestFeedback(kind: .review, at: Date(timeIntervalSince1970: 1_791_720_000)),
+                PullRequestFeedback(
+                    kind: .comment, at: Date(timeIntervalSince1970: 1_791_723_600),
+                    url: "https://github.com/o/r/pull/12#issuecomment-1"),
+            ])
+        let prompt = AgentRunner.prompt(for: review)
+        #expect(prompt.contains("- A review submitted at 2026-10-11T12:00:00Z\n"))
+        #expect(prompt.contains(
+            "- A comment in the conversation made at 2026-10-11T13:00:00Z: https://github.com/o/r/pull/12#issuecomment-1"))
+        #expect(prompt.contains("--json reviews,comments"))
+        #expect(prompt.contains("Do not reply to the review or post comments on GitHub"))
+        // A run from before comments were followed says nothing of them.
+        review.review?.feedback = nil
+        #expect(!AgentRunner.prompt(for: review).contains("These came in"))
+        #expect(AgentRunner.prompt(for: review).contains("commented on it. Your task:"))
+    }
+
     // The order matters: a status means the agent ended, whatever else is true,
     // and a live agent must never be relaunched alongside itself.
     @Test("Recovery prefers a status, then a live process, then the queue")

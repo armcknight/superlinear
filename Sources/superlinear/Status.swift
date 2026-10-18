@@ -213,6 +213,10 @@ struct WorkspaceReport: Sendable {
     /// Branches whose CI the GitHub Actions spending limit stopped, as of
     /// the daemon's last poll.
     var ciStoppedBranches: Set<String> = []
+    /// Open pull requests of issues awaiting their merge on which the owner
+    /// wrote a review or a comment since the issue's last agent started, for
+    /// the daemon to queue an agent on.
+    var newFeedback: Set<PullRequest.Number> = []
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
     var warnings: [String]
@@ -401,7 +405,11 @@ struct WorkspaceReport: Sendable {
             if let closed = closedBases[pullRequest.url] {
                 notes.append("stacked on #\(closed.number), closed without a merge: decide what becomes of it")
             }
-            if !drafts { notes.append(agentAt[review.issue.identifier] ?? pullRequest.reviewState.rawValue) }
+            if !drafts {
+                notes.append(
+                    agentAt[review.issue.identifier]
+                        ?? (newFeedback.contains(pullRequest.number) ? "new feedback" : pullRequest.reviewState.rawValue))
+            }
             if pullRequest.mergeable == "CONFLICTING" { notes.append("conflicts with \(pullRequest.baseRefName ?? "base")") }
             notes.append(pullRequest.checkState(stoppedBranches: ciStoppedBranches).rawValue)
             if let blocks = waiting?.blockedIssues.count, blocks > 0 { notes.append("blocks \(blocks) issue\(blocks == 1 ? "" : "s")") }
@@ -523,11 +531,20 @@ struct WorkspaceReport: Sendable {
         }
 
         var reviews: [ReviewEntry]?
+        var newFeedback: Set<PullRequest.Number> = []
         do {
             let open = try ReviewablePullRequest.listOpen(in: repoPath)
             let identifiers = Array(Set(open.flatMap(\.issueIdentifiers)))
             let linked = try await LinearClient(apiKey: workspace.apiKey).fetchIssues(identifiers: identifiers)
             reviews = ReviewEntry.entries(pullRequests: open, issues: linked)
+            if !workspaceState.pendingMerges.isEmpty {
+                do {
+                    let login = try await PullRequestChecker().viewerLogin(repoPath: repoPath)
+                    newFeedback = StatusReview.newFeedback(open, state: workspaceState, by: login)
+                } catch {
+                    warnings.append("Could not find the GitHub user whose reviews and comments agents answer: \(error)")
+                }
+            }
         } catch {
             warnings.append("Could not list open pull requests for review: \(error)")
         }
@@ -571,6 +588,7 @@ struct WorkspaceReport: Sendable {
                 pauses: StatusReview.Pauses(state: state, workspace: workspace.name, now: now), now: now),
             stale: stale,
             ciStoppedBranches: workspaceState.spendingLimit?.branches ?? [],
+            newFeedback: newFeedback,
             warnings: warnings
         )
     }
