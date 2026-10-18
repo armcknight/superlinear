@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Stacks: dependent work on open pull requests. With the workspace key
+  `stacking`, on by default, an issue whose one unmerged blocker has an open pull request
+  from an agent, not a draft, with CI passing, starts on top of it: its
+  branch is created from the blocker's branch, and its pull request
+  targets that branch, within `maxStackDepth` pull requests, 3 by default.
+  GitHub's native stacks are not used, as they rebase and force-push the
+  pull requests above a merged one: a watched pull request is never
+  rewritten. Each poll keeps stacks current, bottom-up: a lower branch
+  that moved is merged into the pull requests above it with a merge commit
+  and pushed, a conflict goes to a conflict agent, a merged lower pull
+  request has the next base retargeted and merged in, and one closed
+  without a merge makes the pull requests above it drafts, their issues
+  back to Blocked, for a decision at the standup. `superlinear status`
+  lists each pull request under the one it stacks on.
 - Pause and resume at the provider limits. When a Claude session ends at
   the Claude plan's usage limit, every Claude session pauses, in all
   workspaces, until the reset time in the message, or for an hour when it
@@ -40,6 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restart. `superlinear plan [--workspace W]` runs one now, and the
   standup offers to when something changed since the last, with that
   job's token use.
+- The [`armcknight/templatr`](https://github.com/armcknight/templatr)
+  repository: the component manifest format
+  (`component.toml`) with its JSON Schema and a validator, and the first
+  component, `apple-app`, with shared `test` and `beta` fastlane lanes for
+  iOS, tvOS and macOS and a `stage` lane for iOS, a Makefile fragment whose
+  `deploy-beta` target cuts a release candidate and uploads it to TestFlight
+  by hand, and a scaffold whose workflows call `ios-ci.yml`, `ota-refresh.yml`
+  and `ota-cleanup.yml` from `armcknight/workflows` for pull request tests and
+  on-demand staging builds. A manifest's secret can be `local`: kept in the
+  owner's Keychain, never set as a GitHub secret. CI validates the manifests
+  against the guide's `docs/anchors.md` and checks the links. The guide's
+  components, manifests, TestFlight builds and build numbers sections are
+  filled in.
 
 - The superlinear guide, in `docs/`: the life of an issue, planning,
   bootstrap, builds, configuration and operations. The README is now an
@@ -155,6 +182,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Agents work on Opus. The daemon sets `ANTHROPIC_MODEL=opus` for them, as
+  `work` passes no model and the default in Claude's settings can be another.
 - A pending proposal expires `proposalExpiryDays` after the first standup
   that showed it, not after it was made.
 - The first poll of a workspace with no state, in `new` mode, starts nothing
@@ -163,6 +192,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `make install` restarts a daemon that launchd runs from the installed path,
+  with `launchctl kickstart -k`. launchd's own restart of the replaced binary
+  could fail with `OS_REASON_CODESIGNING` and leave the daemon down.
 - A pull request already attached to its Linear issue, as by hand or before
   the daemon kept records of its links, is recorded as linked. Linear refuses
   to attach it again, so the daemon tried and failed every poll.

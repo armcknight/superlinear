@@ -11,7 +11,8 @@
       "selection": "new",
       "readyStates": ["unstarted"],
       "humanLabels": ["Needs human", "Spike"],
-      "planning": { "enabled": false }
+      "planning": { "enabled": false },
+      "stacking": true
     }
   ]
 }

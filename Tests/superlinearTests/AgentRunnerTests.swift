@@ -138,7 +138,7 @@ struct AgentRunnerTests {
         defer { try? FileManager.default.removeItem(atPath: home) }
         let bin = "\(home)/bin"
         try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
-        try "#!/bin/sh\necho \"work $*\"\nexit 3\n".write(toFile: "\(bin)/work", atomically: true, encoding: .utf8)
+        try "#!/bin/sh\necho \"work $*\"\necho \"model $ANTHROPIC_MODEL\"\nexit 3\n".write(toFile: "\(bin)/work", atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: "\(bin)/work")
 
         let runner = AgentRunner(home: home, environment: ["PATH": "\(bin):/usr/bin:/bin"])
@@ -158,6 +158,7 @@ struct AgentRunnerTests {
         #expect(AgentRunner.readStatus(atPath: runner.statusFile(for: run)) == 3)
         let workLog = try String(contentsOfFile: runner.workLog(for: run), encoding: .utf8)
         #expect(workLog.contains("--session-id abc me/sl-1-fix"))
+        #expect(workLog.contains("model opus"))
         let prompt = try String(contentsOfFile: runner.promptFile(for: run), encoding: .utf8)
         #expect(prompt.contains("/armcknight-claude:start"))
 

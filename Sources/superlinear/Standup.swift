@@ -23,6 +23,9 @@ struct WaitingPullRequest: Sendable, Equatable {
     var pullRequest: ReviewablePullRequest
     /// The pull request it is stacked on, if any.
     var stackedOn: PullRequest.Number?
+    /// The pull request it was stacked on, closed without a merge, which made
+    /// it a draft: listed for a decision although a draft.
+    var baseClosed: PullRequest.Number? = nil
     /// The open issues its issues block, directly and indirectly.
     var blockedIssues: Set<LinearIssue.Identifier> = []
     /// Whether its CI failed only because the GitHub Actions spending limit
@@ -152,7 +155,13 @@ enum Standup {
         _ pullRequests: [ReviewablePullRequest], state: WorkspaceState
     ) -> [WaitingPullRequest] {
         let busy = Set(state.inFlight.values.compactMap { $0.review?.url ?? $0.conflict?.url })
-        let ready = pullRequests.filter { !$0.isDraft && !busy.contains($0.url) }
+        // Drafts the daemon made when the pull request below was closed
+        // without a merge wait on a decision, so they are listed.
+        let baseClosed = Dictionary(
+            state.pendingMerges.values.compactMap { pending in
+                pending.stack.flatMap { $0.drafted == true ? (pending.branchName, $0.number) : nil }
+            }, uniquingKeysWith: { a, _ in a })
+        let ready = pullRequests.filter { (!$0.isDraft || baseClosed[$0.headRefName] != nil) && !busy.contains($0.url) }
         let blocked = blockedIssues(state.blocked)
         let byHead = Dictionary(ready.map { ($0.headRefName, $0) }, uniquingKeysWith: { a, _ in a })
         func parent(_ pullRequest: ReviewablePullRequest) -> ReviewablePullRequest? {
@@ -165,7 +174,8 @@ enum Standup {
         func waiting(_ pullRequest: ReviewablePullRequest, stackedOn: PullRequest.Number?) -> WaitingPullRequest {
             let blockedIssues = pullRequest.issueIdentifiers.reduce(into: Set()) { $0.formUnion(blocked[$1] ?? []) }
             return WaitingPullRequest(
-                pullRequest: pullRequest, stackedOn: stackedOn, blockedIssues: blockedIssues,
+                pullRequest: pullRequest, stackedOn: stackedOn, baseClosed: baseClosed[pullRequest.headRefName],
+                blockedIssues: blockedIssues,
                 ciNotStarted: pullRequest.checkState(stoppedBranches: state.spendingLimit?.branches ?? []) == .notStarted)
         }
 
@@ -399,6 +409,9 @@ extension StandupView {
         let checks = waiting.ciNotStarted ? ReviewablePullRequest.CheckState.notStarted : pullRequest.checkState
         var notes = [pullRequest.reviewState.rawValue, checks.rawValue]
         if let below = waiting.stackedOn { notes.insert("stacked on #\(below)", at: 0) }
+        if let closed = waiting.baseClosed {
+            notes.insert("draft: stacked on #\(closed), closed without a merge; decide what becomes of it", at: 0)
+        }
         let blocks = waiting.blockedIssues.count
         if blocks > 0 { notes.append("blocks \(blocks) issue\(blocks == 1 ? "" : "s")") }
         return [

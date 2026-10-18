@@ -116,14 +116,17 @@ actor Daemon {
     /// issue counts as processed from the moment it is queued, so no later poll
     /// queues it twice, and the poll does not wait for its agent. Issues queued
     /// at once start in the order of their `queuedAt`.
-    func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig, queuedAt: Date = Date()) {
-        enqueue(AgentRun(
+    func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig, queuedAt: Date, stack: StackBase?) {
+        let run = AgentRun(
             issueId: issue.id.rawValue,
             identifier: issue.identifier,
             branchName: issue.branchName,
             sessionId: UUID().uuidString.lowercased(),
-            queuedAt: queuedAt
-        ), title: issue.title, workspace: workspace)
+            queuedAt: queuedAt,
+            stack: stack
+        )
+        let title = stack.map { "\(issue.title), stacked on \($0.identifier)'s pull request \($0.url)" } ?? issue.title
+        enqueue(run, title: title, workspace: workspace)
     }
 
     /// Queues an agent for a GitHub issue, as for a Linear one.
@@ -159,7 +162,8 @@ actor Daemon {
             sessionId: UUID().uuidString.lowercased(),
             queuedAt: Date(),
             review: ReviewRequest(number: pullRequest.number, url: pullRequest.url),
-            gitHubIssue: pending.gitHubIssue
+            gitHubIssue: pending.gitHubIssue,
+            stack: pending.stack
         )
         state.startReview(run, workspace: workspace.name)
         log("Queued \(pending.identifier) to address the review on \(pullRequest.url)", workspace: workspace.name)
@@ -188,7 +192,8 @@ actor Daemon {
                 number: pullRequest.number, url: pullRequest.url, baseBranch: baseBranch,
                 attempt: attempt, reviewsHandledThrough: current.reviewsHandledThrough
             ),
-            gitHubIssue: pending.gitHubIssue
+            gitHubIssue: pending.gitHubIssue,
+            stack: current.stack
         )
         state.startReview(run, workspace: workspace.name)
         log(
@@ -304,6 +309,14 @@ actor Daemon {
             var run = run
             run.launchedAt = run.launchedAt ?? Date()
             run.usageLimited = nil
+            // A stacked branch starts from the lower pull request's head on
+            // the remote, which `work start` then adopts. Only a new issue's
+            // run creates it; a review or conflict run finds it there.
+            if var stack = run.stack, run.review == nil, run.conflict == nil,
+               let head = try Stacking.createBranch(run.branchName, from: stack.branch, repoPath: repoPath) {
+                stack.baseHead = head
+                run.stack = stack
+            }
             let (launched, process) = try runner.launch(run, mode: mode, repoPath: repoPath) { [run] status in
                 Task { await self.finish(run, status: status, workspace: workspace.name) }
             }
@@ -320,6 +333,9 @@ actor Daemon {
             }
             if let conflict = run.conflict {
                 log("  Resolving the conflicts of \(conflict.url) with \(conflict.baseBranch)", workspace: workspace.name)
+            }
+            if let stack = run.stack {
+                log("  Stacked on \(stack.identifier)'s pull request \(stack.url), from \(stack.branch)", workspace: workspace.name)
             }
             log("  Branch: \(run.branchName)", workspace: workspace.name)
             log("  Session: \(run.sessionId)", workspace: workspace.name)
@@ -695,8 +711,31 @@ actor Daemon {
         return since
     }
 
+    /// Lower pull requests first, so a change to one reaches the pull
+    /// requests above it in the same poll, bottom-up.
     func pendingMerges(workspace: String) -> [PendingMerge] {
-        state.pendingMerges(workspace: workspace)
+        state.pendingMerges(workspace: workspace).sorted {
+            $0.stackDepth == $1.stackDepth ? $0.identifier.sortsBefore($1.identifier) : $0.stackDepth < $1.stackDepth
+        }
+    }
+
+    /// The merge watches by issue identifier, for the blockers an issue might
+    /// stack on: a blocker whose agent has ended and whose pull request the
+    /// daemon follows.
+    func pendingMergesByIdentifier(workspace: String) -> [LinearIssue.Identifier: PendingMerge] {
+        state.pendingMergesByIdentifier(workspace: workspace)
+    }
+
+    /// The merge watch of the issue on `branch`, if any.
+    func pendingMerge(branch: String, workspace: String) -> PendingMerge? {
+        state.pendingMerge(branch: branch, workspace: workspace)
+    }
+
+    /// Records what the issue's pull request is stacked on now, or nil once
+    /// it is on the default branch.
+    func updateStack(_ stack: StackBase?, issueId: String, workspace: String) {
+        state.updateStack(stack, issueId: issueId, workspace: workspace)
+        save()
     }
 
     /// Runs whose agents are running now, to check for pull requests opened
