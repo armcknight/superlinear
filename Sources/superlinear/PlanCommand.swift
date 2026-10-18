@@ -39,7 +39,7 @@ enum PlanCommand {
     static func runJob(_ workspace: WorkspaceConfig, say: (String) -> Void, runner: PlanningRunner = PlanningRunner()) async -> Bool {
         let name = workspace.name
         let state = State.loadWithPlanning(from: State.stateFileURL(), planning: PlanningRecord.load())
-        var planning = PlanningRecord.load()
+        let planning = PlanningRecord.load()
         if let reason = busy(state.workspaces[name] ?? WorkspaceState(), planning: planning[name]) {
             say("[\(name)] \(reason)")
             return false
@@ -60,7 +60,7 @@ enum PlanCommand {
         // The daemon owns the state file, so a Fable limit found here is not
         // kept: the next `plan` finds it again, and resumes on the fallback.
         var model = PlanningModel.current(limit: state.fableLimit, now: Date())
-        guard var status = await launch(run, mode: .start, model: model, workspace: name, runner: runner, planning: &planning, say: say) else {
+        guard var status = await launch(run, mode: .start, model: model, workspace: name, runner: runner, say: say) else {
             return false
         }
         if model == .fable, let hit = runner.usageLimitHit(workspace: name, now: Date()) {
@@ -68,7 +68,7 @@ enum PlanCommand {
             let until = FableLimit(hit: hit, now: Date()).until.rawValue
             say("[\(name)] Fable's usage limit is reached until \(StatusTime.clock(until, now: Date())); "
                 + "resuming the job on \(model.rawValue)")
-            guard let resumed = await launch(run, mode: .resume, model: model, workspace: name, runner: runner, planning: &planning, say: say) else {
+            guard let resumed = await launch(run, mode: .resume, model: model, workspace: name, runner: runner, say: say) else {
                 return false
             }
             status = resumed
@@ -100,13 +100,13 @@ enum PlanCommand {
         }
 
         // Read again, in case another `plan` wrote it meanwhile.
-        planning = PlanningRecord.load()
-        planning[name].running = nil
-        planning[name].runs = PlanningHistory.appending(record, to: planning[name].runs)
-        planning[name].proposals += stored
-        planning[name].prune(now: Date())
+        var latest = PlanningRecord.load()
+        latest[name].running = nil
+        latest[name].runs = PlanningHistory.appending(record, to: latest[name].runs)
+        latest[name].proposals += stored
+        latest[name].prune(now: Date())
         do {
-            try planning.save()
+            try latest.save()
         } catch {
             say("[\(name)] Could not save \(PlanningRecord.fileURL().path): \(error)")
             return false
@@ -123,11 +123,12 @@ enum PlanCommand {
         return true
     }
 
-    /// Launches the job's session on `model` and waits for it. Returns its
-    /// status, which is nil when it left none, or nil when it did not launch.
+    /// Launches the job's session on `model`, records it as running in the
+    /// planning file, and waits for it. Returns its status, which is nil when
+    /// it left none, or nil when it did not launch.
     private static func launch(
         _ run: PlanningRun, mode: LaunchMode, model: PlanningModel, workspace name: String, runner: PlanningRunner,
-        planning: inout PlanningRecord, say: (String) -> Void
+        say: (String) -> Void
     ) async -> Int32?? {
         let (exits, exited) = AsyncStream<Int32?>.makeStream()
         let process: Process
@@ -137,6 +138,8 @@ enum PlanCommand {
                 exited.yield(status)
                 exited.finish()
             }
+            // Read the file now, in case another `plan` wrote it meanwhile.
+            var planning = PlanningRecord.load()
             planning[name].running = launched
             try planning.save()
         } catch {
