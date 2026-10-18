@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `superlinear stats` shows how many sessions answered the owner's comments,
   and the tokens, cache reads and agent time they used.
+- `superlinear stats` shows how many planning jobs ran, and the tokens, cache
+  reads and agent time they used.
 - superlinear answers the owner's comments in Linear. A question or a
   request on a pending proposal, on the proposed issue or in the thread of
   the proposal's comment, gets a read-only Claude session. Its answer is
