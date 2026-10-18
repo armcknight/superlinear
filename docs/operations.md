@@ -20,7 +20,7 @@ make config   # write an example config, then open it in $EDITOR
 make load     # build, install into ~/.local/bin, then register the agent
 ```
 
-`superlinear install` writes `~/Library/LaunchAgents/com.armcknight.superlinear.plist` and loads it, pointing the agent at whichever binary you ran it from. Re-running it reloads. `superlinear uninstall` stops the agent and removes it. With the cask, the daemon follows Homebrew itself: within a minute of `brew upgrade` it exits and launchd restarts it on the new version, and a few minutes after `brew uninstall` it removes its own agent. A daemon running a local build restarts the same way within a minute of `make install` replacing its binary. Agents in flight carry on through the restart.
+`superlinear install` writes `~/Library/LaunchAgents/com.armcknight.superlinear.plist` and loads it, pointing the agent at whichever binary you ran it from. Re-running it reloads. `superlinear uninstall` stops the agent and removes it. With the cask, the daemon follows Homebrew itself: within a minute of `brew upgrade` it exits and launchd restarts it on the new version, and a few minutes after `brew uninstall` it removes its own agent. A daemon that launchd runs from `~/.local/bin/superlinear` is restarted by `make install` itself, with `launchctl kickstart -k`, as launchd's own restart of a replaced binary can fail with `OS_REASON_CODESIGNING`. Agents in flight carry on through the restart.
 
 If both installs are present, the local build wins. `superlinear install` from the Homebrew binary leaves an agent that runs an existing local build in place; pass `--force` to replace it. The agent runs one binary, so a new build of the other kind does not restart the daemon: to switch, run `superlinear install` from the binary to switch to. `superlinear status` shows which binary the daemon runs. `superlinear --version` tells them apart: a local build appends the commit, as in `1.1.0+d0a4bc2`, plus `.dirty` when the working tree had uncommitted or untracked changes.
 
@@ -33,7 +33,8 @@ The agent is generated rather than checked in because launchd expands neither `~
 superlinear [--config <path>]
 superlinear install
 superlinear uninstall
-superlinear status [--config <path>]
+superlinear status [--status <names>] [--workspace <names>] [--config <path>]
+superlinear stats [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear standup [--print] [--workspace <name>] [--config <path>]
 superlinear plan [--workspace <name>] [--config <path>]
@@ -68,35 +69,49 @@ Agents' builds fill the disk fast: a SwiftPM `.build` directory or an Xcode Deri
 
 `superlinear status` lists, for each workspace, the open pull requests that belong to a Linear issue, then the tasks the daemon tracks, grouped by where they stand:
 
-| Section | Meaning |
-| --- | --- |
-| Awaiting review | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, agent addressing review, or agent resolving conflicts — whether it conflicts with its base branch, the CI state, and the URL. |
-| Draft pull requests | The same, for drafts, with the CI state. |
-| Running | An agent works on the issue now. Shows its pid and log. |
-| Addressing review | An agent addresses your review of the issue's pull request, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
-| Resolving conflicts | An agent merges the base branch into the branch of the issue's pull request, which conflicts with it, or is queued to. Shows the pull request, and the pid and log once it runs. |
-| Interrupted | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
-| Queued | Waiting for a free agent slot, or for a pause at the Claude usage limit to end. A session the limit stopped says so; it resumes first. |
-| Open pull requests | The agent finished and its pull request is open. Shown only when open pull requests could not be listed for review; otherwise they appear above. |
-| Merged, issue not done | The pull request is merged, but the Linear issue is not in a completed state. |
-| Finished without a pull request | The agent ended, but no pull request is open or merged, and the issue is still open. |
-| Completed | The pull request is merged and the Linear issue is done. |
-| Closed without a merge | The issue was closed in Linear without a merged pull request. |
-| Stale branches and worktrees | Local branches no longer needed: their pull request merged, or closed without a merge, or, for a worktree under `worktrees/` with no agent running or queued, none was opened. The base branch, branches with an open pull request, and branches of your own without such a worktree are never listed. Each shows its worktree if it has one, its last commit's age, and the commits removing it would lose: for a merged or closed pull request, those made after its head, as a squash merge leaves the rest on no remote branch; otherwise those no remote branch has. `work finish <branch>` removes the branch and its worktree. |
+| Section | Name | Meaning |
+| --- | --- | --- |
+| Awaiting review | `awaiting-review` | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, agent addressing review, or agent resolving conflicts — whether it conflicts with its base branch, the CI state, and the URL. A pull request that targets another listed one's branch is listed under it, indented, with "stacked on #n": see [Stacks](lifecycle.md#stacks). |
+| Draft pull requests | `drafts` | The same, for drafts, with the CI state. A draft the daemon made because the pull request below it was closed without a merge says so, and asks for a decision. |
+| Running | `running` | An agent works on the issue now. Shows its pid and log. |
+| Addressing review | `addressing-review` | An agent addresses your review of the issue's pull request, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
+| Resolving conflicts | `resolving-conflicts` | An agent merges the base branch into the branch of the issue's pull request, which conflicts with it, or is queued to. Shows the pull request, and the pid and log once it runs. |
+| Interrupted | `interrupted` | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
+| Queued | `queued` | Waiting for a free agent slot, or for a pause at the Claude usage limit to end. A session the limit stopped says so; it resumes first. |
+| Blocked | `blocked` | Waiting for the issues blocking it to be completed or canceled, as of the daemon's last poll, with its open blockers. Also an issue whose pull request is [stacked](lifecycle.md#stacks) on one closed without a merge: its own pull request is a draft until you decide. |
+| Needs human | `needs-human` | A [`humanLabels`](configuration.md#human-labels) label on the issue keeps agents off it, as of the daemon's last poll. Shows the labels. |
+| Open pull requests | `open-pull-requests` | The agent finished and its pull request is open. Shown only when open pull requests are not listed for review, because they could not be or because `--status` leaves out both review sections; otherwise they appear above. |
+| Merged, issue not done | `merged` | The pull request is merged, but the Linear issue is not in a completed state. |
+| Finished without a pull request | `no-pull-request` | The agent ended, but no pull request is open or merged, and the issue is still open. |
+| Completed | `completed` | The pull request is merged and the Linear issue is done. |
+| Closed without a merge | `closed` | The issue was closed in Linear without a merged pull request. |
+| Stale branches and worktrees | `stale` | Local branches no longer needed: their pull request merged, or closed without a merge, or, for a worktree under `worktrees/` with no agent running or queued, none was opened. The base branch, branches with an open pull request, and branches of your own without such a worktree are never listed. Each shows its worktree if it has one, its last commit's age, and the commits removing it would lose: for a merged or closed pull request, those made after its head, as a squash merge leaves the rest on no remote branch; otherwise those no remote branch has. `work finish <branch>` removes the branch and its worktree. |
 
-After the workspaces comes a summary:
+Two options narrow the report:
 
-- **Counts:** the number of projects, and of items in each section above, across all workspaces.
-- **Out of sync:** for each workspace whose open pull requests fork off local commits not yet pushed, how many do.
-- **Per pull request:** the total, median, minimum and maximum of each measure, and a histogram of its values in 16 equal ranges from minimum to maximum, over the agents' pull requests — those of finished tasks that are open or merged, and the open ones listed for review. The measures are lines added and removed and files changed; tokens, cache reads and agent time, from the Claude transcripts; and CI time.
-- **All tracked tasks:** the tokens, cache reads, agent time and CI time of every task, with or without a pull request.
-- **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
+- `--status <names>` shows only the named sections, by the names in the table, comma-separated: `superlinear status --status running,blocked`. The option may repeat. An unknown name is an error that lists the names there are.
+- `--workspace <names>` shows only the named workspaces, comma-separated, in config order: `superlinear status --workspace app,web`. The option may repeat. The pause lines, the standup line and the polls follow the selection. A name no workspace has is an error that lists the configured ones.
 
-After the summary, a line gives the time of the last [standup](planning.md#standup), and the numbers of pending proposals and of issues that need a human.
+After the workspaces, a line gives the time of the last [standup](planning.md#standup), and the numbers of pending proposals and of issues that need a human.
 
 When a [pause](lifecycle.md#limits) is active, the report begins with one line for it.
 
 The report ends with this command's version and binary, then the daemon's: its pid, version, binary and start time, or that it is not running. It warns when the daemon's binary has been replaced since the daemon started. Last, under **Polls**, each workspace shows when its last poll ended, whether it failed, and when the next one is due, or, once that time has passed, that it is polling now. Each workspace polls on its own loop, which waits its `pollIntervalSeconds` after each poll ends, so each has its own times.
+
+What the agents' work took is not part of the report: see [Stats](#stats).
+
+<a id="stats"></a>
+## Stats
+
+`superlinear stats` measures the agents' work across all workspaces. It gathers the same tasks and pull requests as `status`, then reads the Claude transcripts of each branch, lists the repository's CI runs with `gh run list`, and diffs each open pull request's branch locally, so it takes longer than `status`. It prints:
+
+- **Counts:** the number of projects, and of items in each [status](#status) section, across all workspaces.
+- **Out of sync:** for each workspace whose open pull requests fork off local commits not yet pushed, how many do. GitHub shows such pull requests larger than they are; the stats measure them from the local fork point, and warn to push the base branch.
+- **Per pull request:** the total, median, minimum and maximum of each measure, and a histogram of its values in 16 equal ranges from minimum to maximum, over the agents' pull requests — those of finished tasks that are open or merged, and the open ones listed for review. The measures are lines added and removed and files changed; tokens, cache reads and agent time, from the Claude transcripts; and CI time.
+- **All tracked tasks:** the tokens, cache reads, agent time and CI time of every task, with or without a pull request.
+- **By project:** each workspace's tasks, pull requests, lines, tokens, agent time and CI time.
+
+Problems that left the stats incomplete, such as Linear, GitHub or the CI runs being out of reach, are printed first as warnings, each with its workspace's name. Like `status`, it takes no daemon lock, so it runs beside a daemon.
 
 Lines and files of an open pull request come from `git diff --shortstat` in the local repository, measured from the later of two fork points: where the branch left the local base branch, and where it left `origin/<base>`. An agent forks off the local base, so when that is ahead of GitHub's, GitHub counts the unpushed commits as part of each pull request. The workspace then shows a warning to push the base branch. Merged pull requests, and branches found neither locally nor on `origin`, use GitHub's numbers.
 

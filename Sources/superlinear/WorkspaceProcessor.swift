@@ -11,9 +11,16 @@ struct WorkspaceProcessor: Sendable {
 
         await daemon.takeInStandups(workspace: workspace.name)
         let candidates = try await fetchCandidates(client: client)
-        var plan = IssueSelection.plan(
-            candidates, workspace: workspace, handled: await daemon.handledIssueIds(workspace: workspace.name)
-        )
+        let handled = await daemon.handledIssueIds(workspace: workspace.name)
+        var plan = IssueSelection.plan(candidates, workspace: workspace, handled: handled, stackBases: [:])
+        // Each step checks first, as one hitting the rate limit pauses the rest.
+        let listing = PullRequestListing(repoPath: NSString(string: workspace.repoPath).expandingTildeInPath)
+        if workspace.stacking, !plan.blocked.isEmpty, await daemon.gitHubAvailable() {
+            let bases = await stackBases(for: plan, listing: listing)
+            if !bases.isEmpty {
+                plan = IssueSelection.plan(candidates, workspace: workspace, handled: handled, stackBases: bases)
+            }
+        }
         await daemon.recordWaiting(plan, workspace: workspace.name)
         let standup = await daemon.standup(workspace: workspace.name)
         let held = plan.start.filter { standup.held[$0.id] != nil }
@@ -31,20 +38,47 @@ struct WorkspaceProcessor: Sendable {
         for (index, issue) in plan.start.enumerated() {
             // Apart, so they start in the plan's order.
             let queuedAt = pollTime.addingTimeInterval(Double(index) / 1000)
-            await daemon.enqueueAgent(for: issue, workspace: workspace, queuedAt: queuedAt)
+            await daemon.enqueueAgent(for: issue, workspace: workspace, queuedAt: queuedAt, stack: plan.stacked[issue.id])
         }
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
         await daemon.expireProposals(workspace: workspace)
         await daemon.planIfDue(workspace, now: Date())
 
-        // Each step checks first, as one hitting the rate limit pauses the rest.
-        let listing = PullRequestListing(repoPath: NSString(string: workspace.repoPath).expandingTildeInPath)
         if await daemon.gitHubAvailable() { await linkRunningAgentsPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await checkPullRequests(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await sweepStartedIssues(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await checkSpendingLimit(listing: listing) }
         if await daemon.gitHubAvailable() { await checkDefaultBranchWorkflows(client: client, repoPath: listing.repoPath) }
+    }
+
+    /// The pull requests the plan's blocked issues may stack on: for each
+    /// issue with one open blocker whose agent has ended, that blocker's open
+    /// pull request, when it is not a draft, its CI passes, and the stack
+    /// stays within `maxStackDepth`. One `gh` call per such blocker.
+    private func stackBases(for plan: IssueSelectionPlan, listing: PullRequestListing) async -> [LinearIssue.Identifier: StackBase] {
+        let watched = await daemon.pendingMergesByIdentifier(workspace: workspace.name)
+        let blockers = Set(plan.blocked.values.compactMap { $0.blockers.count == 1 ? $0.blockers.first : nil })
+        var bases: [LinearIssue.Identifier: StackBase] = [:]
+        for blocker in blockers.sorted() {
+            guard let pending = watched[blocker] else { continue }
+            let pullRequest: PullRequest?
+            do {
+                pullRequest = try await listing.checker.stackBase(branch: pending.branchName, repoPath: listing.repoPath)
+            } catch {
+                if await pausedForRateLimit(error, repoPath: listing.repoPath) { return bases }
+                await logOnce("Could not look up \(blocker)'s pull request to stack on it: \(error)")
+                continue
+            }
+            switch Stacking.base(on: pending, pullRequest: pullRequest, maxDepth: workspace.maxStackDepth) {
+            case .success(let base):
+                bases[blocker] = base
+            case .failure(let reason):
+                let dependents = plan.blocked.values.filter { $0.blockers == [blocker] }.map(\.identifier.rawValue).sorted()
+                await logOnce("\(dependents.joined(separator: ", ")) cannot stack on \(blocker) yet: \(reason)")
+            }
+        }
+        return bases
     }
 
     /// Finds the CI runs of open pull requests and of the default branch that
@@ -376,6 +410,17 @@ struct WorkspaceProcessor: Sendable {
 
             switch status {
             case .open:
+                // A stacked pull request first follows the one below it. One
+                // that was just restacked, or handed to a conflict agent, is
+                // not checked for conflicts this poll: GitHub's state is of
+                // before the push.
+                var pending = pending
+                if pending.stack != nil, let pullRequest = pullRequests.first(where: { $0.state == .open }) {
+                    switch await keepStacked(&pending, pullRequest: pullRequest, listing: listing) {
+                    case .unchanged: break
+                    case .pushed, .conflicted: continue
+                    }
+                }
                 // One agent at a time on a branch: conflicts wait for the
                 // review agent to end.
                 // A conflict run waits too when the reviews could not be checked,
@@ -412,6 +457,156 @@ struct WorkspaceProcessor: Sendable {
                 log("\(pending.identifier)'s agent ended without opening a pull request")
             }
             await daemon.stopAwaitingMerge(issueId: pending.issueId, workspace: workspace.name)
+        }
+    }
+
+    private enum StackOutcome {
+        /// Nothing was pushed to the branch.
+        case unchanged
+        /// The base was merged in and pushed.
+        case pushed
+        /// The base conflicts; a conflict agent is queued.
+        case conflicted
+    }
+
+    /// Keeps a stacked pull request current with the one below it: merges
+    /// the lower branch in when it moved, follows the lower pull request's
+    /// merge to the next base, and makes the upper pull request a draft
+    /// when the lower one was closed without a merge. Never rebases.
+    private func keepStacked(
+        _ pending: inout PendingMerge, pullRequest: PullRequest, listing: PullRequestListing
+    ) async -> StackOutcome {
+        guard let stack = pending.stack else { return .unchanged }
+        let repoPath = listing.repoPath
+        let lower: [PullRequest]
+        do {
+            lower = try await listing.pullRequests(branch: stack.branch.rawValue)
+        } catch {
+            _ = await pausedForRateLimit(error, repoPath: repoPath)
+            return .unchanged
+        }
+        let defaultBranch = GitBranch.Name(rawValue: Git.defaultBranch(in: repoPath) ?? "main")
+        let lowerHead = await listing.remoteHead(of: stack.branch.rawValue).map { GitCommit.SHA(rawValue: $0) }
+        let action = Stacking.action(
+            for: stack, pullRequest: pullRequest, lower: lower, lowerHead: lowerHead, defaultBranch: defaultBranch)
+        let checker = listing.checker
+        switch action {
+        case .none:
+            return .unchanged
+        case .restack:
+            log("\(stack.identifier)'s branch \(stack.branch) moved; merging it into \(pending.identifier)'s \(pullRequest.url)")
+            return await mergeBase(stack.branch, into: &pending, stack: stack, pullRequest: pullRequest, listing: listing)
+        case .lowerMerged(let base, let retarget):
+            log("\(stack.identifier)'s pull request merged; \(pending.identifier)'s \(pullRequest.url) now targets \(base)")
+            if retarget {
+                do {
+                    try await checker.retarget(number: pullRequest.number, base: base.rawValue, repoPath: repoPath)
+                } catch {
+                    if await pausedForRateLimit(error, repoPath: repoPath) { return .unchanged }
+                    await logOnce("Could not retarget \(pullRequest.url) to \(base): \(error)")
+                    return .unchanged
+                }
+            }
+            // The next pull request down, or none on the default branch.
+            var next: StackBase?
+            if base != defaultBranch, let below = await daemon.pendingMerge(branch: base.rawValue, workspace: workspace.name),
+               let lowerPullRequest = try? await listing.pullRequests(branch: base.rawValue).first(where: { $0.state == .open }) {
+                next = StackBase(
+                    identifier: below.identifier, branch: base, number: lowerPullRequest.number, url: lowerPullRequest.url,
+                    depth: below.stackDepth, baseHead: nil, drafted: stack.drafted)
+            }
+            if stack.drafted == true, next?.drafted != true {
+                await setDraft(false, of: pullRequest, identifier: pending.identifier, repoPath: repoPath)
+            }
+            return await mergeBase(base, into: &pending, stack: next, pullRequest: pullRequest, listing: listing)
+        case .lowerClosed:
+            log("\(stack.identifier)'s pull request \(stack.url) was closed without a merge; "
+                + "\(pending.identifier)'s \(pullRequest.url) becomes a draft for you to decide on")
+            guard await setDraft(true, of: pullRequest, identifier: pending.identifier, repoPath: repoPath) else { return .unchanged }
+            var updated = stack
+            updated.drafted = true
+            pending.stack = updated
+            await daemon.updateStack(updated, issueId: pending.issueId, workspace: workspace.name)
+            await daemon.recordActivity(
+                ActivityEvent(time: Date(), kind: .stackBaseClosed, identifier: pending.identifier, detail: pullRequest.url),
+                workspace: workspace.name)
+            return .unchanged
+        case .lowerReopened:
+            log("\(stack.identifier)'s pull request \(stack.url) is open again; \(pending.identifier)'s \(pullRequest.url) leaves draft")
+            guard await setDraft(false, of: pullRequest, identifier: pending.identifier, repoPath: repoPath) else { return .unchanged }
+            var updated = stack
+            updated.drafted = nil
+            pending.stack = updated
+            await daemon.updateStack(updated, issueId: pending.issueId, workspace: workspace.name)
+            return .unchanged
+        }
+    }
+
+    @discardableResult
+    private func setDraft(_ draft: Bool, of pullRequest: PullRequest, identifier: LinearIssue.Identifier, repoPath: String) async -> Bool {
+        do {
+            try await PullRequestChecker().setDraft(draft, number: pullRequest.number, repoPath: repoPath)
+            return true
+        } catch {
+            if await pausedForRateLimit(error, repoPath: repoPath) { return false }
+            await logOnce("Could not \(draft ? "make \(pullRequest.url) a draft" : "mark \(pullRequest.url) ready for review"): \(error)")
+            return false
+        }
+    }
+
+    /// Merges `origin/<base>` into the issue's branch in its worktree, with a
+    /// merge commit, and pushes. Records `stack` as what the pull request is
+    /// on afterwards, with the base's head once merged in. A conflict goes
+    /// to a conflict agent, as with any base.
+    private func mergeBase(
+        _ base: GitBranch.Name, into pending: inout PendingMerge, stack: StackBase?, pullRequest: PullRequest, listing: PullRequestListing
+    ) async -> StackOutcome {
+        let repoPath = listing.repoPath
+        guard let worktree = FollowUpFile.worktree(branch: pending.branchName, repoPath: repoPath) else {
+            await logOnce("Could not merge \(base) into \(pending.identifier)'s branch: its worktree is gone")
+            return .unchanged
+        }
+        let outcome: Stacking.MergeOutcome
+        do {
+            outcome = try Stacking.mergeBase(base, into: pending.branchName, worktree: worktree)
+        } catch {
+            await logOnce("Could not merge \(base) into \(pending.identifier)'s branch: \(error)")
+            return .unchanged
+        }
+        func record(_ stack: StackBase?, baseHead: GitCommit.SHA?) async {
+            var stack = stack
+            stack?.baseHead = baseHead
+            pending.stack = stack
+            await daemon.updateStack(stack, issueId: pending.issueId, workspace: workspace.name)
+        }
+        switch outcome {
+        case .merged(let head, let baseHead):
+            log("  Merged \(base) into \(pending.branchName) and pushed \(head.short)")
+            await listing.forgetRemoteHead(of: pending.branchName)
+            await record(stack, baseHead: baseHead)
+            await daemon.recordActivity(
+                ActivityEvent(time: Date(), kind: .restacked, identifier: pending.identifier, detail: "\(base) into \(pullRequest.url)"),
+                workspace: workspace.name)
+            return .pushed
+        case .upToDate(let baseHead):
+            await record(stack, baseHead: baseHead)
+            return .unchanged
+        case .conflicted:
+            guard let head = pullRequest.headRefOid, let baseHead = await listing.remoteHead(of: base.rawValue) else { return .unchanged }
+            let attempt = ConflictAttempt(head: head, base: baseHead)
+            // The watch after the agent keeps following the same base, which
+            // the agent merges in; the base's head is taken as merged, so
+            // that one that keeps conflicting is not retried each poll.
+            await record(stack, baseHead: GitCommit.SHA(rawValue: baseHead))
+            guard attempt != pending.conflictAttempt else {
+                await logOnce("\(pending.identifier)'s branch still conflicts with \(base) after an agent tried; "
+                    + "waiting for either branch to move: \(pullRequest.url)")
+                return .conflicted
+            }
+            log("  \(base) conflicts with \(pending.branchName); queuing an agent to resolve it")
+            await daemon.enqueueConflictResolution(
+                of: pending, pullRequest: pullRequest, baseBranch: base.rawValue, attempt: attempt, workspace: workspace)
+            return .conflicted
         }
     }
 

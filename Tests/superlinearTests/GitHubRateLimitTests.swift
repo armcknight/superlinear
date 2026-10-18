@@ -36,7 +36,7 @@ struct GitHubRateLimitTests {
         let config = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
         let clean = WorkspaceReport(name: "a", entries: [], warnings: [])
         let limited = WorkspaceReport(name: "b", entries: [], warnings: ["Could not list: GraphQL: API rate limit already exceeded"])
-        #expect(StatusCommand.rateLimitedRepoPath([clean, limited], config: config) == "/r/b")
-        #expect(StatusCommand.rateLimitedRepoPath([clean, clean], config: config) == nil)
+        #expect(StatusCommand.rateLimitedRepoPath([clean, limited], workspaces: config.workspaces) == "/r/b")
+        #expect(StatusCommand.rateLimitedRepoPath([clean, clean], workspaces: config.workspaces) == nil)
     }
 }

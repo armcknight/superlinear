@@ -8,7 +8,8 @@ let usage = """
 Usage: superlinear [--config <path>]
        superlinear install [--force]
        superlinear uninstall
-       superlinear status [--config <path>]
+       superlinear status [--status <names>] [--workspace <names>] [--config <path>]
+       superlinear stats [--config <path>]
        superlinear proposals [--workspace <name>] [--config <path>]
        superlinear standup [--print] [--workspace <name>] [--config <path>]
        superlinear plan [--workspace <name>] [--config <path>]
@@ -27,7 +28,19 @@ Subcommands:
               awaiting review with review and CI state, and drafts; then
               its tasks: agents running or queued, and tasks completed,
               with pull request URLs. A task is completed once its pull
-              request is merged and its Linear issue is done.
+              request is merged and its Linear issue is done. --status
+              shows only the named sections, comma-separated: awaiting-
+              review, drafts, running, addressing-review, resolving-
+              conflicts, interrupted, queued, blocked, needs-human,
+              open-pull-requests, merged, no-pull-request, completed,
+              closed, stale. --workspace shows only the named workspaces,
+              comma-separated. Either option may repeat.
+  stats       Measure the agents' work: how many items each status section
+              holds across all workspaces; per pull request, the lines,
+              files, tokens, agent time and CI time, with medians and
+              histograms; the totals over every tracked task; and the same
+              by project. Reads the Claude transcripts, the CI runs and the
+              local repositories, so it takes longer than status.
   proposals   List the changes to Linear that superlinear proposed: those
               pending, then those applied, rejected or expired in the last
               7 days, with reasons, sources and diffs. --workspace limits
@@ -89,10 +102,14 @@ case .uninstall:
         exit(1)
     }
 
-case .status(let path):
+case .status(let path, let filter):
     // Reads the state file and Linear; it takes no daemon lock, so it runs
     // beside a daemon.
-    Task { exit(await StatusCommand.run(configPath: path)) }
+    Task { exit(await StatusCommand.run(configPath: path, filter: filter)) }
+    dispatchMain()
+
+case .stats(let path):
+    Task { exit(await StatsCommand.run(configPath: path)) }
     dispatchMain()
 
 case .proposals(let path, let workspace):

@@ -35,12 +35,12 @@ struct IssueSelectionTests {
     func blockedIssueWaitsThenStarts() throws {
         let workspace = try workspace()
         let waiting = IssueSelection.plan(
-            [issue("SL-2", blockers: [("SL-1", "started"), ("SL-0", "completed")])], workspace: workspace, handled: [])
+            [issue("SL-2", blockers: [("SL-1", "started"), ("SL-0", "completed")])], workspace: workspace, handled: [], stackBases: [:])
         #expect(waiting.start.isEmpty)
         #expect(waiting.blocked["id-SL-2"] == WaitingIssue(identifier: "SL-2", title: "Title SL-2", blockers: ["SL-1"]))
 
         let unblocked = IssueSelection.plan(
-            [issue("SL-2", blockers: [("SL-1", "completed"), ("SL-0", "completed")])], workspace: workspace, handled: [])
+            [issue("SL-2", blockers: [("SL-1", "completed"), ("SL-0", "completed")])], workspace: workspace, handled: [], stackBases: [:])
         #expect(unblocked.start.map(\.identifier) == ["SL-2"])
         #expect(unblocked.blocked.isEmpty)
     }
@@ -52,7 +52,7 @@ struct IssueSelectionTests {
             .init(type: "related", issue: .init(id: "id-SL-1", identifier: "SL-1", state: .init(type: "started"))),
         ])
         let plan = IssueSelection.plan(
-            [issue("SL-2", blockers: [("SL-1", "canceled")]), related], workspace: try workspace(), handled: [])
+            [issue("SL-2", blockers: [("SL-1", "canceled")]), related], workspace: try workspace(), handled: [], stackBases: [:])
         #expect(plan.start.map(\.identifier) == ["SL-2", "SL-3"])
     }
 
@@ -62,7 +62,7 @@ struct IssueSelectionTests {
     func humanLabelNeverStarts() throws {
         let plan = IssueSelection.plan(
             [issue("SL-1", labels: ["Feature", "spike"]), issue("SL-2", labels: ["Needs human"], blockers: [("SL-9", "started")])],
-            workspace: try workspace(), handled: []
+            workspace: try workspace(), handled: [], stackBases: [:]
         )
         #expect(plan.start.isEmpty)
         #expect(plan.needsHuman["id-SL-1"]?.labels == ["spike"])
@@ -75,7 +75,7 @@ struct IssueSelectionTests {
     func configuredHumanLabels() throws {
         let plan = IssueSelection.plan(
             [issue("SL-1", labels: ["Spike"]), issue("SL-2", labels: ["Design"])],
-            workspace: try workspace(#", "humanLabels": ["Design"]"#), handled: []
+            workspace: try workspace(#", "humanLabels": ["Design"]"#), handled: [], stackBases: [:]
         )
         #expect(plan.start.map(\.identifier) == ["SL-1"])
         #expect(plan.needsHuman.keys.sorted() == ["id-SL-2"])
@@ -88,7 +88,7 @@ struct IssueSelectionTests {
         let plan = IssueSelection.plan(
             [issue("SL-1", blockers: [("SL-9", "started")]), issue("SL-2", stateType: "started", labels: ["Spike"]),
              issue("SL-3"), issue("SL-3")],
-            workspace: try workspace(), handled: ["id-SL-1"]
+            workspace: try workspace(), handled: ["id-SL-1"], stackBases: [:]
         )
         #expect(plan.start.map(\.identifier) == ["SL-3"])
         #expect(plan.blocked.isEmpty)
@@ -101,7 +101,7 @@ struct IssueSelectionTests {
     func newModeOrder() throws {
         let plan = IssueSelection.plan(
             [issue("SL-2", created: 20, priority: 1), issue("SL-1", created: 10, priority: 4)],
-            workspace: try workspace(), handled: []
+            workspace: try workspace(), handled: [], stackBases: [:]
         )
         #expect(plan.start.map(\.identifier) == ["SL-1", "SL-2"])
     }
@@ -117,17 +117,17 @@ struct IssueSelectionTests {
             issue("SL-6", created: 6, priority: 1),
             issue("SL-7", created: 7, priority: 3),
         ]
-        let plan = IssueSelection.plan(issues.reversed(), workspace: try workspace(#", "selection": "ready""#), handled: [])
+        let plan = IssueSelection.plan(issues.reversed(), workspace: try workspace(#", "selection": "ready""#), handled: [], stackBases: [:])
         #expect(plan.start.map(\.identifier) == ["SL-6", "SL-5", "SL-4", "SL-3", "SL-2", "SL-7", "SL-1"])
     }
 
     @Test("Ready mode starts from the ready states only")
     func readyStates() throws {
         let issues = [issue("SL-1", stateType: "backlog"), issue("SL-2", stateType: "unstarted")]
-        let byDefault = IssueSelection.plan(issues, workspace: try workspace(#", "selection": "ready""#), handled: [])
+        let byDefault = IssueSelection.plan(issues, workspace: try workspace(#", "selection": "ready""#), handled: [], stackBases: [:])
         #expect(byDefault.start.map(\.identifier) == ["SL-2"])
         let configured = IssueSelection.plan(
-            issues, workspace: try workspace(#", "selection": "ready", "readyStates": ["backlog"]"#), handled: [])
+            issues, workspace: try workspace(#", "selection": "ready", "readyStates": ["backlog"]"#), handled: [], stackBases: [:])
         #expect(configured.start.map(\.identifier) == ["SL-1"])
     }
 
