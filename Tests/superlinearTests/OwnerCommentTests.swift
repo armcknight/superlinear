@@ -408,6 +408,36 @@ struct OwnerCommentTests {
         #expect(try CommentAnswer.parse("I looked. {\"answer\": \"Yes.\", \"revision\": \"  \"}") == CommentAnswer(answer: "Yes."))
         #expect(throws: CommentAnswerError.self) { try CommentAnswer.parse("No JSON here") }
         #expect(throws: CommentAnswerError.self) { try CommentAnswer.parse(#"{"answer": " "}"#) }
+        #expect(throws: CommentAnswerError.self) { try CommentAnswer.parse(#"{"answer": "*Written by superlinear.*\n\n"}"#) }
+    }
+
+    @Test("An answer that copies the marker line and superlinear's notes gives a reply with each one time")
+    func bareAnswer() async throws {
+        let copied = "\(CommentMarker.line)\n\nI added (a).\n\n\(CommentResponder.revisedNote)"
+        let answer = try CommentAnswer.parse(String(data: try JSONEncoder().encode(["answer": copied]), encoding: .utf8)!)
+        #expect(answer.answer == "I added (a).")
+
+        let linear = CommentLinear(issues: [
+            EditableIssue(
+                id: "tem-15", identifier: "TEM-15", description: "", updatedAt: at(0), labels: [ProposalEngine.label],
+                stateType: .triage, teamId: "team"),
+        ])
+        let question = CommentQuestion(
+            subject: .proposal(triageProposal(), issueId: "tem-15"),
+            comment: FreshComment(comment: comment("q", "Add (a)", at: at(10))), thread: [], key: "tem-15", since: at(0))
+        let reply = try await CommentResponder(linear: linear, specDocumentURL: nil)
+            .answer(question, about: triageProposal(), with: CommentAnswer(answer: answer.answer, revision: "New text"), now: at(20))
+        #expect(reply.revised != nil)
+        let body = try #require(await linear.replies.first?.body)
+        #expect(body.components(separatedBy: CommentMarker.line).count == 2)
+        #expect(body.components(separatedBy: CommentResponder.revisedNote).count == 2)
+
+        #expect(CommentResponder.bare("Yes.\n\nIt costs 2 minutes.") == "Yes.\n\nIt costs 2 minutes.")
+        let quoted = "Each reply starts with \(CommentMarker.line)\n\n\(CommentMarker.line)\n\nand \(CommentResponder.noChangeNote) is its note.\n\nThat is all."
+        #expect(CommentResponder.bare(quoted) == quoted)
+        #expect(CommentResponder.bare("\(CommentMarker.line)\n\nIt covers X.\n\n\(CommentResponder.proposedNotePrefix)[SPL-50](https://linear.app/i/SPL-50), in Triage. The document changes only when you accept it.\n\n\(CommentResponder.noChangeNote)") == "It covers X.")
+        #expect(CommentResponder.specReply(CommentResponder.bare("No.\n\n\(CommentResponder.noChangeNote)"), proposal: nil, asked: true)
+            == "No.\n\n\(CommentResponder.noChangeNote)")
     }
 
     @Test("The session's prompt has the proposal, its source, the thread and the comment, and asks for JSON")
@@ -425,6 +455,7 @@ struct OwnerCommentTests {
         #expect(text.contains("What would it cost?"))
         #expect(text.contains(#"{"answer": "<your answer>", "revision": null}"#))
         #expect(text.contains("the whole new description of the proposed issue"))
+        #expect(text.contains("superlinear adds the line \"\(CommentMarker.line)\" at the start of the reply"))
         #expect(!CommentSessionRunner.allowedTools.contains("Write"))
         #expect(!CommentSessionRunner.allowedTools.contains("Edit"))
     }
