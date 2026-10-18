@@ -436,6 +436,10 @@ struct OwnerCommentTests {
         let quoted = "Each reply starts with \(CommentMarker.line)\n\n\(CommentMarker.line)\n\nand \(CommentResponder.noChangeNote) is its note.\n\nThat is all."
         #expect(CommentResponder.bare(quoted) == quoted)
         #expect(CommentResponder.bare("\(CommentMarker.line)\n\nIt covers X.\n\n\(CommentResponder.proposedNotePrefix)[SPL-50](https://linear.app/i/SPL-50), in Triage. The document changes only when you accept it.\n\n\(CommentResponder.noChangeNote)") == "It covers X.")
+        #expect(CommentResponder.bare("\(CommentResponder.revisedNote)\n\nIt still waits.") == "\(CommentResponder.revisedNote)\n\nIt still waits.")
+        #expect(CommentResponder.bare("Yes.\n\n\(CommentResponder.proposedNotePrefix)a new issue.") == "Yes.\n\n\(CommentResponder.proposedNotePrefix)a new issue.")
+        #expect(CommentResponder.bare("\(CommentMarker.line)\n\n\(CommentResponder.revisedNote)") == "")
+        #expect(CommentResponder.bare("") == "")
         #expect(CommentResponder.specReply(CommentResponder.bare("No.\n\n\(CommentResponder.noChangeNote)"), proposal: nil, asked: true)
             == "No.\n\n\(CommentResponder.noChangeNote)")
     }

@@ -392,7 +392,7 @@ struct CommentResponder: Sendable {
         let link = proposal.post.map { post in
             post.url.map { "[\(post.issueIdentifier ?? "the proposal")](\($0))" } ?? (post.issueIdentifier ?? "an issue")
         } ?? "a proposal"
-        return answer + "\n\n\(proposedNotePrefix)\(link), in Triage. The document changes only when you accept it."
+        return answer + "\n\n\(proposedNotePrefix)\(link)\(proposedNoteSuffix)"
     }
 
     /// The note on a reply whose answer changed the proposal.
@@ -401,22 +401,34 @@ struct CommentResponder: Sendable {
     static let noChangeNote = "superlinear proposed no change: the same change is pending already, or you rejected it."
     /// The start of the note on a spec reply whose change was proposed.
     static let proposedNotePrefix = "superlinear proposed this change as "
+    /// The end of the note on a spec reply whose change was proposed.
+    static let proposedNoteSuffix = ", in Triage. The document changes only when you accept it."
 
     /// A session's answer without the marker line at its start and the
     /// notes at its end that superlinear adds to the reply itself, which a
     /// session copies from superlinear's earlier replies in the thread.
+    ///
+    /// One pass over the answer's lines, from each end: it removes only lines
+    /// that are blank, the marker, or a whole note, and stops at the first
+    /// other line, so a quote of them in the answer's text stays.
     static func bare(_ answer: String) -> String {
-        var text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-        while let first = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first,
-              first.trimmingCharacters(in: .whitespaces) == CommentMarker.line {
-            text = String(text.dropFirst(first.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        while true {
-            let last = text.ranges(of: "\n\n").last
-            let paragraph = last.map { String(text[$0.upperBound...]) } ?? text
-            let line = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard line == revisedNote || line == noChangeNote || line.hasPrefix(proposedNotePrefix) else { return text }
-            text = last.map { String(text[..<$0.lowerBound]) }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        }
+        let lines = answer.components(separatedBy: "\n")
+        let kept = lines
+            .drop { isBlank($0) || $0.trimmingCharacters(in: .whitespaces) == CommentMarker.line }
+            .reversed()
+            .drop { isBlank($0) || isNote($0) }
+            .reversed()
+        return kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isBlank(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Whether the line is, in full, a note that superlinear adds to a reply.
+    private static func isNote(_ line: String) -> Bool {
+        let line = line.trimmingCharacters(in: .whitespaces)
+        return line == revisedNote || line == noChangeNote
+            || (line.hasPrefix(proposedNotePrefix) && line.hasSuffix(proposedNoteSuffix))
     }
 }
