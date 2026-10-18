@@ -275,4 +275,27 @@ struct StatsTests {
           two      1    0       0       0       -           -        -
         """)
     }
+
+    @Test("The stats total what the sessions answering the owner's comments took, across workspaces")
+    func commentAnswers() {
+        func answer(_ usage: AgentUsage?) -> CommentAnswerRecord {
+            CommentAnswerRecord(
+                sessionId: ClaudeSession.ID(rawValue: UUID().uuidString), startedAt: Date(), endedAt: Date(),
+                location: "an issue", usage: usage, error: usage == nil ? "failed" : nil)
+        }
+        let one = WorkspaceReport(
+            name: "one", entries: [],
+            commentAnswers: [answer(AgentUsage(inputTokens: 900, outputTokens: 300, cacheReadTokens: 5000, activeTime: 120)), answer(nil)],
+            warnings: [])
+        let two = WorkspaceReport(
+            name: "two", entries: [],
+            commentAnswers: [answer(AgentUsage(inputTokens: 100, outputTokens: 200, cacheReadTokens: 1000, activeTime: 60))],
+            warnings: [])
+        #expect(Stats(reports: [one, two]).rendered() == """
+        Projects  2
+
+        3 comment answers: 1.5k tokens, 6.0k cache reads, 3m agent time
+        """)
+        #expect(!Stats(reports: [WorkspaceReport(name: "one", entries: [], warnings: [])]).rendered().contains("comment answer"))
+    }
 }
