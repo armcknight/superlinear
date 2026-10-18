@@ -103,5 +103,6 @@ Rules:
 | [`operations.md#restarts`](operations.md#restarts) | Restarts. |
 | [`operations.md#disk-space`](operations.md#disk-space) | Disk space. |
 | [`operations.md#status`](operations.md#status) | `superlinear status`. |
+| [`operations.md#stats`](operations.md#stats) | `superlinear stats`. |
 | [`operations.md#make-targets`](operations.md#make-targets) | Make targets. |
 | [`operations.md#releasing`](operations.md#releasing) | Releasing superlinear. |
