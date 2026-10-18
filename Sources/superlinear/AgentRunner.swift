@@ -332,7 +332,18 @@ struct AgentRunner: Sendable {
     /// did: the end of its log, written by `work`, which starts the log
     /// afresh for a new session and appends to it for a resumed one.
     func usageLimitHit(for run: AgentRun, now: Date) -> ClaudeUsageLimit.Hit? {
-        guard let handle = FileHandle(forReadingAtPath: agentLog(for: run)) else { return nil }
+        usageLimitHit(identifier: run.identifier, now: now)
+    }
+
+    /// When the last agent for `identifier` last wrote its log.
+    func agentLogModified(identifier: LinearIssue.Identifier) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: "\(logsDirectory)/\(identifier).log"))?[.modificationDate] as? Date
+    }
+
+    /// The Claude usage limit that the last agent for `identifier` stopped
+    /// at, from the end of its log.
+    func usageLimitHit(identifier: LinearIssue.Identifier, now: Date) -> ClaudeUsageLimit.Hit? {
+        guard let handle = FileHandle(forReadingAtPath: "\(logsDirectory)/\(identifier).log") else { return nil }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size > Self.logTailSize ? size - Self.logTailSize : 0)
@@ -378,6 +389,26 @@ struct AgentRunner: Sendable {
     /// Whether Claude saved a transcript for the session, without which it
     /// cannot be resumed. Claude keeps one file per session, named by its ID,
     /// under a directory per working directory.
+    /// The newest Claude session started in `worktree`: Claude keeps each
+    /// directory's transcripts in a project directory named after its path,
+    /// with every character but ASCII letters and digits made a hyphen.
+    func latestClaudeSession(inWorktree worktree: String) -> String? {
+        let configDirectory = environment["CLAUDE_CONFIG_DIR"] ?? "\(home)/.claude"
+        let project = "\(configDirectory)/projects/\(Self.claudeProjectName(worktree))"
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: project) else { return nil }
+        let transcripts = names.filter { $0.hasSuffix(".jsonl") }.compactMap { name -> (String, Date)? in
+            guard let modified = try? fm.attributesOfItem(atPath: "\(project)/\(name)")[.modificationDate] as? Date
+            else { return nil }
+            return (String(name.dropLast(".jsonl".count)), modified)
+        }
+        return transcripts.max { $0.1 < $1.1 }?.0
+    }
+
+    static func claudeProjectName(_ path: String) -> String {
+        String(path.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+    }
+
     func claudeSessionExists(_ sessionId: String) -> Bool {
         let configDirectory = environment["CLAUDE_CONFIG_DIR"] ?? "\(home)/.claude"
         let projects = "\(configDirectory)/projects"

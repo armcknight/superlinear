@@ -229,6 +229,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agents that the Claude usage limit stopped while a daemon from before the
+  pause ran are found again: a started issue with no pull request whose
+  agent log ends at the limit is queued first and resumes its worktree's
+  newest Claude session, and a pull request whose review agent stopped
+  there gets one more agent for your latest change request.
 - `make install` restarts a daemon that launchd runs from the installed path,
   with `launchctl kickstart -k`. launchd's own restart of the replaced binary
   could fail with `OS_REASON_CODESIGNING` and leave the daemon down.
