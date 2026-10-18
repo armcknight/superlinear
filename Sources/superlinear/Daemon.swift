@@ -640,6 +640,16 @@ actor Daemon {
         return true
     }
 
+    /// Remembers that Fable's limit is used up, so project-management
+    /// sessions run on the fallback model until it resets.
+    private func recordFableLimit(_ hit: ClaudeUsageLimit.Hit, now: Date, workspace: String) {
+        state.recordFableLimit(hit, now: now)
+        save()
+        let until = state.fableLimit.map { StatusTime.clock($0.until.rawValue, now: now) } ?? "its reset"
+        log("Fable's usage limit is reached; planning and comment answers run on \(PlanningModel.fallback.rawValue) "
+            + "until \(until)", workspace: workspace)
+    }
+
     private func endClaudePause(_ reason: String) {
         guard state.claudePause != nil else { return }
         state.claudePause = nil
@@ -1170,14 +1180,22 @@ actor Daemon {
         if case .spec = question.subject, let issues = try? await linear.planningIssues(teamIds: workspace.watchedTeams) {
             openIssues = issues.map { "\($0.identifier) [\($0.stateName)] \($0.title)" }
         }
-        let sessionId = ClaudeSession.ID(rawValue: UUID().uuidString.lowercased())
+        var sessionId = ClaudeSession.ID(rawValue: UUID().uuidString.lowercased())
         let startedAt = Date()
-        log("Answering the owner's comment on \(question.location) in session \(sessionId)", workspace: name)
-        let session: CommentSessionRunner.Session
+        var model = state.planningModel(now: startedAt)
+        log("Answering the owner's comment on \(question.location) in session \(sessionId), on \(model.rawValue)", workspace: name)
+        var session: CommentSessionRunner.Session
         do {
-            session = try await commentRunner.run(
-                prompt: CommentAnswerPrompt.render(question, openIssues: openIssues), sessionId: sessionId, worktree: worktree,
-                workspace: name)
+            let prompt = CommentAnswerPrompt.render(question, openIssues: openIssues)
+            session = try await commentRunner.run(prompt: prompt, sessionId: sessionId, model: model, worktree: worktree, workspace: name)
+            // At Fable's limit, the question is asked again on the fallback, in a new session.
+            if model == .fable, let hit = ClaudeUsageLimit.hit(in: session.output, now: Date(), timeZone: .current) {
+                recordFableLimit(hit, now: Date(), workspace: name)
+                model = PlanningModel.fallback
+                sessionId = ClaudeSession.ID(rawValue: UUID().uuidString.lowercased())
+                log("Answering the comment on \(question.location) again in session \(sessionId), on \(model.rawValue)", workspace: name)
+                session = try await commentRunner.run(prompt: prompt, sessionId: sessionId, model: model, worktree: worktree, workspace: name)
+            }
         } catch {
             failed(question, "Could not start Claude: \(error)", workspace: name)
             return
@@ -1318,15 +1336,18 @@ actor Daemon {
 
     private func launchPlanning(_ run: PlanningRun, mode: LaunchMode, workspace: WorkspaceConfig) {
         let name = workspace.name
+        let model = state.planningModel(now: Date())
+        var run = run
+        run.model = model
         do {
-            let (launched, process) = try planningRunner.launch(run, mode: mode, workspace: name) { [run] status in
+            let (launched, process) = try planningRunner.launch(run, mode: mode, model: model, workspace: name) { [run] status in
                 Task { await self.finishPlanning(run, status: status, workspace: workspace) }
             }
             planningProcesses[name] = process
             state.startPlanning(launched, workspace: name)
             save()
             log(mode == .resume ? "Resuming the planning job" : "Started the planning job in \(run.worktreePath)", workspace: name)
-            log("  Session: \(run.sessionId)", workspace: name)
+            log("  Session: \(run.sessionId), on \(model.rawValue)", workspace: name)
             log("  Log: \(planningRunner.log(workspace: name))", workspace: name)
         } catch {
             log("Could not launch the planning job: \(error)", workspace: name)
@@ -1374,6 +1395,16 @@ actor Daemon {
         planningWatchers[name] = nil
         // A job is finished once; a late duplicate notice finds nothing to do.
         guard state.workspaces[name]?.planningRun?.sessionId == run.sessionId else { return }
+        let now = Date()
+        // A job Fable's limit stopped resumes in its session on the fallback.
+        if run.model == .fable, let hit = planningRunner.usageLimitHit(workspace: name, now: now) {
+            recordFableLimit(hit, now: now, workspace: name)
+            var resumed = run
+            resumed.pid = nil
+            resumed.processStartedAt = nil
+            launchPlanning(resumed, mode: planningRunner.launchMode(for: resumed), workspace: workspace)
+            return
+        }
         state.workspaces[name]?.planningRun = nil
         planningBusy.insert(name)
         defer { planningBusy.remove(name) }
