@@ -9,6 +9,7 @@ Usage: superlinear [--config <path>]
        superlinear install [--force]
        superlinear uninstall
        superlinear status [--config <path>]
+       superlinear stats [--config <path>]
        superlinear proposals [--workspace <name>] [--config <path>]
        superlinear standup [--print] [--workspace <name>] [--config <path>]
        superlinear plan [--workspace <name>] [--config <path>]
@@ -28,6 +29,12 @@ Subcommands:
               its tasks: agents running or queued, and tasks completed,
               with pull request URLs. A task is completed once its pull
               request is merged and its Linear issue is done.
+  stats       Measure the agents' work: how many items each status section
+              holds across all workspaces; per pull request, the lines,
+              files, tokens, agent time and CI time, with medians and
+              histograms; the totals over every tracked task; and the same
+              by project. Reads the Claude transcripts, the CI runs and the
+              local repositories, so it takes longer than status.
   proposals   List the changes to Linear that superlinear proposed: those
               pending, then those applied, rejected or expired in the last
               7 days, with reasons, sources and diffs. --workspace limits
@@ -93,6 +100,10 @@ case .status(let path):
     // Reads the state file and Linear; it takes no daemon lock, so it runs
     // beside a daemon.
     Task { exit(await StatusCommand.run(configPath: path)) }
+    dispatchMain()
+
+case .stats(let path):
+    Task { exit(await StatsCommand.run(configPath: path)) }
     dispatchMain()
 
 case .proposals(let path, let workspace):

@@ -988,7 +988,7 @@ actor Daemon {
         }
         var summary = record.error.map { "The planning job failed: \($0)" }
             ?? "The planning job ended: \(record.proposed) proposed, \(record.skipped) skipped"
-        if let usage = record.usage { summary += ", \(StatusSummary.compact(usage.tokens)) tokens" }
+        if let usage = record.usage { summary += ", \(Stats.compact(usage.tokens)) tokens" }
         log(summary, workspace: name)
         state.finishPlanning(record, workspace: name)
         save()
