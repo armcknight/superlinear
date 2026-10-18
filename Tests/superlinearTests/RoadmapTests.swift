@@ -159,6 +159,22 @@ struct RoadmapTests {
         #expect(linked.contains("\u{1b}]8;;https://linear.app/x/issue/WOR-7\u{1b}\\WOR-7\u{1b}]8;;\u{1b}\\"))
     }
 
+    @Test("A long Work cell wraps between words, so Who stays in view")
+    func wrapsWork() {
+        #expect(Roadmap.wrapped("one two three", width: 7) == ["one two", "three"])
+        #expect(Roadmap.wrapped("averylongword x", width: 4) == ["averylongword", "x"])
+        #expect(Roadmap.wrapped("", width: 4) == [""])
+
+        let long = String(repeating: "word ", count: 30).trimmingCharacters(in: .whitespaces)
+        let output = RoadmapOutput(steps: [.init(work: "WOR-7 " + long, issues: ["WOR-7"], who: ["you"], why: nil)])
+        let text = Roadmap.assemble(output, context: context, model: nil, usage: nil).rendered(now: updated, links: false)
+        let rows = text.components(separatedBy: "\n").drop { !$0.hasPrefix("Step") }.prefix(4)
+        #expect(rows.allSatisfy { $0.count <= 4 + 2 + Roadmap.workWidth + 2 + "agent, then you".count })
+        #expect(rows.dropFirst().first?.hasPrefix("1     WOR-7 word") == true)
+        #expect(rows.dropFirst().first?.hasSuffix("  you") == true)
+        #expect(rows.dropFirst(2).first?.hasPrefix("      word") == true)
+    }
+
     @Test("status points at the roadmap: when it was built and what it asks of the owner")
     func pointer() {
         var record = RoadmapRecord()

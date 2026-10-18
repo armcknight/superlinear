@@ -285,11 +285,14 @@ struct Roadmap: Codable, Sendable, Equatable {
             let rows = [("Step", "Work", "Who")]
                 + steps.map { (String($0.number), $0.work, $0.who.map(\.rawValue).joined(separator: ", then ")) }
             let numberWidth = rows.map(\.0.count).max() ?? 0
-            let workWidth = rows.map(\.1.count).max() ?? 0
-            for (number, work, who) in rows {
-                let padded = number.padding(toLength: numberWidth, withPad: " ", startingAt: 0) + "  "
-                    + work.padding(toLength: workWidth, withPad: " ", startingAt: 0) + "  " + who
-                lines.append(link(padded.trimmingTrailingWhitespace()))
+            let wrapped = rows.map { (number: $0.0, work: Self.wrapped($0.1, width: Self.workWidth), who: $0.2) }
+            let workWidth = wrapped.flatMap(\.work).map(\.count).max() ?? 0
+            for row in wrapped {
+                for (index, part) in row.work.enumerated() {
+                    let padded = (index == 0 ? row.number : "").padding(toLength: numberWidth, withPad: " ", startingAt: 0) + "  "
+                        + part.padding(toLength: workWidth, withPad: " ", startingAt: 0) + "  " + (index == 0 ? row.who : "")
+                    lines.append(link(padded.trimmingTrailingWhitespace()))
+                }
             }
         }
 
@@ -320,6 +323,25 @@ struct Roadmap: Codable, Sendable, Equatable {
             for warning in warnings { lines.append("warning: \(warning)") }
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// The widest the Work column grows before its text wraps.
+    static let workWidth = 72
+
+    /// `text` in lines of at most `width` characters, broken between words;
+    /// a word longer than `width` has a line of its own.
+    static func wrapped(_ text: String, width: Int) -> [String] {
+        var lines: [String] = []
+        var line = ""
+        for word in text.split(separator: " ", omittingEmptySubsequences: true) {
+            if !line.isEmpty, line.count + 1 + word.count > width {
+                lines.append(line)
+                line = ""
+            }
+            line += (line.isEmpty ? "" : " ") + word
+        }
+        lines.append(line)
+        return lines
     }
 
     /// `text` with each identifier of `issues` that has a URL made a
