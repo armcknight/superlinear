@@ -429,7 +429,7 @@ enum StandupCommand {
         if workspace.selection == .ready {
             do {
                 let ready = try await client.fetchReadyIssues(states: workspace.readyStates, teamIds: workspace.teamIds)
-                upcoming = IssueSelection.plan(ready, workspace: workspace, handled: handled).start
+                upcoming = IssueSelection.plan(ready, workspace: workspace, handled: handled, stackBases: [:]).start
             } catch {
                 warnings.append("Could not fetch the ready issues from Linear: \(error)")
             }

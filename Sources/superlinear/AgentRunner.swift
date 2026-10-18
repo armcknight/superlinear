@@ -35,6 +35,22 @@ failure to fix: do not change code for it, stop monitoring CI, and say so in the
 \(followUpInstructions)
 """
 
+/// The prompt for a run stacked on its blocker's open pull request: the
+/// autonomous prompt, with what the stack changes.
+func stackedPrompt(for stack: StackBase) -> String {
+    """
+    \(autonomousPrompt)
+
+    This issue is blocked by \(stack.identifier), whose work is in pull request #\(stack.number), \
+    \(stack.url), from the branch `\(stack.branch)`. That pull request is not merged yet and may still \
+    change. Your branch was created from `\(stack.branch)`, so its code is already here: build on it. \
+    Open your pull request against that branch, with `gh pr create --base \(stack.branch)`, not against \
+    the default branch. Do not merge the default branch into your branch, do not rebase, and do not \
+    force-push. Do not change what the lower pull request changes, unless this issue asks for it. \
+    superlinear keeps your branch up to date with `\(stack.branch)` after you finish.
+    """
+}
+
 /// The prompt for a run that answers a review on the pull request an earlier
 /// agent opened. It starts a new Claude session, so it says everything itself.
 func reviewPrompt(for review: ReviewRequest) -> String {
@@ -149,6 +165,11 @@ struct AgentRunner: Sendable {
     /// does not keep being restarted.
     static let maxResumes = 3
 
+    /// The model agents work on issues with, given to `claude` through
+    /// `ANTHROPIC_MODEL`, since `work` passes no model and the default one
+    /// in Claude's settings can be another.
+    static let model = "opus"
+
     let home: String
     /// The environment agents launch with. `work` and `claude` are found
     /// through its PATH.
@@ -226,7 +247,7 @@ struct AgentRunner: Sendable {
         )
         process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
         process.environment = environment.merging(
-            ["SUPERLINEAR_STATUS_FILE": statusFile(for: run)], uniquingKeysWith: { $1 }
+            ["SUPERLINEAR_STATUS_FILE": statusFile(for: run), "ANTHROPIC_MODEL": Self.model], uniquingKeysWith: { $1 }
         )
         // A file rather than a pipe: a pipe would break when the daemon exits
         // and take the agent down with it.
@@ -249,7 +270,7 @@ struct AgentRunner: Sendable {
 
     /// The prompt that starts the run's session.
     static func prompt(for run: AgentRun) -> String {
-        run.review.map(reviewPrompt) ?? run.conflict.map(conflictPrompt) ?? autonomousPrompt
+        run.review.map(reviewPrompt) ?? run.conflict.map(conflictPrompt) ?? run.stack.map(stackedPrompt) ?? autonomousPrompt
     }
 
     // MARK: Recovery

@@ -20,7 +20,7 @@ make config   # write an example config, then open it in $EDITOR
 make load     # build, install into ~/.local/bin, then register the agent
 ```
 
-`superlinear install` writes `~/Library/LaunchAgents/com.armcknight.superlinear.plist` and loads it, pointing the agent at whichever binary you ran it from. Re-running it reloads. `superlinear uninstall` stops the agent and removes it. With the cask, the daemon follows Homebrew itself: within a minute of `brew upgrade` it exits and launchd restarts it on the new version, and a few minutes after `brew uninstall` it removes its own agent. A daemon running a local build restarts the same way within a minute of `make install` replacing its binary. Agents in flight carry on through the restart.
+`superlinear install` writes `~/Library/LaunchAgents/com.armcknight.superlinear.plist` and loads it, pointing the agent at whichever binary you ran it from. Re-running it reloads. `superlinear uninstall` stops the agent and removes it. With the cask, the daemon follows Homebrew itself: within a minute of `brew upgrade` it exits and launchd restarts it on the new version, and a few minutes after `brew uninstall` it removes its own agent. A daemon that launchd runs from `~/.local/bin/superlinear` is restarted by `make install` itself, with `launchctl kickstart -k`, as launchd's own restart of a replaced binary can fail with `OS_REASON_CODESIGNING`. Agents in flight carry on through the restart.
 
 If both installs are present, the local build wins. `superlinear install` from the Homebrew binary leaves an agent that runs an existing local build in place; pass `--force` to replace it. The agent runs one binary, so a new build of the other kind does not restart the daemon: to switch, run `superlinear install` from the binary to switch to. `superlinear status` shows which binary the daemon runs. `superlinear --version` tells them apart: a local build appends the commit, as in `1.1.0+d0a4bc2`, plus `.dirty` when the working tree had uncommitted or untracked changes.
 
@@ -68,16 +68,16 @@ Agents' builds fill the disk fast: a SwiftPM `.build` directory or an Xcode Deri
 
 `superlinear status` lists, for each workspace, the open pull requests that belong to a Linear issue, then the tasks the daemon tracks, grouped by where they stand:
 
-| Section | Meaning |
-| --- | --- |
-| Awaiting review | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, agent addressing review, or agent resolving conflicts — whether it conflicts with its base branch, the CI state, and the URL. |
-| Draft pull requests | `drafts` | The same, for drafts, with the CI state. |
+| Section | Name | Meaning |
+| --- | --- | --- |
+| Awaiting review | `awaiting-review` | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, agent addressing review, or agent resolving conflicts — whether it conflicts with its base branch, the CI state, and the URL. A pull request that targets another listed one's branch is listed under it, indented, with "stacked on #n": see [Stacks](lifecycle.md#stacks). |
+| Draft pull requests | `drafts` | The same, for drafts, with the CI state. A draft the daemon made because the pull request below it was closed without a merge says so, and asks for a decision. |
 | Running | `running` | An agent works on the issue now. Shows its pid and log. |
 | Addressing review | `addressing-review` | An agent addresses your review of the issue's pull request, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
 | Resolving conflicts | `resolving-conflicts` | An agent merges the base branch into the branch of the issue's pull request, which conflicts with it, or is queued to. Shows the pull request, and the pid and log once it runs. |
 | Interrupted | `interrupted` | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
 | Queued | `queued` | Waiting for a free agent slot, or for a pause at the Claude usage limit to end. A session the limit stopped says so; it resumes first. |
-| Blocked | `blocked` | Waiting for the issues blocking it to be completed or canceled, as of the daemon's last poll. Shows the blockers. |
+| Blocked | `blocked` | Waiting for the issues blocking it to be completed or canceled, as of the daemon's last poll, with its open blockers. Also an issue whose pull request is [stacked](lifecycle.md#stacks) on one closed without a merge: its own pull request is a draft until you decide. |
 | Needs human | `needs-human` | A [`humanLabels`](configuration.md#human-labels) label on the issue keeps agents off it, as of the daemon's last poll. Shows the labels. |
 | Open pull requests | `open-pull-requests` | The agent finished and its pull request is open. Shown only when open pull requests are not listed for review, because they could not be or because `--status` leaves out both review sections; otherwise they appear above. |
 | Merged, issue not done | `merged` | The pull request is merged, but the Linear issue is not in a completed state. |

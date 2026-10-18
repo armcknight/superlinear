@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Stacks: dependent work on open pull requests. With the workspace key
+  `stacking`, on by default, an issue whose one unmerged blocker has an open pull request
+  from an agent, not a draft, with CI passing, starts on top of it: its
+  branch is created from the blocker's branch, and its pull request
+  targets that branch, within `maxStackDepth` pull requests, 3 by default.
+  GitHub's native stacks are not used, as they rebase and force-push the
+  pull requests above a merged one: a watched pull request is never
+  rewritten. Each poll keeps stacks current, bottom-up: a lower branch
+  that moved is merged into the pull requests above it with a merge commit
+  and pushed, a conflict goes to a conflict agent, a merged lower pull
+  request has the next base retargeted and merged in, and one closed
+  without a merge makes the pull requests above it drafts, their issues
+  back to Blocked, for a decision at the standup. `superlinear status`
+  lists each pull request under the one it stacks on.
 - `superlinear status --status <names>` shows only the named sections,
   comma-separated or repeated: `awaiting-review`, `drafts`, `running`,
   `addressing-review`, `resolving-conflicts`, `interrupted`, `queued`,
@@ -165,6 +179,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Agents work on Opus. The daemon sets `ANTHROPIC_MODEL=opus` for them, as
+  `work` passes no model and the default in Claude's settings can be another.
 - A pending proposal expires `proposalExpiryDays` after the first standup
   that showed it, not after it was made.
 - The first poll of a workspace with no state, in `new` mode, starts nothing
@@ -173,6 +189,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `make install` restarts a daemon that launchd runs from the installed path,
+  with `launchctl kickstart -k`. launchd's own restart of the replaced binary
+  could fail with `OS_REASON_CODESIGNING` and leave the daemon down.
 - A pull request already attached to its Linear issue, as by hand or before
   the daemon kept records of its links, is recorded as linked. Linear refuses
   to attach it again, so the daemon tried and failed every poll.
