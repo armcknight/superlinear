@@ -129,6 +129,28 @@ A team with Triage off: superlinear turns Triage on when the API key may, and lo
 
 Once answered, superlinear edits the comment's first line to say so, with the time: `**Applied 2026-10-17T20:31:00Z.** superlinear proposed to cancel this issue.` The `superlinear: proposed` label comes off the issue once nothing waits on it, so the issues with that label are the proposals still open: the number waiting in each workspace is in [`superlinear status`](operations.md#status), with a link to each. A rejection is recorded, so the same change is not proposed again. Each approval goes through the [rules above](#proposal-rules): one whose issue changed since it was proposed is not applied, but asked again in a new comment with a note, the old one marked superseded; a spec change goes back to Triage with a note. An issue labeled `superlinear: hands off` gets no comment: the proposal is rejected.
 
+<a id="proposal-comments"></a>
+### Questions and requests on proposals
+
+Ask about a proposal in a comment, and superlinear answers in the comment's thread. A comment counts when you write it on a proposed issue that waits in Triage or Backlog, or as a reply in the thread of a proposal's comment. Only comments from the API key's user count. superlinear's own comments do not count: each reply it writes starts with the line `*Written by superlinear.*`, and its proposal comments start with what they propose.
+
+For each comment, the daemon runs a short headless Claude session that only reads. It can read the code and its history in the repository's default-branch worktree, and look at pull requests and CI runs with `gh`. It cannot edit files, commit, push, open pull requests, or write to Linear or GitHub. Its prompt has the proposal (its kind, reason, source, and the text or the diff), the comments before yours, and your comment. The answer is posted as a reply under your comment. Ask "What would this cost in CI?" on a proposed CI change, and the reply estimates the minutes it adds to each run, and says on which runners.
+
+When the comment asks for a change to the proposal, such as "make it optional" or "only for main", the session may also return new text. superlinear then edits the proposed issue's description, or the proposal's comment, and says in the reply that it did. The proposal still waits for your answer. This applies to the kinds that have text: a new issue's description, an edit's new text, a spec change, and a project update. For a closure, a relation or a promotion, the reply tells you to reject the proposal and say what you want instead.
+
+A reply that superlinear writes with your API key does not reach your Linear inbox. So the reply also keeps the label `superlinear: proposed` on the issue, or puts it back, and the issue stays in the proposals view until you answer the proposal.
+
+Each comment is answered once for each version of its text. The daemon records, in the state file, each comment it handled and the text the comment had then. If you edit a comment after it was answered, it is answered again, and the prompt has the old text and the new text. A change only to the comment's reactions does not count. At the first poll after an upgrade, only comments made after the proposal was put in Linear count, so old comments are not all answered at once.
+
+The sessions run one at a time in each workspace, in the background, so a poll does not wait for them. They wait while the [Claude usage limit](lifecycle.md#claude-usage-limit) pauses sessions. A session that stops at the limit pauses Claude like any other session, and its comment is answered after the pause. Each session's token use is recorded in the state file and logged. Claude's output goes to `~/.local/share/superlinear/logs/comments-<workspace>.log`. If a comment's session fails three times, the comment is logged and left unanswered.
+
+<a id="spec-comments"></a>
+### Comments on the spec document
+
+Proposals are checked against the workspace's spec document ([`planning.specDocumentURL`](configuration.md#planning)), so a question or a request on it is answered like one on a proposal. Each poll reads the document's comments. A new comment from the API key's user gets a read-only session. Its prompt has the document, the comment's thread, and the open issues of the watched teams, and it runs in the repository's default-branch worktree. The answer is a reply in the comment's thread.
+
+A request to change the spec, such as "this should also cover X", becomes a `changeSpec` proposal. It goes to Triage like any other proposal, and the reply links to it. superlinear never edits the document unless you accept the proposal. Only comments made after the daemon first reads the document count. Comments on other documents, on projects and on project updates are ignored.
+
 <a id="standup-needs-human"></a>Issues that need a human need nothing from superlinear: when you mark one Done in Linear, the issues it blocks become ready at the next poll. Holding an issue back is moving it to Backlog; the Todo order in Linear — priority, project, milestone, sort order — is the only queue order.
 
 **Expiry:** [`proposalExpiryDays`](configuration.md#proposal-expiry-days) counts from when the proposal was put in Linear. An expired comment's first line says so; an expired Triage issue is canceled with a note.

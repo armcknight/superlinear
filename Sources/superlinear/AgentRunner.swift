@@ -51,11 +51,82 @@ func stackedPrompt(for stack: StackBase) -> String {
     """
 }
 
-/// The prompt for a run that answers a review, or a comment in the
-/// conversation, on the pull request an earlier agent opened. It starts a new
-/// Claude session, so it says everything itself.
-func reviewPrompt(for review: ReviewRequest) -> String {
+/// The comments, each as its author, time and quoted text, and for an
+/// edited one the text it had before.
+func renderedComments(_ comments: [PromptComment]) -> String {
+    comments.map { comment in
+        var lines = ["- \(comment.author ?? "Someone") wrote at \(ProposalForm.time(comment.createdAt)):", quoted(comment.body)]
+        if let previous = comment.previousBody {
+            lines += ["  They edited it; before, it said:", quoted(previous)]
+        }
+        return lines.joined(separator: "\n")
+    }.joined(separator: "\n")
+}
+
+private func quoted(_ text: String) -> String {
+    text.split(separator: "\n", omittingEmptySubsequences: false).map { "  > \($0)" }.joined(separator: "\n")
+}
+
+/// The issue's comments, for a prompt, so the agent does not depend on what
+/// `linctl issue get` prints.
+func issueCommentsSection(_ comments: [PromptComment]) -> String {
     """
+    The Linear issue's comments, oldest first. Comments that start with "\(CommentMarker.line)" were \
+    written by superlinear, not by a person.
+
+    \(renderedComments(comments))
+    """
+}
+
+/// What a run that acts on the owner's comments is told about them.
+func ownerCommentsSection(_ context: CommentContext) -> String {
+    var text = """
+        The owner commented on the Linear issue after the last agent started:
+
+        \(renderedComments(context.new))
+
+        Act on each of these comments, even when nothing else is left to do: make the change it asks for, \
+        or, if it asks a question, answer it in the pull request description. For an edited comment, act \
+        on what it says now. Do not reply on Linear or on GitHub.
+        """
+    if context.thread.count > context.new.count { text += "\n\n" + issueCommentsSection(context.thread) }
+    return text
+}
+
+/// The prompt for a run that acts on the owner's comments on an issue whose
+/// last agent ended without opening a pull request. It works in that agent's
+/// worktree, under a new Claude session.
+func commentPrompt(for context: CommentContext) -> String {
+    """
+    You are working autonomously on a Linear issue. Do not ask for confirmation at any step — \
+    proceed through the entire workflow without pausing.
+
+    An earlier agent worked on this issue on this branch and ended without opening a pull request. \
+    \(ownerCommentsSection(context))
+
+    Your task:
+    1. Read the Linear issue for this branch with `direnv exec . linctl issue get`, and the branch's \
+    commits and uncommitted changes, to learn what was done.
+    2. Do what the comments ask, and finish the issue if they ask for that.
+    3. If you changed anything, run /armcknight-claude:commit to stage and commit your changes, then run \
+    /armcknight-claude:pr --autonomous to open a pull request without opening a browser and monitor CI \
+    until it passes. Answer the comments' questions in the pull request description.
+    4. If the comments need no change, stop without opening a pull request.
+
+    If CI jobs did not start because of GitHub's spending limit or a billing problem, that is not a \
+    failure to fix: do not change code for it, stop monitoring CI, and say so in the pull request description.
+
+    If you encounter ambiguity, make a reasonable decision and document it in the pull request description.
+
+    \(followUpInstructions)
+    """
+}
+
+/// The prompt for a run that answers a review on the pull request an earlier
+/// agent opened, or the owner's comments on its Linear issue. It starts a
+/// new Claude session, so it says everything itself.
+func reviewPrompt(for review: ReviewRequest, comments: CommentContext? = nil) -> String {
+    var prompt = """
     You are working autonomously on a Linear issue whose pull request has been reviewed. Do not \
     ask for confirmation at any step — proceed through the entire workflow without pausing.
 
@@ -85,6 +156,8 @@ func reviewPrompt(for review: ReviewRequest) -> String {
 
     \(followUpInstructions)
     """
+    if let comments, !comments.new.isEmpty { prompt += "\n\n" + ownerCommentsSection(comments) }
+    return prompt
 }
 
 /// The reviews and comments that queued a review run, as lines for its
@@ -285,7 +358,12 @@ struct AgentRunner: Sendable {
 
     /// The prompt that starts the run's session.
     static func prompt(for run: AgentRun) -> String {
-        run.review.map(reviewPrompt) ?? run.conflict.map(conflictPrompt) ?? run.stack.map(stackedPrompt) ?? autonomousPrompt
+        if let review = run.review { return reviewPrompt(for: review, comments: run.comments) }
+        if let conflict = run.conflict { return conflictPrompt(for: conflict) }
+        if run.answersComments, let comments = run.comments { return commentPrompt(for: comments) }
+        let prompt = run.stack.map(stackedPrompt) ?? autonomousPrompt
+        guard let comments = run.comments, !comments.thread.isEmpty else { return prompt }
+        return prompt + "\n\n" + issueCommentsSection(comments.thread)
     }
 
     // MARK: Recovery

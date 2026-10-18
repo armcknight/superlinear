@@ -51,7 +51,7 @@ work start --headless --prompt-file <prompt> --log-file <log> --session-id <uuid
 
 This creates a worktree at `worktrees/<branch>`, runs `make init`, and pipes the prompt into `claude -p` under that session ID. Agents work on Opus: the daemon sets `ANTHROPIC_MODEL=opus` for them, whatever the default model in Claude's settings is. Branch names come from Linear's own `branchName` field, so the branch matches what the Linear UI shows.
 
-The prompt instructs the agent to run `/armcknight-claude:start`, implement the change, run `/armcknight-claude:commit`, then run `/armcknight-claude:pr --autonomous` to open a pull request and see CI through. The agent is told not to pause for confirmation. The target repository's `CLAUDE.md` tells it how the project is built and tested.
+The prompt instructs the agent to run `/armcknight-claude:start`, implement the change, run `/armcknight-claude:commit`, then run `/armcknight-claude:pr --autonomous` to open a pull request and see CI through. The agent is told not to pause for confirmation. The target repository's `CLAUDE.md` tells it how the project is built and tested. The prompt also has the issue's comments, read when the issue is queued, so the agent does not depend on what `linctl issue get` prints. Before the agent starts, comments cause nothing else.
 
 The run — issue, branch, session ID, and the process running it — is kept in the state file until the agent exits. Agents outlive the daemon: see [Restarts](operations.md#restarts).
 
@@ -62,7 +62,7 @@ When the agent exits, the issue waits in the state file for its pull request. Ea
 
 - **Merged:** see [The merge and completion](#merge).
 - **Open:** the next poll checks again — unless you have reviewed it or commented on it, or it conflicts with its base branch. See [Reviews](#reviews) and [Conflicts](#conflicts).
-- **Closed without a merge**, or **no pull request:** the daemon logs it and stops watching. The worktree stays for you to inspect.
+- **Closed without a merge**, or **no pull request:** the daemon logs it and stops watching. The worktree stays for you to inspect. If there is no pull request, and the agent did not stop at the [Claude usage limit](#claude-usage-limit), your next comment on the issue brings an agent back: see [Comments in Linear](#linear-comments).
 
 Each poll also attaches the pull requests opened from an issue's branch to the issue in Linear, from the first poll after the pull request is opened, so the link is there whether or not Linear's GitHub integration is set up for the repository.
 
@@ -82,6 +82,17 @@ A comment in the pull request's conversation, outside any review, counts the sam
 The issue then goes back in the queue, once for all the reviews and comments that came in. Its agent runs in the same worktree, on the same branch, under a new Claude session, with a prompt that lists those reviews and comments, with a link to each comment, and tells it to read every review, its inline comments and their replies, and every conversation comment, satisfy the points not yet addressed, answer questions in the pull request description, commit, push and see CI through. It does not reply on GitHub. When it ends, the issue waits for its merge again, and only reviews and comments made after that agent started bring it back. Reviews and comments from other people and from bots, such as Seer, are left alone: the first agent already handles bots' reviews.
 
 Issues already awaiting their merge when you upgrade to a version that follows reviews take their pull request's newest commit as the starting point: a review submitted after the last push still starts an agent, and older reviews, which the agent may have addressed, do not.
+
+<a id="linear-comments"></a>
+### Comments in Linear
+
+Your comments on the Linear issue bring an agent back too. Each poll reads the comments on the issues whose agents have ended. Only comments from the API key's user count, and not superlinear's own replies, which start with `*Written by superlinear.*`.
+
+- **The issue has an open pull request:** a new comment queues the same agent that a review does, in the same worktree, under a new Claude session. Its prompt has your comment and the issue's other comments. The agent also reads the reviews, so the comment and any new review are handled together. It makes the change the comment asks for, or answers a question in the pull request description. It writes no comments on GitHub or in Linear.
+- **The last agent ended without a pull request:** a new comment on the issue, while it is in a started state, queues a new agent in the issue's worktree. Its prompt has the comment. The agent does what the comment asks, and opens a pull request if it changed anything. An agent that stopped at the Claude usage limit is resumed instead, as described in that section. Issues whose agents ended without a pull request before an upgrade count too, from the time each one was started.
+- **An agent is running:** a comment made while it runs is handled when it ends. If the agent opened a pull request, the review agent handles the comment. If it did not, a new agent does.
+
+Comments on proposals and on the spec document are answered instead: see [Questions and requests on proposals](planning.md#proposal-comments). Comments on issues that superlinear neither proposed nor works on are ignored. Each comment is handled once for each version of its text: an edited comment brings an agent back again, and its prompt has the old and the new text. At the first poll after an upgrade, only comments made after the issue's last agent started count.
 
 <a id="conflicts"></a>
 ## Conflicts

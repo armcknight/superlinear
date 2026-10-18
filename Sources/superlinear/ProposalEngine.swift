@@ -55,6 +55,13 @@ struct CreatedIssue: Sendable, Equatable {
     var response: JSONValue
 }
 
+/// What a comment is made on.
+enum CommentTarget: Sendable, Equatable {
+    case issue(LinearIssue.ID)
+    /// A document, by its content's ID.
+    case document(contentId: String)
+}
+
 /// What Linear answered when a comment was created.
 struct CreatedComment: Sendable, Equatable {
     var id: LinearComment.ID
@@ -117,6 +124,8 @@ protocol LinearWriting: Sendable {
     func createRelation(issueId: LinearIssue.ID, relatedIssueId: LinearIssue.ID, type: String) async throws -> JSONValue
     func createComment(issueId: LinearIssue.ID, body: String) async throws -> CreatedComment
     func updateComment(id: LinearComment.ID, body: String) async throws -> JSONValue
+    /// A reply in the thread whose first comment is `parentId`.
+    func createReply(on target: CommentTarget, parentId: LinearComment.ID, body: String) async throws -> CreatedComment
     func addLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue
     func removeLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue
     /// The issues with these IDs, with their comments and reactions. Issues

@@ -29,21 +29,86 @@ struct WorkspaceProcessor: Sendable {
             log("Found \(plan.start.count) issue(s) to start")
         }
 
+        let comments = await startingComments(of: plan.start, client: client)
         for (index, issue) in plan.start.enumerated() {
             // Apart, so they start in the plan's order.
             let queuedAt = pollTime.addingTimeInterval(Double(index) / 1000)
-            await daemon.enqueueAgent(for: issue, workspace: workspace, queuedAt: queuedAt, stack: plan.stacked[issue.id])
+            await daemon.enqueueAgent(
+                for: issue, workspace: workspace, queuedAt: queuedAt, stack: plan.stacked[issue.id], comments: comments[issue.id])
         }
 
         await daemon.updateLastPoll(pollTime, workspace: workspace.name)
         await daemon.reviewProposals(workspace, now: Date())
+        let ownerComments = await readOwnerComments(client: client)
+        await checkSpecComments(client: client)
         await daemon.planIfDue(workspace, now: Date())
 
         if await daemon.gitHubAvailable() { await linkRunningAgentsPullRequests(client: client, listing: listing) }
-        if await daemon.gitHubAvailable() { await checkPullRequests(client: client, listing: listing) }
+        if await daemon.gitHubAvailable() { await checkPullRequests(client: client, listing: listing, comments: ownerComments) }
         if await daemon.gitHubAvailable() { await sweepStartedIssues(client: client, listing: listing) }
         if await daemon.gitHubAvailable() { await checkSpendingLimit(listing: listing) }
         if await daemon.gitHubAvailable() { await checkDefaultBranchWorkflows(client: client, repoPath: listing.repoPath) }
+    }
+
+    /// The comments of the issues about to start, for their agents' prompts,
+    /// so an agent does not depend on what `linctl issue get` prints. An
+    /// issue with none, or whose comments could not be read, has no entry.
+    private func startingComments(of issues: [LinearIssue], client: LinearClient) async -> [LinearIssue.ID: CommentContext] {
+        guard !issues.isEmpty else { return [:] }
+        do {
+            let found = try await client.issueComments(ids: issues.map(\.id))
+            return Dictionary(
+                found.filter { !$0.comments.isEmpty }.map { ($0.id, CommentContext(comments: $0.comments)) },
+                uniquingKeysWith: { a, _ in a })
+        } catch {
+            await logOnce("Could not read the comments of the issues to start; their agents start without them: \(error)")
+            return [:]
+        }
+    }
+
+    /// Reads the owner's comments on the issues superlinear proposed or works
+    /// on, queues a session for each question on a pending proposal and an
+    /// agent for each issue whose last agent ended without a pull request,
+    /// and returns what is left for the pull request check: the comments for
+    /// review agents.
+    private func readOwnerComments(client: LinearClient) async -> CommentTriage.Plan? {
+        let inputs = await daemon.commentInputs(workspace: workspace.name)
+        let ids = CommentTriage.issueIds(inputs)
+        guard !ids.isEmpty else { return nil }
+        let plan: CommentTriage.Plan
+        do {
+            let viewer = try await daemon.viewerId(workspace: workspace, client: client)
+            plan = CommentTriage.plan(inputs, issues: try await client.issueComments(ids: ids), viewer: viewer, now: Date())
+        } catch {
+            await logOnce("Could not read the comments on the issues superlinear proposed or works on, trying again each poll: \(error)")
+            return nil
+        }
+        await daemon.recordCommentWatch(plan, workspace: workspace.name)
+        for agent in plan.newAgents {
+            await daemon.enqueueCommentAgent(agent, workspace: workspace)
+        }
+        if !plan.answers.isEmpty {
+            log("Found \(plan.answers.count) comment(s) from the owner on pending proposals")
+            await daemon.queueCommentAnswers(plan.answers.map { CommentQuestion($0, since: Date()) }, workspace: workspace)
+        }
+        return plan
+    }
+
+    /// Queues a session for each new comment from the owner on the spec
+    /// document.
+    private func checkSpecComments(client: LinearClient) async {
+        guard let id = workspace.planning.specDocumentId else { return }
+        do {
+            let viewer = try await daemon.viewerId(workspace: workspace, client: client)
+            let document = try await client.documentComments(id: id)
+            let questions = await daemon.specQuestions(
+                document, url: workspace.planning.specDocumentURL, viewer: viewer, workspace: workspace.name, now: Date())
+            guard !questions.isEmpty else { return }
+            log("Found \(questions.count) comment(s) from the owner on the spec document")
+            await daemon.queueCommentAnswers(questions, workspace: workspace)
+        } catch {
+            await logOnce("Could not read the comments on the spec document, trying again each poll: \(error)")
+        }
     }
 
     /// The pull requests the plan's blocked issues may stack on: for each
@@ -291,6 +356,7 @@ struct WorkspaceProcessor: Sendable {
 
         let tracked = await daemon.trackedIssueIds(workspace: workspace.name)
         await requeueStoppedAtUsageLimit(issues: issues, pullRequests: pullRequests, tracked: tracked, repoPath: listing.repoPath)
+        await recordEndedWithoutPullRequest(issues: issues, pullRequests: pullRequests, tracked: tracked)
         for item in StartedIssueSweep.plan(issues: issues, pullRequests: pullRequests, excluding: tracked) {
             await link(item.pullRequests, issueId: item.issue.id, identifier: item.issue.identifier, client: client)
             guard let merged = item.merged else { continue }
@@ -328,6 +394,27 @@ struct WorkspaceProcessor: Sendable {
             let session = FollowUpFile.worktree(branch: issue.branchName, repoPath: repoPath)
                 .flatMap(runner.latestClaudeSession(inWorktree:))
             await daemon.requeueStoppedAtUsageLimit(issue, sessionId: session, workspace: workspace)
+        }
+    }
+
+    /// Records the started issues whose last agent ended without a pull
+    /// request, and not at the usage limit, before the daemon recorded such
+    /// issues itself, so the owner's comments on them start an agent. Their
+    /// comments count from when they were started.
+    private func recordEndedWithoutPullRequest(issues: [LinearIssueStatus], pullRequests: [PullRequest], tracked: Set<String>) async {
+        let runner = AgentRunner()
+        let now = Date()
+        let ended = StartedIssueSweep.endedWithoutPullRequest(
+            issues: issues, pullRequests: pullRequests,
+            processed: await daemon.processedIssueIds(workspace: workspace.name),
+            tracked: Set(tracked.map(LinearIssue.ID.init(rawValue:))).union(await daemon.endedAgentIds(workspace: workspace.name))
+        ) { runner.usageLimitHit(identifier: $0, now: now) != nil }
+        for issue in ended {
+            await daemon.recordEndedAgent(
+                EndedAgent(
+                    issueId: LinearIssue.ID(rawValue: issue.id), identifier: issue.identifier, branchName: issue.branchName,
+                    startedAt: issue.startedAt),
+                workspace: workspace.name)
         }
     }
 
@@ -386,7 +473,9 @@ struct WorkspaceProcessor: Sendable {
     /// one, or none at all, ends the watch. An open one with new reviews from
     /// the signed-in GitHub user gets an agent to address them; failing that,
     /// one that conflicts with its base branch gets an agent to merge it in.
-    private func checkPullRequests(client: LinearClient, listing: PullRequestListing) async {
+    /// The owner's new comments in Linear on an issue with an open pull
+    /// request queue a review agent too, which also reads the reviews.
+    private func checkPullRequests(client: LinearClient, listing: PullRequestListing, comments: CommentTriage.Plan?) async {
         let checker = PullRequestChecker()
         let repoPath = listing.repoPath
         for pending in await daemon.pendingMerges(workspace: workspace.name) {
@@ -420,7 +509,8 @@ struct WorkspaceProcessor: Sendable {
                 // review agent to end.
                 // A conflict run waits too when the reviews could not be checked,
                 // as the watch after it would count them as addressed.
-                guard await checkReviews(of: pending, pullRequests: pullRequests, repoPath: repoPath) == .none
+                guard await checkReviews(
+                    of: pending, pullRequests: pullRequests, linear: comments?.reviews[pending.issueId], repoPath: repoPath) == .none
                 else { continue }
                 await checkConflicts(of: pending, pullRequests: pullRequests, listing: listing)
                 continue
@@ -450,6 +540,14 @@ struct WorkspaceProcessor: Sendable {
                 log("\(pending.identifier)'s pull request was closed without merging: \(pr.url)")
             case .missing:
                 log("\(pending.identifier)'s agent ended without opening a pull request")
+                // One the usage limit stopped is resumed instead.
+                if AgentRunner().usageLimitHit(identifier: pending.identifier, now: Date()) == nil {
+                    await daemon.recordEndedAgent(
+                        EndedAgent(
+                            issueId: LinearIssue.ID(rawValue: pending.issueId), identifier: pending.identifier,
+                            branchName: pending.branchName, startedAt: pending.reviewsHandledThrough),
+                        workspace: workspace.name)
+                }
             }
             await daemon.stopAwaitingMerge(issueId: pending.issueId, workspace: workspace.name)
         }
@@ -607,8 +705,11 @@ struct WorkspaceProcessor: Sendable {
 
     /// Queues an agent for the open pull request when `gh`'s own user has
     /// reviewed it, or commented in its conversation, since the issue's last
-    /// agent started.
-    private func checkReviews(of pending: PendingMerge, pullRequests: [PullRequest], repoPath: String) async -> ReviewCheck {
+    /// agent started, or when the owner commented on the issue in Linear:
+    /// `linear`. One agent takes them all.
+    private func checkReviews(
+        of pending: PendingMerge, pullRequests: [PullRequest], linear: CommentTriage.Comments?, repoPath: String
+    ) async -> ReviewCheck {
         guard let pullRequest = pullRequests.first(where: { $0.state == .open }) else { return .none }
         // A watch from before reviews were followed counts from the pull
         // request's head commit. Looked up once, before looking at reviews, so
@@ -628,7 +729,12 @@ struct WorkspaceProcessor: Sendable {
             pending, lastCommit: lastCommit, workspace: workspace.name)
         let reviews = pullRequest.reviews ?? []
         let comments = pullRequest.comments ?? []
-        guard !reviews.isEmpty || !comments.isEmpty else { return .none }
+        guard !reviews.isEmpty || !comments.isEmpty else {
+            guard let linear else { return .none }
+            log("\(pending.identifier) has \(linear.fresh.count) new comment(s) from the owner in Linear")
+            await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace, comments: linear)
+            return .queued
+        }
         let login: String
         do {
             login = try await daemon.viewerLogin(repoPath: repoPath)
@@ -645,16 +751,19 @@ struct WorkspaceProcessor: Sendable {
            PullRequestReview.stoppedAtUsageLimit(reviews, by: login, logWrittenAt: logModified),
            await daemon.claimUsageLimitRecovery(issueId: LinearIssue.ID(rawValue: pending.issueId), logModified: logModified) {
             log("\(pending.identifier)'s last agent stopped at the Claude usage limit; queuing its reviews on \(pullRequest.url) again")
-            await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
+            await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace, comments: linear)
             return .queued
         }
         let unaddressed = PullRequestFeedback.unaddressed(
             reviews: reviews, comments: comments, by: login, after: handledThrough)
-        guard !unaddressed.isEmpty else { return .none }
+        guard !unaddressed.isEmpty || linear != nil else { return .none }
         let reviewCount = unaddressed.filter { $0.kind == .review }.count
-        log("\(pending.identifier) has \(reviewCount) new review(s) and \(unaddressed.count - reviewCount) new comment(s) "
-            + "from \(login) on \(pullRequest.url)")
-        await daemon.enqueueReview(of: pending, pullRequest: pullRequest, feedback: unaddressed, workspace: workspace)
+        var found = "\(reviewCount) new review(s) and \(unaddressed.count - reviewCount) new comment(s) from \(login) on \(pullRequest.url)"
+        if let linear { found += ", and \(linear.fresh.count) new comment(s) from the owner in Linear" }
+        log("\(pending.identifier) has \(found)")
+        await daemon.enqueueReview(
+            of: pending, pullRequest: pullRequest, feedback: unaddressed.isEmpty ? nil : unaddressed, workspace: workspace,
+            comments: linear)
         return .queued
     }
 
