@@ -81,7 +81,7 @@ struct StateTests {
         ), workspace: "w")
         state.awaitMerge(PendingMerge(
             issueId: "SL-3", identifier: "SL-3", branchName: "c",
-            reviewsHandledThrough: Date(timeIntervalSince1970: 1_700_000_200)
+            reviewsHandledThrough: Date(timeIntervalSince1970: 1_700_000_200), conflictAttempt: nil, stack: nil
         ), workspace: "w")
         try state.save(to: url)
 
@@ -107,7 +107,7 @@ struct StateTests {
         let run = AgentRun(issueId: "SL-1", identifier: "SL-1", branchName: "b", sessionId: "s")
         state.awaitMerge(PendingMerge(run), workspace: "w")
         #expect(state.pendingMerges(workspace: "w") == [
-            PendingMerge(issueId: "SL-1", identifier: "SL-1", branchName: "b"),
+            PendingMerge(issueId: "SL-1", identifier: "SL-1", branchName: "b", reviewsHandledThrough: nil, conflictAttempt: nil, stack: nil),
         ])
         #expect(state.pendingMerges(workspace: "other").isEmpty)
 
@@ -136,7 +136,7 @@ struct StateTests {
         """#
         let state = try State.decoded(from: Data(json.utf8))
         #expect(state.pendingMerges(workspace: "w") == [
-            PendingMerge(issueId: "SL-1", identifier: "SL-1", branchName: "b"),
+            PendingMerge(issueId: "SL-1", identifier: "SL-1", branchName: "b", reviewsHandledThrough: nil, conflictAttempt: nil, stack: nil),
         ])
         #expect(state.pendingMerges(workspace: "w").first?.reviewsHandledThrough == nil)
     }
@@ -146,7 +146,7 @@ struct StateTests {
     @Test("Starting a review moves the issue from its merge watch to a run, keeping its links")
     func startReview() {
         var state = State()
-        state.awaitMerge(PendingMerge(issueId: "SL-1", identifier: "SL-1", branchName: "b"), workspace: "w")
+        state.awaitMerge(PendingMerge(issueId: "SL-1", identifier: "SL-1", branchName: "b", reviewsHandledThrough: nil, conflictAttempt: nil, stack: nil), workspace: "w")
         state.recordLinkedPullRequest("https://github.com/o/r/pull/1", issueId: "SL-1", workspace: "w")
         let run = AgentRun(
             issueId: "SL-1", identifier: "SL-1", branchName: "b", sessionId: "s",
@@ -222,7 +222,7 @@ struct StateTests {
         var state = State()
         state.markProcessed("SL-1", workspace: "w")
         state.recordRun(AgentRun(issueId: "SL-2", identifier: "SL-2", branchName: "b", sessionId: "s"), workspace: "w")
-        state.awaitMerge(PendingMerge(issueId: "SL-3", identifier: "SL-3", branchName: "c"), workspace: "w")
+        state.awaitMerge(PendingMerge(issueId: "SL-3", identifier: "SL-3", branchName: "c", reviewsHandledThrough: nil, conflictAttempt: nil, stack: nil), workspace: "w")
         #expect(state.handledIssueIds(workspace: "w") == ["SL-1", "SL-2", "SL-3"])
         #expect(state.handledIssueIds(workspace: "other").isEmpty)
     }

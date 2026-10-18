@@ -35,6 +35,9 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// Set when the run's session stopped at the Claude usage limit, until it
     /// launches again. Such a run waits out the pause, then goes first.
     var usageLimited: Bool?
+    /// The pull request the issue's work is stacked on, for an issue started
+    /// on top of its blocker's open pull request.
+    var stack: StackBase?
 
     /// Waiting for a free slot: recorded, but not launched, or launched and
     /// since requeued after an interruption.
@@ -283,6 +286,22 @@ struct State: Codable, Sendable {
 
     func lastPollTimestamp(workspace: String) -> Date {
         workspaces[workspace]?.lastPollTimestamp ?? .distantPast
+    }
+
+    /// The merge watch of the issue whose branch is `branch`, if any.
+    func pendingMerge(branch: String, workspace: String) -> PendingMerge? {
+        workspaces[workspace]?.pendingMerges.values.first { $0.branchName == branch }
+    }
+
+    /// The merge watches of the workspace's issues by identifier, for the
+    /// blockers an issue might stack on.
+    func pendingMergesByIdentifier(workspace: String) -> [LinearIssue.Identifier: PendingMerge] {
+        Dictionary(pendingMerges(workspace: workspace).map { ($0.identifier, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// Records what the issue's pull request is stacked on now.
+    mutating func updateStack(_ stack: StackBase?, issueId: String, workspace: String) {
+        workspaces[workspace]?.pendingMerges[issueId]?.stack = stack
     }
 
     /// Replaces the workspace's waiting issues with those of the latest poll,

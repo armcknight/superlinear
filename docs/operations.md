@@ -70,13 +70,15 @@ Agents' builds fill the disk fast: a SwiftPM `.build` directory or an Xcode Deri
 
 | Section | Meaning |
 | --- | --- |
-| Awaiting review | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, agent addressing review, or agent resolving conflicts — whether it conflicts with its base branch, the CI state, and the URL. |
-| Draft pull requests | The same, for drafts, with the CI state. |
+| Awaiting review | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, agent addressing review, or agent resolving conflicts — whether it conflicts with its base branch, the CI state, and the URL. A pull request that targets another listed one's branch is listed under it, indented, with "stacked on #n": see [Stacks](lifecycle.md#stacks). |
+| Draft pull requests | The same, for drafts, with the CI state. A draft the daemon made because the pull request below it was closed without a merge says so, and asks for a decision. |
 | Running | An agent works on the issue now. Shows its pid and log. |
 | Addressing review | An agent addresses your review of the issue's pull request, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
 | Resolving conflicts | An agent merges the base branch into the branch of the issue's pull request, which conflicts with it, or is queued to. Shows the pull request, and the pid and log once it runs. |
 | Interrupted | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
 | Queued | Waiting for a free agent slot, or for a pause at the Claude usage limit to end. A session the limit stopped says so; it resumes first. |
+| Blocked | Waiting for the issues blocking it to be completed or canceled, as of the daemon's last poll, with its open blockers. Also an issue whose pull request is [stacked](lifecycle.md#stacks) on one closed without a merge: its own pull request is a draft until you decide. |
+| Needs human | A label in `humanLabels` keeps agents off it, as of the daemon's last poll, with the labels. |
 | Open pull requests | The agent finished and its pull request is open. Shown only when open pull requests could not be listed for review; otherwise they appear above. |
 | Merged, issue not done | The pull request is merged, but the Linear issue is not in a completed state. |
 | Finished without a pull request | The agent ended, but no pull request is open or merged, and the issue is still open. |

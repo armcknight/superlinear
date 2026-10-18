@@ -13,6 +13,7 @@ struct WorkspaceConfig: Decodable, Sendable {
     static let defaultReadyStates: [LinearStateType] = [.unstarted]
     static let defaultHumanLabels = ["Needs human", "Spike"]
     static let defaultProposalExpiryDays = 7
+    static let defaultMaxStackDepth: StackBase.Depth = 3
 
     let name: String
     let apiKey: String
@@ -34,10 +35,15 @@ struct WorkspaceConfig: Decodable, Sendable {
     let proposalExpiryDays: Int
     /// Planning settings.
     let planning: PlanningConfig
+    /// Whether an issue whose one unmerged blocker has an open pull request
+    /// starts on top of that pull request's branch.
+    let stacking: Bool
+    /// How many pull requests a stack may hold, the bottom one included.
+    let maxStackDepth: StackBase.Depth
 
     enum CodingKeys: String, CodingKey {
         case name, apiKey, repoPath, teamIds, pollIntervalSeconds, selection, readyStates, humanLabels
-        case autonomy, proposalExpiryDays, planning
+        case autonomy, proposalExpiryDays, planning, stacking, maxStackDepth
     }
 
     init(from decoder: Decoder) throws {
@@ -66,6 +72,9 @@ struct WorkspaceConfig: Decodable, Sendable {
         let expiry = try container.decodeIfPresent(Int.self, forKey: .proposalExpiryDays) ?? Self.defaultProposalExpiryDays
         proposalExpiryDays = max(1, expiry)
         planning = try container.decodeIfPresent(PlanningConfig.self, forKey: .planning) ?? PlanningConfig()
+        stacking = try container.decodeIfPresent(Bool.self, forKey: .stacking) ?? true
+        let depth = try container.decodeIfPresent(StackBase.Depth.self, forKey: .maxStackDepth) ?? Self.defaultMaxStackDepth
+        maxStackDepth = max(1, depth)
     }
 
     /// The Linear state types an issue may be in for an agent to start on it.

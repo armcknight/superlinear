@@ -35,6 +35,22 @@ failure to fix: do not change code for it, stop monitoring CI, and say so in the
 \(followUpInstructions)
 """
 
+/// The prompt for a run stacked on its blocker's open pull request: the
+/// autonomous prompt, with what the stack changes.
+func stackedPrompt(for stack: StackBase) -> String {
+    """
+    \(autonomousPrompt)
+
+    This issue is blocked by \(stack.identifier), whose work is in pull request #\(stack.number), \
+    \(stack.url), from the branch `\(stack.branch)`. That pull request is not merged yet and may still \
+    change. Your branch was created from `\(stack.branch)`, so its code is already here: build on it. \
+    Open your pull request against that branch, with `gh pr create --base \(stack.branch)`, not against \
+    the default branch. Do not merge the default branch into your branch, do not rebase, and do not \
+    force-push. Do not change what the lower pull request changes, unless this issue asks for it. \
+    superlinear keeps your branch up to date with `\(stack.branch)` after you finish.
+    """
+}
+
 /// The prompt for a run that answers a review on the pull request an earlier
 /// agent opened. It starts a new Claude session, so it says everything itself.
 func reviewPrompt(for review: ReviewRequest) -> String {
@@ -254,7 +270,7 @@ struct AgentRunner: Sendable {
 
     /// The prompt that starts the run's session.
     static func prompt(for run: AgentRun) -> String {
-        run.review.map(reviewPrompt) ?? run.conflict.map(conflictPrompt) ?? autonomousPrompt
+        run.review.map(reviewPrompt) ?? run.conflict.map(conflictPrompt) ?? run.stack.map(stackedPrompt) ?? autonomousPrompt
     }
 
     // MARK: Recovery
