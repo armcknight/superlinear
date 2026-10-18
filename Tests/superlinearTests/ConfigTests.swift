@@ -142,6 +142,21 @@ struct ConfigTests {
         }
     }
 
+    @Test("Linear's duplicate state type decodes, and one Linear adds later is unknown")
+    func stateTypesDecode() throws {
+        let types = try JSONDecoder().decode([LinearStateType].self, from: Data(#"["duplicate", "archived", "started"]"#.utf8))
+        #expect(types == [.duplicate, .unknown, .started])
+    }
+
+    @Test("A ready state that Linear does not have is an error, though decoding it elsewhere is not")
+    func unknownTypeInReadyStatesThrows() {
+        #expect(throws: DecodingError.self) {
+            _ = try decode("""
+            {"workspaces": [{"name": "w", "apiKey": "k", "repoPath": "~/r", "readyStates": ["archived"]}]}
+            """)
+        }
+    }
+
     @Test("A ready state that is not a Linear state type is an error")
     func unknownReadyStateThrows() {
         #expect(throws: DecodingError.self) {

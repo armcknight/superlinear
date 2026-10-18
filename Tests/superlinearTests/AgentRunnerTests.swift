@@ -57,6 +57,29 @@ struct AgentRunnerTests {
         #expect(AgentRunner.prompt(for: run).contains("/armcknight-claude:start"))
     }
 
+    @Test("A review run's prompt lists the reviews and comments that queued it, with the comments' links")
+    func promptListsFeedback() {
+        var review = run
+        review.review = ReviewRequest(
+            number: 12, url: "https://github.com/o/r/pull/12",
+            feedback: [
+                PullRequestFeedback(kind: .review, at: Date(timeIntervalSince1970: 1_791_720_000)),
+                PullRequestFeedback(
+                    kind: .comment, at: Date(timeIntervalSince1970: 1_791_723_600),
+                    url: "https://github.com/o/r/pull/12#issuecomment-1"),
+            ])
+        let prompt = AgentRunner.prompt(for: review)
+        #expect(prompt.contains("- A review submitted at 2026-10-11T12:00:00Z\n"))
+        #expect(prompt.contains(
+            "- A comment in the conversation made at 2026-10-11T13:00:00Z: https://github.com/o/r/pull/12#issuecomment-1"))
+        #expect(prompt.contains("--json reviews,comments"))
+        #expect(prompt.contains("Do not reply to the review or post comments on GitHub"))
+        // A run from before comments were followed says nothing of them.
+        review.review?.feedback = nil
+        #expect(!AgentRunner.prompt(for: review).contains("These came in"))
+        #expect(AgentRunner.prompt(for: review).contains("commented on it. Your task:"))
+    }
+
     // The order matters: a status means the agent ended, whatever else is true,
     // and a live agent must never be relaunched alongside itself.
     @Test("Recovery prefers a status, then a live process, then the queue")
@@ -128,6 +151,40 @@ struct AgentRunnerTests {
         FileManager.default.createFile(atPath: "\(project)/abc.jsonl", contents: Data())
         #expect(runner.claudeSessionExists("abc"))
         #expect(!runner.claudeSessionExists("other"))
+    }
+
+    @Test("The latest Claude session of a worktree is found by its project directory")
+    func latestClaudeSession() throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let runner = AgentRunner(home: home, environment: [:])
+        let worktree = "/Users/me/repo/worktrees/linear/spl-1-a.b"
+        #expect(AgentRunner.claudeProjectName(worktree) == "-Users-me-repo-worktrees-linear-spl-1-a-b")
+        #expect(runner.latestClaudeSession(inWorktree: worktree) == nil)
+
+        let project = "\(home)/.claude/projects/-Users-me-repo-worktrees-linear-spl-1-a-b"
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: "\(project)/new", withIntermediateDirectories: true)
+        fm.createFile(atPath: "\(project)/old.jsonl", contents: Data())
+        fm.createFile(atPath: "\(project)/new.jsonl", contents: Data())
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 100)], ofItemAtPath: "\(project)/old.jsonl")
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 200)], ofItemAtPath: "\(project)/new.jsonl")
+        #expect(runner.latestClaudeSession(inWorktree: worktree) == "new")
+    }
+
+    @Test("The usage limit is read from the end of an issue's agent log")
+    func usageLimitFromLog() throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let runner = AgentRunner(home: home, environment: [:])
+        let logs = runner.logsDirectory
+        try FileManager.default.createDirectory(atPath: logs, withIntermediateDirectories: true)
+        try "You've hit your session limit · resets 4:30pm (America/Anchorage)\n".write(
+            toFile: "\(logs)/SPL-1.log", atomically: true, encoding: .utf8)
+        try "All done.\n".write(toFile: "\(logs)/SPL-2.log", atomically: true, encoding: .utf8)
+        #expect(runner.usageLimitHit(identifier: "SPL-1", now: Date()) != nil)
+        #expect(runner.usageLimitHit(identifier: "SPL-2", now: Date()) == nil)
+        #expect(runner.usageLimitHit(identifier: "SPL-3", now: Date()) == nil)
     }
 
     // Runs the real wrapper against a stand-in `work`, to check that the exit

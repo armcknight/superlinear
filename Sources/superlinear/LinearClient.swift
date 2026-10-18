@@ -2,8 +2,19 @@ import Foundation
 import Tagged
 
 /// The type of a Linear workflow state. Every state a team defines has one.
+/// A type Linear adds later decodes as `unknown`, so it does not fail the
+/// query that reads it.
 enum LinearStateType: String, Codable, Sendable, CaseIterable {
-    case triage, backlog, unstarted, started, completed, canceled
+    case triage, backlog, unstarted, started, completed, canceled, duplicate, unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = LinearStateType(rawValue: raw) ?? .unknown
+    }
+
+    /// The types of states an issue is done in, whether it was done, given
+    /// up or found to repeat another.
+    static let closed: [LinearStateType] = [.completed, .canceled, .duplicate]
 }
 
 /// An issue an agent may start on. The fields after `team` decide whether
@@ -74,7 +85,7 @@ struct LinearIssue: Codable, Sendable, Equatable {
     /// completed nor canceled.
     var openBlockers: [LinearIssue.Identifier] {
         (inverseRelations?.nodes ?? [])
-            .filter { $0.type == "blocks" && !["completed", "canceled"].contains($0.issue.state.type) }
+            .filter { $0.type == "blocks" && !LinearStateType.closed.map(\.rawValue).contains($0.issue.state.type) }
             .map(\.issue.identifier)
     }
 }
@@ -169,7 +180,7 @@ struct LinearIssueStatus: Codable, Sendable, Equatable {
     }
 
     var isCompleted: Bool { state.type == "completed" }
-    var isClosed: Bool { isCompleted || state.type == "canceled" }
+    var isClosed: Bool { LinearStateType.closed.map(\.rawValue).contains(state.type) }
 }
 
 enum LinearClientError: Error {
@@ -280,14 +291,14 @@ struct LinearClient: Sendable {
     /// changing nothing, when the issue is already completed or canceled, as
     /// Linear's GitHub integration may have done on the merge.
     func completeIssue(id: String) async throws -> Bool {
-        try await move(id: id, toFirst: "completed", unlessIn: ["completed", "canceled"]) != nil
+        try await move(id: id, toFirst: "completed", unlessIn: ["completed", "canceled", "duplicate"]) != nil
     }
 
     /// Moves the issue to its team's first started state, such as In
     /// Progress. Returns false, changing nothing, when the issue is already
     /// started, completed or canceled.
     func startIssue(id: String) async throws -> Bool {
-        try await move(id: id, toFirst: "started", unlessIn: ["started", "completed", "canceled"]) != nil
+        try await move(id: id, toFirst: "started", unlessIn: ["started", "completed", "canceled", "duplicate"]) != nil
     }
 
     /// Moves the issue to its team's first state of type `type`, unless its

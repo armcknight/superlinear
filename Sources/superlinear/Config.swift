@@ -58,6 +58,13 @@ struct WorkspaceConfig: Decodable, Sendable {
         pollIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .pollIntervalSeconds) ?? 60
         selection = try container.decodeIfPresent(IssueSelection.self, forKey: .selection) ?? .new
         readyStates = try container.decodeIfPresent([LinearStateType].self, forKey: .readyStates) ?? Self.defaultReadyStates
+        // A state type Linear has not got, such as a typo, would make no
+        // issue ready, rather than failing as other config errors do.
+        if readyStates.contains(.unknown) {
+            throw DecodingError.dataCorruptedError(
+                forKey: .readyStates, in: container,
+                debugDescription: "readyStates takes Linear state types: \(LinearStateType.allCases.filter { $0 != .unknown }.map(\.rawValue).joined(separator: ", "))")
+        }
         humanLabels = try container.decodeIfPresent([String].self, forKey: .humanLabels) ?? Self.defaultHumanLabels
         githubIssues = try container.decodeIfPresent(Bool.self, forKey: .githubIssues) ?? false
         // A misspelt kind would otherwise leave its default in force unseen.

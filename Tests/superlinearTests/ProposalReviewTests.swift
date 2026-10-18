@@ -362,6 +362,14 @@ struct ProposalAnswerTests {
         #expect(await linear.writes.filter { $0.hasPrefix("create") }.count == 1)
     }
 
+    @Test("A proposed issue marked a duplicate is rejected")
+    func duplicateFromTriage() async throws {
+        let linear = FakeLinear()
+        let posted = try await poster(linear).post(newIssue(), now: now).proposal
+        await linear.move(posted.post!.issueId, to: .duplicate)
+        #expect(try await answer(posted, linear: linear) == .reject(reason: "marked a duplicate in Linear"))
+    }
+
     @Test("Declining a proposed issue rejects it, so the same issue is not proposed again")
     func declineFromTriage() async throws {
         let linear = FakeLinear()

@@ -328,6 +328,7 @@ struct WorkspaceProcessor: Sendable {
         }
 
         let tracked = await daemon.trackedIssueIds(workspace: workspace.name)
+        await requeueStoppedAtUsageLimit(issues: issues, pullRequests: pullRequests, tracked: tracked, repoPath: listing.repoPath)
         for item in StartedIssueSweep.plan(issues: issues, pullRequests: pullRequests, excluding: tracked) {
             await link(item.pullRequests, issueId: item.issue.id, identifier: item.issue.identifier, client: client)
             guard let merged = item.merged else { continue }
@@ -342,6 +343,29 @@ struct WorkspaceProcessor: Sendable {
             } catch {
                 await logOnce("Could not mark \(item.issue.identifier) done in Linear: \(error)")
             }
+        }
+    }
+
+    /// Queues again the started issues whose agents the Claude usage limit
+    /// stopped before the daemon could pause them, each in its worktree's
+    /// latest Claude session when it has one.
+    private func requeueStoppedAtUsageLimit(
+        issues: [LinearIssueStatus], pullRequests: [PullRequest], tracked: Set<String>, repoPath: String
+    ) async {
+        let runner = AgentRunner()
+        let now = Date()
+        let stopped = StartedIssueSweep.stoppedAtUsageLimit(
+            issues: issues, pullRequests: pullRequests,
+            processed: await daemon.processedIssueIds(workspace: workspace.name),
+            tracked: Set(tracked.map(LinearIssue.ID.init(rawValue:)))
+        ) { runner.usageLimitHit(identifier: $0, now: now) != nil }
+        for issue in stopped {
+            guard await daemon.claimUsageLimitRecovery(
+                issueId: LinearIssue.ID(rawValue: issue.id), logModified: runner.agentLogModified(identifier: issue.identifier))
+            else { continue }
+            let session = FollowUpFile.worktree(branch: issue.branchName, repoPath: repoPath)
+                .flatMap(runner.latestClaudeSession(inWorktree:))
+            await daemon.requeueStoppedAtUsageLimit(issue, sessionId: session, workspace: workspace)
         }
     }
 
@@ -630,7 +654,8 @@ struct WorkspaceProcessor: Sendable {
     }
 
     /// Queues an agent for the open pull request when `gh`'s own user has
-    /// reviewed it since the issue's last agent started.
+    /// reviewed it, or commented in its conversation, since the issue's last
+    /// agent started.
     private func checkReviews(of pending: PendingMerge, pullRequests: [PullRequest], repoPath: String) async -> ReviewCheck {
         guard let pullRequest = pullRequests.first(where: { $0.state == .open }) else { return .none }
         // A watch from before reviews were followed counts from the pull
@@ -649,19 +674,35 @@ struct WorkspaceProcessor: Sendable {
         }
         let handledThrough = await daemon.reviewsHandledThrough(
             pending, lastCommit: lastCommit, workspace: workspace.name)
-        guard let reviews = pullRequest.reviews, !reviews.isEmpty else { return .none }
+        let reviews = pullRequest.reviews ?? []
+        let comments = pullRequest.comments ?? []
+        guard !reviews.isEmpty || !comments.isEmpty else { return .none }
         let login: String
         do {
             login = try await daemon.viewerLogin(repoPath: repoPath)
         } catch {
             if await pausedForRateLimit(error, repoPath: repoPath) { return .failed }
-            await logOnce("Could not find the GitHub user whose reviews to address: \(error)")
+            await logOnce("Could not find the GitHub user whose reviews and comments to address: \(error)")
             return .failed
         }
-        let unaddressed = PullRequestReview.unaddressed(reviews, by: login, after: handledThrough)
+        // A daemon from before the Claude pause took the reviews of an agent
+        // that the usage limit stopped as addressed. One more agent reads them.
+        let runner = AgentRunner()
+        let logModified = runner.agentLogModified(identifier: pending.identifier)
+        if runner.usageLimitHit(identifier: pending.identifier, now: Date()) != nil,
+           PullRequestReview.stoppedAtUsageLimit(reviews, by: login, logWrittenAt: logModified),
+           await daemon.claimUsageLimitRecovery(issueId: LinearIssue.ID(rawValue: pending.issueId), logModified: logModified) {
+            log("\(pending.identifier)'s last agent stopped at the Claude usage limit; queuing its reviews on \(pullRequest.url) again")
+            await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
+            return .queued
+        }
+        let unaddressed = PullRequestFeedback.unaddressed(
+            reviews: reviews, comments: comments, by: login, after: handledThrough)
         guard !unaddressed.isEmpty else { return .none }
-        log("\(pending.identifier) has \(unaddressed.count) new review(s) from \(login) on \(pullRequest.url)")
-        await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
+        let reviewCount = unaddressed.filter { $0.kind == .review }.count
+        log("\(pending.identifier) has \(reviewCount) new review(s) and \(unaddressed.count - reviewCount) new comment(s) "
+            + "from \(login) on \(pullRequest.url)")
+        await daemon.enqueueReview(of: pending, pullRequest: pullRequest, feedback: unaddressed, workspace: workspace)
         return .queued
     }
 
@@ -691,9 +732,9 @@ struct WorkspaceProcessor: Sendable {
     }
 
     private enum ReviewCheck {
-        /// An agent is queued to address new reviews.
+        /// An agent is queued to address new reviews or comments.
         case queued
-        /// No review needs an agent.
+        /// No review or comment needs an agent.
         case none
         /// The reviews could not be checked; tried again next poll.
         case failed

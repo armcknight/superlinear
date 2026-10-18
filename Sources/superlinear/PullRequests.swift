@@ -74,6 +74,17 @@ struct PullRequestReview: Codable, Sendable, Equatable {
     }
 
     /// The reviews by `login`, submitted after `date`, that ask for changes.
+    /// Whether `login`'s latest review asks for changes and came before the
+    /// last agent's log was written: the agent that the usage limit stopped
+    /// was answering it.
+    static func stoppedAtUsageLimit(_ reviews: [PullRequestReview], by login: String, logWrittenAt: Date?) -> Bool {
+        guard let logWrittenAt else { return false }
+        let latest = reviews.filter { $0.author?.login == login && $0.submittedAt != nil }
+            .max { $0.submittedAt! < $1.submittedAt! }
+        guard let latest, latest.asksForChanges, let submittedAt = latest.submittedAt else { return false }
+        return submittedAt <= logWrittenAt
+    }
+
     static func unaddressed(_ reviews: [PullRequestReview], by login: String, after date: Date) -> [PullRequestReview] {
         reviews.filter { review in
             guard review.author?.login == login, review.asksForChanges,
@@ -81,6 +92,57 @@ struct PullRequestReview: Codable, Sendable, Equatable {
             else { return false }
             return submittedAt > date
         }
+    }
+}
+
+/// A comment in a pull request's conversation, outside any review, as
+/// `gh pr list --json comments` reports it. GitHub keeps it as a comment on
+/// the issue the pull request is.
+struct PullRequestComment: Codable, Sendable, Equatable {
+    let author: PullRequestReview.Author?
+    let body: String
+    let createdAt: Date?
+    let url: String?
+
+    /// The comments by `login`, made after `date`, with something written.
+    static func unaddressed(_ comments: [PullRequestComment], by login: String, after date: Date) -> [PullRequestComment] {
+        comments.filter { comment in
+            guard comment.author?.login == login,
+                  !comment.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let createdAt = comment.createdAt
+            else { return false }
+            return createdAt > date
+        }
+    }
+}
+
+/// What the owner wrote on a pull request since the issue's last agent
+/// started: reviews, and comments in its conversation. A reply in the thread
+/// of an earlier review is a review of its own on GitHub, with its own
+/// submission time, so it is among the reviews.
+struct PullRequestFeedback: Codable, Sendable, Equatable {
+    enum Kind: String, Codable, Sendable {
+        case review
+        case comment
+    }
+
+    var kind: Kind
+    var at: Date
+    /// A link to it, where GitHub gives one: comments have one, reviews not.
+    var url: String?
+
+    /// The reviews and comments by `login` from after `date` that ask
+    /// for something, oldest first.
+    static func unaddressed(
+        reviews: [PullRequestReview], comments: [PullRequestComment], by login: String, after date: Date
+    ) -> [PullRequestFeedback] {
+        let reviews = PullRequestReview.unaddressed(reviews, by: login, after: date).compactMap { review in
+            review.submittedAt.map { PullRequestFeedback(kind: .review, at: $0) }
+        }
+        let comments = PullRequestComment.unaddressed(comments, by: login, after: date).compactMap { comment in
+            comment.createdAt.map { PullRequestFeedback(kind: .comment, at: $0, url: comment.url) }
+        }
+        return (reviews + comments).sorted { $0.at < $1.at }
     }
 }
 
@@ -108,6 +170,8 @@ struct PullRequest: Codable, Sendable, Equatable {
     var mergedAt: Date? = nil
     /// Its reviews, when the listing asked for them.
     var reviews: [PullRequestReview]? = nil
+    /// The comments in its conversation, when the listing asked for them.
+    var comments: [PullRequestComment]? = nil
     /// The commit its branch points at, when the listing asked for it.
     var headRefOid: String? = nil
     /// Lines added and removed, and files changed, when the listing asked.
@@ -171,7 +235,7 @@ struct PullRequestChecker: Sendable {
     }
 
     static let listOpenArguments = [
-        "gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", "number,url,state,headRefName,headRefOid,reviews,mergeable,baseRefName",
+        "gh", "pr", "list", "--state", "open", "--limit", "1000", "--json", "number,url,state,headRefName,headRefOid,reviews,comments,mergeable,baseRefName",
     ]
 
     static let viewerArguments = ["gh", "api", "user", "--jq", ".login"]
@@ -243,7 +307,7 @@ struct PullRequestChecker: Sendable {
     }
 
     /// The repository's open pull requests, newest 1,000, with their
-    /// reviews, which cost GitHub more to list than the rest, head commits,
+    /// reviews and conversation comments, which cost GitHub more to list than the rest, head commits,
     /// base branches and whether they conflict with them. Not their commit lists: those cost so much that GitHub
     /// refuses a page of 100 pull requests as over the rate limit.
     func openPullRequestsWithReviews(repoPath: String) async throws -> [PullRequest] {

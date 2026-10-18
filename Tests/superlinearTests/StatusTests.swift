@@ -243,6 +243,26 @@ struct StatusTests {
         """)
     }
 
+    @Test("A pull request with feedback waiting for an agent says so under Waiting on you")
+    func newFeedback() {
+        let pullRequest = ReviewablePullRequest(
+            number: 4, url: "https://github.com/o/r/pull/4", title: "Four", headRefName: "linear/sl-1",
+            isDraft: false, reviewDecision: nil, latestReviews: nil, statusCheckRollup: nil
+        )
+        let report = WorkspaceReport(
+            name: "w", entries: [],
+            reviews: [ReviewEntry(issue: issue("SL-1"), pullRequest: pullRequest)],
+            newFeedback: [4],
+            warnings: []
+        )
+        #expect(report.rendered() == """
+        w
+          Waiting on you
+            SL-1  #4 Four
+                  new feedback · no CI · https://github.com/o/r/pull/4
+        """)
+    }
+
     @Test("A filtered report keeps the note on a draft whose lower pull request was closed")
     func filteredKeepsClosedBase() {
         let draft = ReviewablePullRequest(

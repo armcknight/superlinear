@@ -75,8 +75,9 @@ func stackedPrompt(for stack: StackBase) -> String {
     """
 }
 
-/// The prompt for a run that answers a review on the pull request an earlier
-/// agent opened. It starts a new Claude session, so it says everything itself.
+/// The prompt for a run that answers a review, or a comment in the
+/// conversation, on the pull request an earlier agent opened. It starts a new
+/// Claude session, so it says everything itself.
 /// `gitHubIssue` is the GitHub issue's number, when the run comes from GitHub.
 func reviewPrompt(for review: ReviewRequest, gitHubIssue: Int? = nil) -> String {
     let source = gitHubIssue.map { "GitHub issue #\($0)" } ?? "a Linear issue"
@@ -89,13 +90,14 @@ func reviewPrompt(for review: ReviewRequest, gitHubIssue: Int? = nil) -> String 
     An earlier agent already implemented the issue on this branch and opened pull request \
     #\(review.number): \(review.url)
 
-    The maintainer has since reviewed it. Your task:
+    The maintainer has since reviewed it or commented on it. \(feedbackList(review.feedback ?? []))Your task:
     1. \(readIssue), and the branch's \
     commits against the base branch, to learn what was done.
     2. Read every review on the pull request and every comment in them, including the inline \
-    comments on lines of code: `gh pr view \(review.number) --json reviews` and \
-    `gh api repos/{owner}/{repo}/pulls/\(review.number)/comments`. Work out which review points \
-    are not yet addressed by the commits on the branch.
+    comments on lines of code and the replies in their threads, and every comment in the pull \
+    request's conversation: `gh pr view \(review.number) --json reviews,comments` and \
+    `gh api repos/{owner}/{repo}/pulls/\(review.number)/comments`. Work out which points from the \
+    maintainer are not yet addressed by the commits on the branch.
     3. Implement whatever is needed to satisfy each of those points. If a point asks a question \
     rather than for a change, answer it in the pull request description.
     4. Run /armcknight-claude:commit to stage and commit your changes, then push the branch.
@@ -111,6 +113,19 @@ func reviewPrompt(for review: ReviewRequest, gitHubIssue: Int? = nil) -> String 
 
     \(followUpInstructions)
     """
+}
+
+/// The reviews and comments that queued a review run, as lines for its
+/// prompt, or nothing when the run does not know them.
+private func feedbackList(_ feedback: [PullRequestFeedback]) -> String {
+    guard !feedback.isEmpty else { return "" }
+    let formatter = ISO8601DateFormatter()
+    let lines = feedback.map { item in
+        let what = item.kind == .review ? "A review submitted" : "A comment in the conversation made"
+        return "- \(what) at \(formatter.string(from: item.at))" + (item.url.map { ": \($0)" } ?? "")
+    }
+    return "These came in since the last agent started, so answer them first:\n"
+        + lines.joined(separator: "\n") + "\n\n"
 }
 
 /// The prompt for a run that merges the base branch into the branch of a pull
@@ -367,7 +382,18 @@ struct AgentRunner: Sendable {
     /// did: the end of its log, written by `work`, which starts the log
     /// afresh for a new session and appends to it for a resumed one.
     func usageLimitHit(for run: AgentRun, now: Date) -> ClaudeUsageLimit.Hit? {
-        guard let handle = FileHandle(forReadingAtPath: agentLog(for: run)) else { return nil }
+        usageLimitHit(identifier: run.identifier, now: now)
+    }
+
+    /// When the last agent for `identifier` last wrote its log.
+    func agentLogModified(identifier: LinearIssue.Identifier) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: "\(logsDirectory)/\(identifier).log"))?[.modificationDate] as? Date
+    }
+
+    /// The Claude usage limit that the last agent for `identifier` stopped
+    /// at, from the end of its log.
+    func usageLimitHit(identifier: LinearIssue.Identifier, now: Date) -> ClaudeUsageLimit.Hit? {
+        guard let handle = FileHandle(forReadingAtPath: "\(logsDirectory)/\(identifier).log") else { return nil }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size > Self.logTailSize ? size - Self.logTailSize : 0)
@@ -413,6 +439,26 @@ struct AgentRunner: Sendable {
     /// Whether Claude saved a transcript for the session, without which it
     /// cannot be resumed. Claude keeps one file per session, named by its ID,
     /// under a directory per working directory.
+    /// The newest Claude session started in `worktree`: Claude keeps each
+    /// directory's transcripts in a project directory named after its path,
+    /// with every character but ASCII letters and digits made a hyphen.
+    func latestClaudeSession(inWorktree worktree: String) -> String? {
+        let configDirectory = environment["CLAUDE_CONFIG_DIR"] ?? "\(home)/.claude"
+        let project = "\(configDirectory)/projects/\(Self.claudeProjectName(worktree))"
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: project) else { return nil }
+        let transcripts = names.filter { $0.hasSuffix(".jsonl") }.compactMap { name -> (String, Date)? in
+            guard let modified = try? fm.attributesOfItem(atPath: "\(project)/\(name)")[.modificationDate] as? Date
+            else { return nil }
+            return (String(name.dropLast(".jsonl".count)), modified)
+        }
+        return transcripts.max { $0.1 < $1.1 }?.0
+    }
+
+    static func claudeProjectName(_ path: String) -> String {
+        String(path.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+    }
+
     func claudeSessionExists(_ sessionId: String) -> Bool {
         let configDirectory = environment["CLAUDE_CONFIG_DIR"] ?? "\(home)/.claude"
         let projects = "\(configDirectory)/projects"

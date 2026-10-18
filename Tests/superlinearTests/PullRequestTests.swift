@@ -113,6 +113,85 @@ struct PullRequestTests {
         #expect(PullRequestReview.unaddressed(reviews, by: "someone", after: .distantPast).isEmpty)
     }
 
+    private func comment(_ login: String, _ body: String, at seconds: TimeInterval?, url: String? = nil) -> PullRequestComment {
+        PullRequestComment(
+            author: .init(login: login), body: body,
+            createdAt: seconds.map(Date.init(timeIntervalSince1970:)), url: url
+        )
+    }
+
+    @Test("Open pull requests are listed with their conversation comments")
+    func listsComments() throws {
+        let fields = PullRequestChecker.listOpenArguments.last?.split(separator: ",") ?? []
+        #expect(fields.contains("comments"))
+        let json = #"""
+        [{"number":5,"state":"OPEN","url":"https://github.com/o/r/pull/5","comments":[
+          {"id":"IC_1","author":{"login":"me"},"authorAssociation":"OWNER","body":"What if we had a heroku template?",
+           "createdAt":"2026-10-11T12:00:00Z","includesCreatedEdit":false,"isMinimized":false,"minimizedReason":"",
+           "reactionGroups":[],"url":"https://github.com/o/r/pull/5#issuecomment-1","viewerDidAuthor":true}
+        ]}]
+        """#
+        let comments = try #require(try PullRequestChecker.decodePullRequests(Data(json.utf8)).first?.comments)
+        #expect(comments == [comment(
+            "me", "What if we had a heroku template?", at: 1_791_720_000, url: "https://github.com/o/r/pull/5#issuecomment-1")])
+    }
+
+    // A comment that slips through starts an agent that pushes to the branch,
+    // so the rules are those for reviews: the signed-in user's, written after
+    // the last agent started, with something in them.
+    @Test("Only new comments from the signed-in user with something written count")
+    func unaddressedComments() {
+        let comments = [
+            comment("me", "Why this order?", at: 200, url: "c1"),
+            comment("me", " \n", at: 300),
+            comment("me", "Before the agent", at: 100),
+            comment("me", "Exactly at the start", at: 150),
+            comment("someone", "Me too", at: 400),
+            comment("github-actions[bot]", "Screenshots", at: 500),
+            comment("me", "No date", at: nil),
+        ]
+        let found = PullRequestComment.unaddressed(comments, by: "me", after: Date(timeIntervalSince1970: 150))
+        #expect(found == [comments[0]])
+        #expect(PullRequestComment.unaddressed(comments, by: "someone", after: Date(timeIntervalSince1970: 500)).isEmpty)
+    }
+
+    @Test("A review and a comment together are one list of feedback, oldest first")
+    func feedback() {
+        let found = PullRequestFeedback.unaddressed(
+            reviews: [review("me", "CHANGES_REQUESTED", body: "Fix it", at: 300), review("someone", "COMMENTED", at: 400)],
+            comments: [comment("me", "And this?", at: 200, url: "c1"), comment("me", "Old", at: 50)],
+            by: "me", after: Date(timeIntervalSince1970: 100)
+        )
+        #expect(found == [
+            PullRequestFeedback(kind: .comment, at: Date(timeIntervalSince1970: 200), url: "c1"),
+            PullRequestFeedback(kind: .review, at: Date(timeIntervalSince1970: 300)),
+        ])
+        #expect(PullRequestFeedback.unaddressed(reviews: [], comments: [], by: "me", after: .distantPast).isEmpty)
+    }
+
+    // Replying in the thread of an earlier review, outside a new review,
+    // makes GitHub submit a review of its own: commented, with no body, at
+    // the reply's time. It must not be passed over for having no body.
+    @Test("A reply in an old review's thread counts as a new review")
+    func threadReply() {
+        let reviews = [review("me", "COMMENTED", body: "Look at these", at: 100), review("me", "COMMENTED", at: 300)]
+        let found = PullRequestFeedback.unaddressed(
+            reviews: reviews, comments: [], by: "me", after: Date(timeIntervalSince1970: 200))
+        #expect(found == [PullRequestFeedback(kind: .review, at: Date(timeIntervalSince1970: 300))])
+    }
+
+    @Test("The latest change request from before the stopped agent's log is answered again")
+    func reviewsStoppedAtUsageLimit() {
+        let asked = [review("me", "APPROVED", at: 100), review("me", "CHANGES_REQUESTED", body: "Fix it", at: 200)]
+        let log = Date(timeIntervalSince1970: 300)
+        #expect(PullRequestReview.stoppedAtUsageLimit(asked, by: "me", logWrittenAt: log))
+        // Approved since, after the log, by someone else, or no log.
+        #expect(!PullRequestReview.stoppedAtUsageLimit(asked + [review("me", "APPROVED", at: 250)], by: "me", logWrittenAt: log))
+        #expect(!PullRequestReview.stoppedAtUsageLimit(asked, by: "me", logWrittenAt: Date(timeIntervalSince1970: 150)))
+        #expect(!PullRequestReview.stoppedAtUsageLimit(asked, by: "someone", logWrittenAt: log))
+        #expect(!PullRequestReview.stoppedAtUsageLimit(asked, by: "me", logWrittenAt: nil))
+    }
+
     @Test("A branch with no pull request is missing")
     func missing() {
         #expect(MergeStatus.of([]) == .missing)
