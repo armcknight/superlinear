@@ -183,6 +183,9 @@ struct WorkspaceReport: Sendable {
     /// daemon is tracking the issue. Nil when GitHub or Linear could not be
     /// asked, in which case open pull requests show only among the tasks.
     var reviews: [ReviewEntry]? = nil
+    /// The entries before `filtered(to:)` left any out, for the notes on
+    /// the pull requests listed for review. Nil when none were.
+    var unfilteredEntries: [TaskEntry]? = nil
     /// The agents' open and merged pull requests, for the summary.
     var pullRequestStats: [PullRequestStats] = []
     /// Local branches and worktrees no longer needed.
@@ -301,6 +304,7 @@ struct WorkspaceReport: Sendable {
     /// the pull requests could not be listed.
     func filtered(to sections: Set<StatusSection>) -> WorkspaceReport {
         var report = self
+        report.unfilteredEntries = unfilteredEntries ?? entries
         report.entries = entries.filter { sections.contains(.task($0.category)) }
         let listsReviews = sections.contains(.awaitingReview) || sections.contains(.drafts)
         report.reviews = listsReviews
@@ -328,7 +332,8 @@ struct WorkspaceReport: Sendable {
         let indent = String(repeating: " ", count: 4 + width + 2)
         // Their pull requests wait on an agent, not on a reviewer.
         var agentAt: [LinearIssue.Identifier: String] = [:]
-        for entry in entries {
+        let allEntries = unfilteredEntries ?? entries
+        for entry in allEntries {
             switch entry.category {
             case .addressingReview: agentAt[entry.identifier] = "agent addressing review"
             case .resolvingConflicts: agentAt[entry.identifier] = "agent resolving conflicts"
@@ -338,7 +343,7 @@ struct WorkspaceReport: Sendable {
 
         // Drafts whose pull request below was closed without a merge.
         var closedBases: [String: StackBase] = [:]
-        for entry in entries where entry.category == .blocked {
+        for entry in allEntries where entry.category == .blocked {
             if let url = entry.pullRequest?.url, let stack = entry.stack { closedBases[url] = stack }
         }
         for (heading, drafts) in [("Awaiting review", false), ("Draft pull requests", true)] {

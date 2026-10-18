@@ -234,6 +234,36 @@ struct StatusTests {
             SL-1  One
                   queued, https://github.com/o/r/pull/4
         """)
+        // The note follows the task the filter leaves out.
+        #expect(report.filtered(to: [.awaitingReview]).rendered() == """
+        w
+          Awaiting review
+            SL-1  #4 Four
+                  agent addressing review · no CI · https://github.com/o/r/pull/4
+        """)
+    }
+
+    @Test("A filtered report keeps the note on a draft whose lower pull request was closed")
+    func filteredKeepsClosedBase() {
+        let draft = ReviewablePullRequest(
+            number: 2, url: "https://github.com/o/r/pull/2", title: "Two", headRefName: "b-2",
+            isDraft: true, reviewDecision: nil, latestReviews: nil, statusCheckRollup: nil, baseRefName: "b-1"
+        )
+        let base = StackBase(
+            identifier: "SL-1", branch: "b-1", number: 1, url: "https://github.com/o/r/pull/1", depth: 1, baseHead: nil, drafted: true
+        )
+        let report = WorkspaceReport(
+            name: "w",
+            entries: [TaskEntry(
+                identifier: "SL-2", title: "Two", category: .blocked, detail: nil,
+                pullRequest: pullRequest(2, branch: "b-2", state: "OPEN"), stack: base
+            )],
+            reviews: [ReviewEntry(issue: issue("SL-2"), pullRequest: draft)],
+            warnings: []
+        )
+        let text = report.filtered(to: [.drafts]).rendered()
+        #expect(!text.contains("Blocked"))
+        #expect(text.contains("stacked on #1, closed without a merge: decide what becomes of it"))
     }
 
     @Test("An empty workspace says so, and warnings are shown")
