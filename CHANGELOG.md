@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without a merge makes the pull requests above it drafts, their issues
   back to Blocked, for a decision at the standup. `superlinear status`
   lists each pull request under the one it stacks on.
+- `superlinear status --status <names>` shows only the named sections,
+  comma-separated or repeated: `awaiting-review`, `drafts`, `running`,
+  `addressing-review`, `resolving-conflicts`, `interrupted`, `queued`,
+  `blocked`, `needs-human`, `open-pull-requests`, `merged`,
+  `no-pull-request`, `completed`, `closed` and `stale`. `--workspace
+  <names>` shows only the named workspaces, comma-separated or repeated,
+  instead of every configured one.
 - Pause and resume at the provider limits. When a Claude session ends at
   the Claude plan's usage limit, every Claude session pauses, in all
   workspaces, until the reset time in the message, or for an hour when it

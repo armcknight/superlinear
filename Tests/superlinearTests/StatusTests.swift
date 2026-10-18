@@ -234,12 +234,103 @@ struct StatusTests {
             SL-1  One
                   queued, https://github.com/o/r/pull/4
         """)
+        // The note follows the task the filter leaves out.
+        #expect(report.filtered(to: [.awaitingReview]).rendered() == """
+        w
+          Awaiting review
+            SL-1  #4 Four
+                  agent addressing review · no CI · https://github.com/o/r/pull/4
+        """)
+    }
+
+    @Test("A filtered report keeps the note on a draft whose lower pull request was closed")
+    func filteredKeepsClosedBase() {
+        let draft = ReviewablePullRequest(
+            number: 2, url: "https://github.com/o/r/pull/2", title: "Two", headRefName: "b-2",
+            isDraft: true, reviewDecision: nil, latestReviews: nil, statusCheckRollup: nil, baseRefName: "b-1"
+        )
+        let base = StackBase(
+            identifier: "SL-1", branch: "b-1", number: 1, url: "https://github.com/o/r/pull/1", depth: 1, baseHead: nil, drafted: true
+        )
+        let report = WorkspaceReport(
+            name: "w",
+            entries: [TaskEntry(
+                identifier: "SL-2", title: "Two", category: .blocked, detail: nil,
+                pullRequest: pullRequest(2, branch: "b-2", state: "OPEN"), stack: base
+            )],
+            reviews: [ReviewEntry(issue: issue("SL-2"), pullRequest: draft)],
+            warnings: []
+        )
+        let text = report.filtered(to: [.drafts]).rendered()
+        #expect(!text.contains("Blocked"))
+        #expect(text.contains("stacked on #1, closed without a merge: decide what becomes of it"))
     }
 
     @Test("An empty workspace says so, and warnings are shown")
     func emptyAndWarnings() {
         #expect(WorkspaceReport(name: "w", entries: [], warnings: []).rendered() == "w\n  No tasks")
         #expect(WorkspaceReport(name: "w", entries: [], warnings: ["no network"]).rendered() == "w\n  warning: no network")
+    }
+
+    // MARK: Filtering
+
+    @Test("Every section has a distinct name that parses back")
+    func sectionNames() {
+        let names = StatusSection.all.map(\.name)
+        #expect(Set(names).count == names.count)
+        #expect(names.first == "awaiting-review")
+        #expect(names.last == "stale")
+        for section in StatusSection.all {
+            #expect(StatusSection(name: section.name) == section)
+        }
+        #expect(StatusSection(name: "Running") == nil)
+    }
+
+    @Test("A filter keeps the named sections")
+    func filtered() {
+        let open = pullRequest(2, branch: "two", state: "OPEN")
+        let merged = pullRequest(10, branch: "ten", state: "MERGED")
+        let reviewable = ReviewablePullRequest(
+            number: 2, url: open.url, title: "Two", headRefName: "two",
+            isDraft: false, reviewDecision: nil, latestReviews: nil, statusCheckRollup: nil
+        )
+        let draft = ReviewablePullRequest(
+            number: 3, url: "https://github.com/o/r/pull/3", title: "Three", headRefName: "three",
+            isDraft: true, reviewDecision: nil, latestReviews: nil, statusCheckRollup: nil
+        )
+        let report = WorkspaceReport(
+            name: "w",
+            entries: [
+                TaskEntry(identifier: "SL-1", title: "One", category: .running, detail: nil),
+                TaskEntry(identifier: "SL-2", title: "Two", category: .openPullRequest, detail: open.url, pullRequest: open),
+                TaskEntry(identifier: "SL-10", title: "Ten", category: .completed, detail: merged.url, pullRequest: merged),
+            ],
+            reviews: [ReviewEntry(issue: issue("SL-2"), pullRequest: reviewable), ReviewEntry(issue: issue("SL-3"), pullRequest: draft)],
+            stale: [StaleBranch(branch: "old", reason: .merged(4), hasWorktree: false, lastCommit: nil, unpushedCommits: 0)],
+            warnings: []
+        )
+
+        let running = report.filtered(to: [.task(.running)])
+        #expect(running.entries.map(\.identifier) == ["SL-1"])
+        #expect(running.reviews == nil)
+        #expect(running.stale.isEmpty)
+        #expect(running.rendered() == "w\n  Running\n    SL-1  One")
+
+        let drafts = report.filtered(to: [.drafts, .task(.completed)])
+        #expect(drafts.reviews?.map(\.pullRequest.number) == [3])
+        #expect(drafts.entries.map(\.identifier) == ["SL-10"])
+
+        // Not listed for review, the open pull request shows as a task.
+        let openTasks = report.filtered(to: [.task(.openPullRequest), .stale])
+        #expect(openTasks.rendered() == """
+        w
+          Open pull requests
+            SL-2  Two
+                  https://github.com/o/r/pull/2
+          Stale branches and worktrees
+            old
+              merged in #4
+        """)
     }
 
     @Test("Blocked and human-labeled issues are listed from the state file, with their blockers and labels")

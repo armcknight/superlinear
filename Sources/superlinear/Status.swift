@@ -81,6 +81,24 @@ enum TaskCategory: Int, CaseIterable, Comparable, Sendable {
         }
     }
 
+    /// The name `--status` knows the category by.
+    var name: String {
+        switch self {
+        case .running: "running"
+        case .addressingReview: "addressing-review"
+        case .resolvingConflicts: "resolving-conflicts"
+        case .interrupted: "interrupted"
+        case .queued: "queued"
+        case .blocked: "blocked"
+        case .needsHuman: "needs-human"
+        case .openPullRequest: "open-pull-requests"
+        case .merged: "merged"
+        case .noPullRequest: "no-pull-request"
+        case .completed: "completed"
+        case .closed: "closed"
+        }
+    }
+
     /// `run` is the issue's record in the state file, if it is still in
     /// flight; `running` whether that run's process is alive; `pending` its
     /// merge watch, if its agent has ended.
@@ -123,6 +141,40 @@ struct TaskEntry: Sendable, Equatable {
     var stack: StackBase? = nil
 }
 
+/// A section of the status report, as `--status` names it.
+enum StatusSection: Hashable, Sendable {
+    case awaitingReview
+    case drafts
+    case task(TaskCategory)
+    case stale
+
+    /// Every section, in report order.
+    static let all: [StatusSection] = [.awaitingReview, .drafts] + TaskCategory.allCases.map(StatusSection.task) + [.stale]
+
+    var name: String {
+        switch self {
+        case .awaitingReview: "awaiting-review"
+        case .drafts: "drafts"
+        case .task(let category): category.name
+        case .stale: "stale"
+        }
+    }
+
+    init?(name: String) {
+        guard let section = Self.all.first(where: { $0.name == name }) else { return nil }
+        self = section
+    }
+}
+
+/// What `superlinear status` is asked to show, by `--status` and
+/// `--workspace`. Nil means everything.
+struct StatusFilter: Equatable, Sendable {
+    /// The sections to show.
+    var sections: Set<StatusSection>? = nil
+    /// The workspaces to show, by name.
+    var workspaces: [String]? = nil
+}
+
 /// What `superlinear status` prints for one workspace, and what
 /// `superlinear stats` measures.
 struct WorkspaceReport: Sendable {
@@ -132,6 +184,9 @@ struct WorkspaceReport: Sendable {
     /// daemon is tracking the issue. Nil when GitHub or Linear could not be
     /// asked, in which case open pull requests show only among the tasks.
     var reviews: [ReviewEntry]? = nil
+    /// The entries before `filtered(to:)` left any out, for the notes on
+    /// the pull requests listed for review. Nil when none were.
+    var unfilteredEntries: [TaskEntry]? = nil
     /// The agents' open and merged pull requests, for `superlinear stats`.
     /// Empty until `measured`.
     var pullRequestStats: [PullRequestStats] = []
@@ -244,6 +299,21 @@ struct WorkspaceReport: Sendable {
 
     static let staleHeading = "Stale branches and worktrees"
 
+    /// The report with only `sections` in it. With neither review section kept, the open pull requests are not listed
+    /// for review, so finished tasks with one show among the tasks, as when
+    /// the pull requests could not be listed.
+    func filtered(to sections: Set<StatusSection>) -> WorkspaceReport {
+        var report = self
+        report.unfilteredEntries = unfilteredEntries ?? entries
+        report.entries = entries.filter { sections.contains(.task($0.category)) }
+        let listsReviews = sections.contains(.awaitingReview) || sections.contains(.drafts)
+        report.reviews = listsReviews
+            ? reviews?.filter { sections.contains($0.pullRequest.isDraft ? .drafts : .awaitingReview) }
+            : nil
+        if !sections.contains(.stale) { report.stale = [] }
+        return report
+    }
+
     /// The report as text, one section per category with entries in it.
     func rendered(now: Date = Date()) -> String {
         var lines = [name]
@@ -260,7 +330,8 @@ struct WorkspaceReport: Sendable {
         let indent = String(repeating: " ", count: 4 + width + 2)
         // Their pull requests wait on an agent, not on a reviewer.
         var agentAt: [LinearIssue.Identifier: String] = [:]
-        for entry in entries {
+        let allEntries = unfilteredEntries ?? entries
+        for entry in allEntries {
             switch entry.category {
             case .addressingReview: agentAt[entry.identifier] = "agent addressing review"
             case .resolvingConflicts: agentAt[entry.identifier] = "agent resolving conflicts"
@@ -270,7 +341,7 @@ struct WorkspaceReport: Sendable {
 
         // Drafts whose pull request below was closed without a merge.
         var closedBases: [String: StackBase] = [:]
-        for entry in entries where entry.category == .blocked {
+        for entry in allEntries where entry.category == .blocked {
             if let url = entry.pullRequest?.url, let stack = entry.stack { closedBases[url] = stack }
         }
         for (heading, drafts) in [("Awaiting review", false), ("Draft pull requests", true)] {
@@ -461,8 +532,8 @@ struct WorkspaceReport: Sendable {
 enum StatusCommand {
     /// A repository whose report hit a GitHub rate limit, to ask GitHub when
     /// it resets; nil when none did.
-    static func rateLimitedRepoPath(_ reports: [WorkspaceReport], config: Config) -> String? {
-        let workspace = zip(reports, config.workspaces).first { report, _ in
+    static func rateLimitedRepoPath(_ reports: [WorkspaceReport], workspaces: [WorkspaceConfig]) -> String? {
+        let workspace = zip(reports, workspaces).first { report, _ in
             report.warnings.contains { $0.localizedCaseInsensitiveContains("rate limit") }
         }?.1
         return workspace.map { NSString(string: $0.repoPath).expandingTildeInPath }
@@ -481,16 +552,15 @@ enum StatusCommand {
         return lines
     }
 
-    /// Every configured workspace's report, in config order, gathered at
-    /// once. With `transcripts`, each is measured too, for `superlinear
+    /// The reports of `workspaces`, in their order, gathered at once. With `transcripts`, each is measured too, for `superlinear
     /// stats`. Warnings about GitHub's rate limit become one header line,
     /// rather than one per GitHub call in every workspace.
     static func reports(
-        config: Config, state: State, transcripts: Transcripts? = nil
+        workspaces: [WorkspaceConfig], state: State, transcripts: Transcripts? = nil
     ) async -> (reports: [WorkspaceReport], header: [String]) {
         let runner = AgentRunner()
         var reports = await withTaskGroup(of: (Int, WorkspaceReport).self) { group in
-            for (index, workspace) in config.workspaces.enumerated() {
+            for (index, workspace) in workspaces.enumerated() {
                 group.addTask {
                     var report = await WorkspaceReport.gather(workspace: workspace, state: state, runner: runner)
                     if let transcripts {
@@ -508,7 +578,7 @@ enum StatusCommand {
         }
 
         var header: [String] = []
-        if let repoPath = rateLimitedRepoPath(reports, config: config) {
+        if let repoPath = rateLimitedRepoPath(reports, workspaces: workspaces) {
             for index in reports.indices {
                 reports[index].warnings.removeAll { $0.localizedCaseInsensitiveContains("rate limit") }
             }
@@ -519,9 +589,9 @@ enum StatusCommand {
         return (reports, header)
     }
 
-    /// Prints a report for every configured workspace, in config order, and
-    /// returns the exit status.
-    static func run(configPath: String?) async -> Int32 {
+    /// Prints a report for every configured workspace, in config order, or
+    /// for those `filter` names, and returns the exit status.
+    static func run(configPath: String?, filter: StatusFilter = StatusFilter()) async -> Int32 {
         let config: Config
         do {
             config = try Config.load(from: configPath)
@@ -529,12 +599,26 @@ enum StatusCommand {
             print("[superlinear] Failed to load config: \(error)")
             return 1
         }
+        var workspaces = config.workspaces
+        if let names = filter.workspaces {
+            let configured = config.workspaces.map(\.name)
+            let unknown = names.filter { !configured.contains($0) }
+            guard unknown.isEmpty else {
+                print("[superlinear] No workspace named \(unknown.joined(separator: ", ")). Workspaces: \(configured.joined(separator: ", "))")
+                return 1
+            }
+            workspaces = config.workspaces.filter { names.contains($0.name) }
+        }
         let standups = StandupRecord.load()
         let state = State.loadWithStandups(standups: standups)
-        let gathered = await reports(config: config, state: state)
-        let header = gathered.header + pauseLines(state: state, workspaces: config.workspaces.map(\.name), now: Date())
-        let standup = Standup.statusLine(state: state, standups: standups, workspaces: config.workspaces.map(\.name))
-        let footer = DaemonStatus.read().footer(polls: config.workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })
+        var gathered = await reports(workspaces: workspaces, state: state)
+        if let sections = filter.sections {
+            gathered.reports = gathered.reports.map { $0.filtered(to: sections) }
+        }
+        let names = workspaces.map(\.name)
+        let header = gathered.header + pauseLines(state: state, workspaces: names, now: Date())
+        let standup = Standup.statusLine(state: state, standups: standups, workspaces: names)
+        let footer = DaemonStatus.read().footer(polls: workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })
         print((header + gathered.reports.map { $0.rendered() } + [standup, footer]).joined(separator: "\n\n"))
         return 0
     }

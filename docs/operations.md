@@ -33,7 +33,7 @@ The agent is generated rather than checked in because launchd expands neither `~
 superlinear [--config <path>]
 superlinear install
 superlinear uninstall
-superlinear status [--config <path>]
+superlinear status [--status <names>] [--workspace <names>] [--config <path>]
 superlinear stats [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear standup [--print] [--workspace <name>] [--config <path>]
@@ -69,23 +69,28 @@ Agents' builds fill the disk fast: a SwiftPM `.build` directory or an Xcode Deri
 
 `superlinear status` lists, for each workspace, the open pull requests that belong to a Linear issue, then the tasks the daemon tracks, grouped by where they stand:
 
-| Section | Meaning |
-| --- | --- |
-| Awaiting review | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, agent addressing review, or agent resolving conflicts — whether it conflicts with its base branch, the CI state, and the URL. A pull request that targets another listed one's branch is listed under it, indented, with "stacked on #n": see [Stacks](lifecycle.md#stacks). |
-| Draft pull requests | The same, for drafts, with the CI state. A draft the daemon made because the pull request below it was closed without a merge says so, and asks for a decision. |
-| Running | An agent works on the issue now. Shows its pid and log. |
-| Addressing review | An agent addresses your review of the issue's pull request, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
-| Resolving conflicts | An agent merges the base branch into the branch of the issue's pull request, which conflicts with it, or is queued to. Shows the pull request, and the pid and log once it runs. |
-| Interrupted | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
-| Queued | Waiting for a free agent slot, or for a pause at the Claude usage limit to end. A session the limit stopped says so; it resumes first. |
-| Blocked | Waiting for the issues blocking it to be completed or canceled, as of the daemon's last poll, with its open blockers. Also an issue whose pull request is [stacked](lifecycle.md#stacks) on one closed without a merge: its own pull request is a draft until you decide. |
-| Needs human | A label in `humanLabels` keeps agents off it, as of the daemon's last poll, with the labels. |
-| Open pull requests | The agent finished and its pull request is open. Shown only when open pull requests could not be listed for review; otherwise they appear above. |
-| Merged, issue not done | The pull request is merged, but the Linear issue is not in a completed state. |
-| Finished without a pull request | The agent ended, but no pull request is open or merged, and the issue is still open. |
-| Completed | The pull request is merged and the Linear issue is done. |
-| Closed without a merge | The issue was closed in Linear without a merged pull request. |
-| Stale branches and worktrees | Local branches no longer needed: their pull request merged, or closed without a merge, or, for a worktree under `worktrees/` with no agent running or queued, none was opened. The base branch, branches with an open pull request, and branches of your own without such a worktree are never listed. Each shows its worktree if it has one, its last commit's age, and the commits removing it would lose: for a merged or closed pull request, those made after its head, as a squash merge leaves the rest on no remote branch; otherwise those no remote branch has. `work finish <branch>` removes the branch and its worktree. |
+| Section | Name | Meaning |
+| --- | --- | --- |
+| Awaiting review | `awaiting-review` | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not. Shows the review state — not reviewed, changes requested, approved, agent addressing review, or agent resolving conflicts — whether it conflicts with its base branch, the CI state, and the URL. A pull request that targets another listed one's branch is listed under it, indented, with "stacked on #n": see [Stacks](lifecycle.md#stacks). |
+| Draft pull requests | `drafts` | The same, for drafts, with the CI state. A draft the daemon made because the pull request below it was closed without a merge says so, and asks for a decision. |
+| Running | `running` | An agent works on the issue now. Shows its pid and log. |
+| Addressing review | `addressing-review` | An agent addresses your review of the issue's pull request, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
+| Resolving conflicts | `resolving-conflicts` | An agent merges the base branch into the branch of the issue's pull request, which conflicts with it, or is queued to. Shows the pull request, and the pid and log once it runs. |
+| Interrupted | `interrupted` | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
+| Queued | `queued` | Waiting for a free agent slot, or for a pause at the Claude usage limit to end. A session the limit stopped says so; it resumes first. |
+| Blocked | `blocked` | Waiting for the issues blocking it to be completed or canceled, as of the daemon's last poll, with its open blockers. Also an issue whose pull request is [stacked](lifecycle.md#stacks) on one closed without a merge: its own pull request is a draft until you decide. |
+| Needs human | `needs-human` | A [`humanLabels`](configuration.md#human-labels) label on the issue keeps agents off it, as of the daemon's last poll. Shows the labels. |
+| Open pull requests | `open-pull-requests` | The agent finished and its pull request is open. Shown only when open pull requests are not listed for review, because they could not be or because `--status` leaves out both review sections; otherwise they appear above. |
+| Merged, issue not done | `merged` | The pull request is merged, but the Linear issue is not in a completed state. |
+| Finished without a pull request | `no-pull-request` | The agent ended, but no pull request is open or merged, and the issue is still open. |
+| Completed | `completed` | The pull request is merged and the Linear issue is done. |
+| Closed without a merge | `closed` | The issue was closed in Linear without a merged pull request. |
+| Stale branches and worktrees | `stale` | Local branches no longer needed: their pull request merged, or closed without a merge, or, for a worktree under `worktrees/` with no agent running or queued, none was opened. The base branch, branches with an open pull request, and branches of your own without such a worktree are never listed. Each shows its worktree if it has one, its last commit's age, and the commits removing it would lose: for a merged or closed pull request, those made after its head, as a squash merge leaves the rest on no remote branch; otherwise those no remote branch has. `work finish <branch>` removes the branch and its worktree. |
+
+Two options narrow the report:
+
+- `--status <names>` shows only the named sections, by the names in the table, comma-separated: `superlinear status --status running,blocked`. The option may repeat. An unknown name is an error that lists the names there are.
+- `--workspace <names>` shows only the named workspaces, comma-separated, in config order: `superlinear status --workspace app,web`. The option may repeat. The pause lines, the standup line and the polls follow the selection. A name no workspace has is an error that lists the configured ones.
 
 After the workspaces, a line gives the time of the last [standup](planning.md#standup), and the numbers of pending proposals and of issues that need a human.
 

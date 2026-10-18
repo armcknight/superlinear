@@ -86,7 +86,7 @@ Then set up a workspace: see [Configuration](docs/configuration.md). For the lau
 superlinear [--config <path>]
 superlinear install
 superlinear uninstall
-superlinear status [--config <path>]
+superlinear status [--status <names>] [--workspace <names>] [--config <path>]
 superlinear stats [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear standup [--print] [--workspace <name>] [--config <path>]
