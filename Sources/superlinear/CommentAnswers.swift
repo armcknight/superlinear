@@ -164,10 +164,38 @@ enum CommentAnswerPrompt {
 
         You only read. Do not edit or create files, do not commit or push, do not open pull requests, and \
         do not write to Linear or GitHub. The current directory is the repository's default-branch \
-        worktree: read the code and its history there when the answer depends on them.
+        worktree: read the code and its history there when the answer depends on them. \
+        \(LinearKey.promptLine)
         """
 
-    static func render(_ question: CommentQuestion, openIssues: [String] = []) -> String {
+    /// How many of the issues a comment names its prompt shows.
+    static let maxNamedIssues = 10
+
+    /// The identifiers of the workspace's issues that the comment names, and
+    /// for a proposal, that the proposal names, in the order they appear:
+    /// those of the teams with `teamKeys` only, without the issue the comment
+    /// is on, and at most `maxNamedIssues`.
+    static func namedIdentifiers(_ question: CommentQuestion, teamKeys: Set<LinearTeam.Key>) -> [LinearIssue.Identifier] {
+        var text = question.comment.comment.body
+        var own: LinearIssue.Identifier?
+        if case .proposal(let proposal, _) = question.subject {
+            text += "\n" + describe(proposal)
+            own = proposal.post?.issueIdentifier.map { LinearIssue.Identifier(rawValue: $0) }
+        }
+        var seen: Set<LinearIssue.Identifier> = []
+        var identifiers: [LinearIssue.Identifier] = []
+        for match in text.matches(of: /\b([A-Z][A-Z0-9]*)-[0-9]+\b/) {
+            let identifier = LinearIssue.Identifier(rawValue: String(match.output.0))
+            guard teamKeys.contains(LinearTeam.Key(rawValue: String(match.output.1))), identifier != own,
+                  seen.insert(identifier).inserted
+            else { continue }
+            identifiers.append(identifier)
+            if identifiers.count == maxNamedIssues { break }
+        }
+        return identifiers
+    }
+
+    static func render(_ question: CommentQuestion, openIssues: [String] = [], namedIssues: [PlanningIssue] = []) -> String {
         var sections = [preamble]
         let revision: String?
         switch question.subject {
@@ -182,6 +210,10 @@ enum CommentAnswerPrompt {
                 sections.append("The open issues of the watched teams:\n\n" + openIssues.map { "- \($0)" }.joined(separator: "\n"))
             }
             revision = "the whole new text of the spec document"
+        }
+        if !namedIssues.isEmpty {
+            sections.append("The Linear issues that the comment names, as they stand now:\n\n"
+                + namedIssues.map(describe).joined(separator: "\n\n"))
         }
         let earlier = question.thread.filter { $0.id != question.comment.comment.id }
         if !earlier.isEmpty {
@@ -227,6 +259,16 @@ enum CommentAnswerPrompt {
         return lines.joined(separator: "\n")
     }
 
+    /// A named issue: its title, state, labels, relations and description.
+    static func describe(_ issue: PlanningIssue) -> String {
+        var lines = ["- \(issue.identifier): \(issue.title)", "  - State: \(issue.stateName)"]
+        if !issue.labels.isEmpty { lines.append("  - Labels: " + issue.labels.map(\.rawValue).joined(separator: ", ")) }
+        if !issue.relations.isEmpty { lines.append("  - Relations: " + issue.relations.map(\.rendered).joined(separator: ", ")) }
+        let description = issue.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.append(description.isEmpty ? "  - No description" : "  - Description:\n\n" + fenced(description))
+        return lines.joined(separator: "\n")
+    }
+
     private static func fenced(_ text: String) -> String {
         "````markdown\n\(text)\n````"
     }
@@ -248,9 +290,11 @@ struct CommentAnswerRecord: Codable, Sendable, Equatable {
 /// each. A session the daemon's restart cuts short leaves its comment
 /// unhandled, so the next daemon answers it.
 struct CommentSessionRunner: Sendable {
-    /// Reading the code, its history and its pull requests; no writes.
+    /// Reading the code, its history, its pull requests and the workspace's
+    /// Linear issues; no writes.
     static let allowedTools =
-        "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh run view:*)"
+        "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh run view:*),"
+        + LinearKey.readTools
     /// How long a session may run before it is stopped.
     static let timeout: TimeInterval = 20 * 60
 
@@ -272,6 +316,12 @@ struct CommentSessionRunner: Sendable {
         ["claude", "-p", "--session-id", sessionId.rawValue] + model.arguments + ["--allowedTools", allowedTools]
     }
 
+    /// The environment a session launches with: the daemon's, with the
+    /// workspace's Linear key `apiKey`.
+    func sessionEnvironment(apiKey: String) -> [String: String] {
+        LinearKey.environment(environment, apiKey: apiKey)
+    }
+
     /// What a session printed, and its exit status.
     struct Session: Sendable, Equatable {
         var output: String
@@ -280,7 +330,7 @@ struct CommentSessionRunner: Sendable {
 
     /// Runs a session on `model` in `worktree` with `prompt`, and returns once it ends.
     func run(
-        prompt: String, sessionId: ClaudeSession.ID, model: PlanningModel, worktree: String, workspace: String
+        prompt: String, sessionId: ClaudeSession.ID, model: PlanningModel, worktree: String, workspace: String, apiKey: String
     ) async throws -> Session {
         let fm = FileManager.default
         try fm.createDirectory(atPath: runsDirectory, withIntermediateDirectories: true)
@@ -304,7 +354,7 @@ struct CommentSessionRunner: Sendable {
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", "\"$@\"", "sh"] + Self.claudeArguments(sessionId: sessionId, model: model)
         process.currentDirectoryURL = URL(fileURLWithPath: worktree)
-        process.environment = environment
+        process.environment = sessionEnvironment(apiKey: apiKey)
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors

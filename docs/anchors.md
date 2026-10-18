@@ -17,6 +17,7 @@ Rules:
 | [`lifecycle.md#first-poll`](lifecycle.md#first-poll) | The first poll of a new workspace. |
 | [`lifecycle.md#ready-gate`](lifecycle.md#ready-gate) | The ready gate: blockers, human labels and holds. |
 | [`lifecycle.md#agent`](lifecycle.md#agent) | The agent: the queue, the worktree and the prompt. |
+| [`lifecycle.md#linear-key`](lifecycle.md#linear-key) | The workspace's Linear key in every Claude session. |
 | [`lifecycle.md#pull-request`](lifecycle.md#pull-request) | The pull request, and how the daemon follows it. |
 | [`lifecycle.md#reviews`](lifecycle.md#reviews) | Reviews that bring an agent back. |
 | [`lifecycle.md#linear-comments`](lifecycle.md#linear-comments) | Comments in Linear that bring an agent back. |

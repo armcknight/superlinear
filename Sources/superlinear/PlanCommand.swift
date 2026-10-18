@@ -60,7 +60,7 @@ enum PlanCommand {
         // The daemon owns the state file, so a Fable limit found here is not
         // kept: the next `plan` finds it again, and resumes on the fallback.
         var model = PlanningModel.current(limit: state.fableLimit, now: Date())
-        guard var status = await launch(run, mode: .start, model: model, workspace: name, runner: runner, say: say) else {
+        guard var status = await launch(run, mode: .start, model: model, workspace: workspace, runner: runner, say: say) else {
             return false
         }
         if model == .fable, let hit = runner.usageLimitHit(workspace: name, now: Date()) {
@@ -68,7 +68,7 @@ enum PlanCommand {
             let until = FableLimit(hit: hit, now: Date()).until.rawValue
             say("[\(name)] Fable's usage limit is reached until \(StatusTime.clock(until, now: Date())); "
                 + "resuming the job on \(model.rawValue)")
-            guard let resumed = await launch(run, mode: .resume, model: model, workspace: name, runner: runner, say: say) else {
+            guard let resumed = await launch(run, mode: .resume, model: model, workspace: workspace, runner: runner, say: say) else {
                 return false
             }
             status = resumed
@@ -127,14 +127,15 @@ enum PlanCommand {
     /// planning file, and waits for it. Returns its status, which is nil when
     /// it left none, or nil when it did not launch.
     private static func launch(
-        _ run: PlanningRun, mode: LaunchMode, model: PlanningModel, workspace name: String, runner: PlanningRunner,
+        _ run: PlanningRun, mode: LaunchMode, model: PlanningModel, workspace: WorkspaceConfig, runner: PlanningRunner,
         say: (String) -> Void
     ) async -> Int32?? {
+        let name = workspace.name
         let (exits, exited) = AsyncStream<Int32?>.makeStream()
         let process: Process
         do {
             let launched: PlanningRun
-            (launched, process) = try runner.launch(run, mode: mode, model: model, workspace: name) { status in
+            (launched, process) = try runner.launch(run, mode: mode, model: model, workspace: name, apiKey: workspace.apiKey) { status in
                 exited.yield(status)
                 exited.finish()
             }

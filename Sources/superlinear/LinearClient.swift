@@ -218,18 +218,31 @@ struct LinearClient: Sendable {
     /// hold other pairings of the two; only exact identifiers are kept.
     /// Identifiers Linear does not have are simply absent.
     func fetchIssues(identifiers: [LinearIssue.Identifier]) async throws -> [LinearIssueStatus] {
+        guard let variables = Self.numberVariables(identifiers) else { return [] }
+        let issues: [LinearIssueStatus] = try await fetchAll(.issuesByNumber, variables: variables)
+        let wanted = Set(identifiers)
+        return issues.filter { wanted.contains($0.identifier) }
+    }
+
+    /// The issues with these identifiers, with their text, labels and
+    /// relations.
+    func namedIssues(identifiers: [LinearIssue.Identifier]) async throws -> [PlanningIssue] {
+        guard let variables = Self.numberVariables(identifiers) else { return [] }
+        let nodes: [LinearQuery.PlanningIssueNode] = try await fetchAll(.namedIssues, variables: variables)
+        let wanted = Set(identifiers)
+        return nodes.map(\.planningIssue).filter { wanted.contains($0.identifier) }
+    }
+
+    /// The numbers and team keys of the identifiers, as the queries by
+    /// number take them, or nil when there are none.
+    private static func numberVariables(_ identifiers: [LinearIssue.Identifier]) -> [LinearVariable: Any]? {
         let pairs = identifiers.map(\.rawValue).compactMap { identifier -> (String, Int)? in
             guard let dash = identifier.lastIndex(of: "-"), let number = Int(identifier[identifier.index(after: dash)...])
             else { return nil }
             return (String(identifier[..<dash]), number)
         }
-        guard !pairs.isEmpty else { return [] }
-        let issues: [LinearIssueStatus] = try await fetchAll(
-            .issuesByNumber,
-            variables: [.numbers: Array(Set(pairs.map(\.1))), .keys: Array(Set(pairs.map(\.0)))]
-        )
-        let wanted = Set(identifiers)
-        return issues.filter { wanted.contains($0.identifier) }
+        guard !pairs.isEmpty else { return nil }
+        return [.numbers: Array(Set(pairs.map(\.1))), .keys: Array(Set(pairs.map(\.0)))]
     }
 
     /// Issues in a started state, such as In Progress or In Review, optionally
