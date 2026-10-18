@@ -53,6 +53,10 @@ actor Daemon {
     /// Workspaces whose planning job is being gathered or its proposals
     /// stored, so that no second job starts meanwhile.
     private var planningBusy: Set<String> = []
+    /// Whether a roadmap is being built, and whether another planning job
+    /// ended meanwhile, so it is to be built again once this one ends.
+    private var roadmapBuilding = false
+    private var roadmapAgain = false
     /// Failed workflow runs already screened for a proposal, so that each is
     /// screened once rather than searched for in Linear every poll.
     private var screenedWorkflowRuns: Set<String> = []
@@ -1480,6 +1484,48 @@ actor Daemon {
         state.finishPlanning(record, workspace: name)
         save()
         planningRunner.cleanUp(run.sessionId)
+        rebuildRoadmap()
+    }
+
+    // MARK: - Roadmap
+
+    /// Rebuilds the roadmap of every workspace in the background, once a
+    /// planning job ends, so `superlinear roadmap` is usually current. Jobs
+    /// that end while one is being built lead to one more build after it.
+    private func rebuildRoadmap() {
+        guard !roadmapBuilding else {
+            roadmapAgain = true
+            return
+        }
+        guard claudeAvailable(now: Date()) else { return }
+        roadmapBuilding = true
+        let workspaces = config.workspaces
+        let snapshot = state
+        let model = state.planningModel(now: Date())
+        Task {
+            let say: @Sendable (String) -> Void = { message in
+                print("[\(ISO8601DateFormatter().string(from: Date()))] [roadmap] \(message)")
+            }
+            let (outcome, limit) = await RoadmapBuilder().build(workspaces: workspaces, state: snapshot, model: model, say: say)
+            self.finishRoadmap(outcome, fableLimit: limit)
+        }
+    }
+
+    private func finishRoadmap(_ outcome: RoadmapBuilder.Outcome, fableLimit: ClaudeUsageLimit.Hit?) {
+        roadmapBuilding = false
+        if let fableLimit { recordFableLimit(fableLimit, now: Date(), workspace: "roadmap") }
+        switch outcome {
+        case .built(let roadmap):
+            log("Rebuilt the roadmap: \(roadmap.steps.count) steps, \(roadmap.actions.count) actions for the owner", workspace: "roadmap")
+        case .busy(let reason):
+            log("Not rebuilding the roadmap: \(reason)", workspace: "roadmap")
+        case .failed(let reason):
+            log("Could not rebuild the roadmap: \(reason)", workspace: "roadmap")
+        }
+        if roadmapAgain {
+            roadmapAgain = false
+            rebuildRoadmap()
+        }
     }
 
     func updateLastPoll(_ date: Date, workspace: String) {

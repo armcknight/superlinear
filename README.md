@@ -90,10 +90,11 @@ superlinear status [--since <duration>] [--status <names>] [--workspace <names>]
 superlinear stats [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear plan [--workspace <name>] [--config <path>]
+superlinear roadmap [--workspace <names>] [--json] [--refresh] [--config <path>]
 superlinear resume
 ```
 
-With no subcommand it runs the daemon in the foreground. See [Usage](docs/operations.md#usage), [Status](docs/operations.md#status), [Stats](docs/operations.md#stats), [The audit log](docs/planning.md#audit-log) for `proposals`, [The planning job](docs/planning.md#daily-planning) for `plan`, and [Usage and spending limits](docs/lifecycle.md#limits) for `resume`.
+With no subcommand it runs the daemon in the foreground. See [Usage](docs/operations.md#usage), [Status](docs/operations.md#status), [Stats](docs/operations.md#stats), [The audit log](docs/planning.md#audit-log) for `proposals`, [The planning job](docs/planning.md#daily-planning) for `plan`, [The roadmap](docs/planning.md#roadmap) for `roadmap`, and [Usage and spending limits](docs/lifecycle.md#limits) for `resume`.
 
 ## Security
 

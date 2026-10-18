@@ -111,13 +111,15 @@ Edits take effect on their own. The daemon reads the file every five seconds. Wh
 | `~/.config/superlinear/config.json` | The config, with the API keys. |
 | `~/.local/share/superlinear/state.json` | For each workspace: the last poll, processed issues, runs in flight, issues awaiting their pull request's merge (with the pull request each is stacked on), blocked and human-labeled issues, proposals and where they wait in Linear, the comments answered, 30 days of what the daemon did, and the last 30 planning jobs. |
 | `~/.local/share/superlinear/planning.json` | The jobs that `superlinear plan` ran and the proposals they made, for the daemon to take in. |
+| `~/.local/share/superlinear/roadmap.json` | The latest [roadmap](planning.md#roadmap) of each set of workspaces, and the roadmap sessions running now. |
 | `~/.local/share/superlinear/audit/<workspace>.jsonl` | Each change superlinear made in Linear, with its proposal and Linear's response. |
 | `~/.local/share/superlinear/daemon.lock` | Held by the running daemon, so that a second one exits. |
-| `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. A planning job also keeps its context and its proposals file until they are taken in. |
+| `~/.local/share/superlinear/runs/` | Each run's prompt, and its exit status once it ends. A planning job also keeps its context and its proposals file until they are taken in, and a roadmap session its context, its scripts and its roadmap file until it ends. |
 | `~/.local/share/superlinear/daemon.log` | The daemon's output. |
 | `~/.local/share/superlinear/logs/<ISSUE-ID>.log` | An issue's agent output. A resumed run appends to it. |
 | `~/.local/share/superlinear/logs/<ISSUE-ID>.work.log` | The output of `work` for an issue: worktree setup, teardown after the merge, and errors. |
 | `~/.local/share/superlinear/logs/planning-<workspace>.log` | The output of the workspace's planning sessions. |
+| `~/.local/share/superlinear/logs/roadmap.log` | The output of the roadmap sessions. |
 | `~/.local/share/superlinear/logs/comments-<workspace>.log` | The output of the sessions that answer comments. |
 | `<worktree>/.superlinear/followups.json` | Work an agent found outside its issue, read when it exits. See [Follow-ups from agents](planning.md#follow-ups). |
 

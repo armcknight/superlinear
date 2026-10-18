@@ -125,10 +125,12 @@ When the session ends, superlinear checks each proposal against what the job was
 
 `superlinear plan` keeps its jobs and proposals in `~/.local/share/superlinear/planning.json`, because only the daemon writes the state file. The daemon takes them in, and puts the proposals in Linear, at its next poll.
 
+At the end of each job, the daemon's or `superlinear plan`'s, superlinear rebuilds the [roadmap](#roadmap) of every workspace.
+
 <a id="planning-model"></a>
 ## The model for planning and answers
 
-The planning job and the sessions that [answer your comments](#proposal-comments) run on Fable: the daemon passes `--model fable` to `claude`. Agents that work on issues run on Opus: see [The agent](lifecycle.md#agent).
+The planning job, the [roadmap session](#roadmap-session) and the sessions that [answer your comments](#proposal-comments) run on Fable: the daemon passes `--model fable` to `claude`. Agents that work on issues run on Opus: see [The agent](lifecycle.md#agent).
 
 Fable has a usage limit of its own. When one of these sessions ends with a usage limit message while it runs on Fable, such as `Fable weekly limit reached ∙ resets Mon 9am`, the daemon:
 
@@ -139,6 +141,58 @@ Fable has a usage limit of its own. When one of these sessions ends with a usage
 `superlinear status` shows the limit while it holds, as `Fable usage limit: planning and comment answers run on opus until …`. `superlinear plan` reads the limit from the state file and starts on Opus while it holds. When its job stops at Fable's limit, it resumes the job on Opus, but does not write the limit, as only the daemon writes the state file.
 
 A session on Opus that stops at the usage limit is handled as before: a comment answer pauses every session at the [Claude usage limit](lifecycle.md#claude-usage-limit), and a planning job ends as failed.
+
+<a id="roadmap"></a>
+## The roadmap
+
+```sh
+superlinear roadmap [--workspace <names>] [--json] [--refresh]
+```
+
+The roadmap is the order of the open work across every configured workspace, who does each step, an agent or you, and what you must do now so that agents are not waiting. It prints:
+
+- A table, one row per step: the step's number, its work, with the identifiers and titles of its issues, and who does it, as `agent`, `you` or `agent, then you`. Every open issue of the watched teams, in Triage, Backlog, Todo, In Progress or In Review, is in one step. A step may also be an action outside Linear that the issues name, such as a release.
+- **Waits across workspaces**: the [references between workspaces](#roadmap-cross-workspace), with the step that holds each issue named.
+- **Now, for you**: each thing you must do now, with the step it unblocks.
+- **Triage**: duplicates, issues that belong together, and issues to split or close.
+
+In a terminal that shows links, each issue's identifier links to it in Linear, and each action to the pull request or issue it is done on.
+
+Without `--refresh`, the command prints the last roadmap of the same workspaces, with the time it was built, and says when a workspace's default branch moved since, as known locally. With `--refresh`, or when there is none, it builds one in the foreground, which takes a few minutes; progress goes to standard error. `--workspace` builds and shows the roadmap of only the named workspaces, comma-separated; the option may repeat. `--json` prints the roadmap as JSON, for other tools: the steps with their issues, Who and why, the actions, the notes, the references, the heads it looked at, and warnings.
+
+The planning job rebuilds the roadmap of every workspace at its end, so `superlinear roadmap` is usually current. In the daemon the build runs in the background; jobs that end while one is building lead to one more build after it, and none starts while Claude sessions are paused at the usage limit. `superlinear status` begins with a line that says when the roadmap was last built and how many actions it lists for you.
+
+Roadmaps are kept in `~/.local/share/superlinear/roadmap.json`, one for each set of workspaces, with the time, the workspaces and the head of each default branch it looked at. The daemon and the command both build roadmaps, and only the daemon writes the state file, so the roadmap is kept apart from it, as `superlinear plan`'s jobs are. A build does not start while another session builds the same roadmap; `superlinear roadmap` then shows the last one.
+
+<a id="roadmap-session"></a>
+### The roadmap session
+
+For each workspace, superlinear reads what `status` and the planning job read: the open issues of the watched teams with their state, priority, labels, project, milestone, relations and description; the proposals waiting in Linear; the open pull requests of those issues, with their review and CI state and whether they wait on you; the issues blocked, and by what, as of the daemon's last poll; the human labels; and the default branch's commits of the last 7 days, at most 30. It fetches the default branch first.
+
+A headless Claude session on the [planning model](#planning-model) then orders the work. It is read only, like the planning job's: it may read each workspace's repository, which is added to it, and run `git log`, `git show`, `git diff`, `gh pr view`, `gh pr list` and the read-only `linctl` commands for each workspace. It runs them through small scripts, one set per workspace, that run them in that workspace's repository and give `linctl` that workspace's [Linear key](lifecycle.md#linear-key) from the environment, so no key is in the prompt or in the allowed commands. Its one output is a JSON file: the ordered steps, each with its issues, who does it and why it is in its place; your actions, each tied to the step it unblocks; and the notes for triage. When Fable's limit stops it, it resumes on Opus.
+
+The session orders and explains. superlinear does the rest: the reads, the references between workspaces, the Who rules below, and the rendering. It puts each open issue in the first step that names it, and gives each open issue the session left out a step of its own at the end, "Not placed by the roadmap session". It drops identifiers that are not open issues, with a warning.
+
+<a id="roadmap-who"></a>
+### Who does a step
+
+The data settles that a step is yours when one of its issues:
+
+- has a [human label](configuration.md#human-labels);
+- waits in Triage: an issue superlinear proposed, in Triage or, for a team with Triage off, in Backlog, or an issue a person filed in Triage;
+- has a [proposal](#standup) on it that waits for your answer in a comment;
+- has an open pull request that [waits on you](operations.md#status), for review, or, once approved, for the merge.
+
+superlinear puts `you` first among such a step's Who when the session left you out, and lists each such issue under **Now, for you**, with what to do and the step it is in, when the session did not. The session also gives you a step that is an action outside Linear that the issues name: a release, a tag, a key, a purchase, an account. Otherwise, a step is an agent's.
+
+<a id="roadmap-cross-workspace"></a>
+### Waits across workspaces
+
+Linear cannot relate issues in different workspaces. The roadmap treats an identifier of another configured workspace's team in an issue's description, such as "waits for WOR-7" in a TEM issue, as a dependency on that issue: it lists it under **Waits across workspaces**, and the session puts the named issue first. Only identifiers in upper case count, as people write them in prose, and not words such as `UTF-8` or `SHA-256`. A named issue that is not open is shown as such. An identifier of a team no workspace watches is shown as unknown. Mentions of a team of the issue's own workspace are left to Linear's relations.
+
+Two workspaces may each have a team with the same key, such as `WOR`. A reference to such a key is to the workspace that has the issue open, when only one does, and is shown as ambiguous otherwise. In the roadmap, an identifier that two workspaces have is written with its workspace, as `workflows:WOR-7`, and links to neither issue.
+
+Not built yet: writing the roadmap to Linear, as a document or a project update. Acting on your actions is not planned: a release or a key is always yours.
 
 <a id="follow-ups"></a>
 ## Follow-ups from agents

@@ -37,10 +37,13 @@ superlinear status [--since <duration>] [--status <names>] [--workspace <names>]
 superlinear stats [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear plan [--workspace <name>] [--config <path>]
+superlinear roadmap [--workspace <names>] [--json] [--refresh] [--config <path>]
 superlinear resume
 ```
 
 With no subcommand it runs the daemon in the foreground, which is how to test a configuration without registering a launch agent. `--config` overrides the default path, `--version` prints the version, and `--help` prints this.
+
+`superlinear roadmap` prints the ordered plan across every workspace, who does each step, and what you must do now: see [The roadmap](planning.md#roadmap).
 
 `superlinear resume` ends a pause of Claude sessions at the usage limit at once, as after you buy more usage or change plans before the reset time. It signals a running daemon, which starts the waiting sessions at once; with no daemon running, it lifts the pause in the state file. See [Usage and spending limits](lifecycle.md#limits).
 
@@ -93,7 +96,7 @@ Two options narrow the report:
 - `--status <names>` shows only the named sections, by the names in the table, comma-separated: `superlinear status --status running,blocked`. The option may repeat. An unknown name is an error that lists the names there are.
 - `--workspace <names>` shows only the named workspaces, comma-separated, in config order: `superlinear status --workspace app,web`. The option may repeat. The pause lines and the polls follow the selection. A name no workspace has is an error that lists the configured ones.
 
-When a [pause](lifecycle.md#limits) is active, the report begins with one line for it. So does [Fable's usage limit](planning.md#planning-model), while it holds.
+The report begins with a line about the [roadmap](planning.md#roadmap) of every workspace: when it was last built and how many actions it lists for you, or that none is built yet. When a [pause](lifecycle.md#limits) is active, a line for it follows. So does [Fable's usage limit](planning.md#planning-model), while it holds.
 
 The report ends with this command's version and binary, then the daemon's: its pid, version, binary and start time, or that it is not running. It warns when the daemon's binary has been replaced since the daemon started. Last, under **Polls**, each workspace shows when its last poll ended, whether it failed, and when the next one is due, or, once that time has passed, that it is polling now. Each workspace polls on its own loop, which waits its `pollIntervalSeconds` after each poll ends, so each has its own times.
 
