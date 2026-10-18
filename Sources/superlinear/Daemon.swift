@@ -168,13 +168,13 @@ actor Daemon {
     /// limit, given when its log was last written. Each log is recovered
     /// once: a relaunch that fails before it writes the log again leaves the
     /// old limit message, which would otherwise queue the issue every poll.
-    func claimUsageLimitRecovery(issueId: String, logModified: Date?) -> Bool {
+    func claimUsageLimitRecovery(issueId: LinearIssue.ID, logModified: Date?) -> Bool {
         usageLimitRecoveries.claim(issueId: issueId, logModified: logModified)
     }
 
     /// Issues the daemon queued an agent for.
-    func processedIssueIds(workspace: String) -> Set<String> {
-        state.workspaces[workspace]?.processedIssueIds ?? []
+    func processedIssueIds(workspace: String) -> Set<LinearIssue.ID> {
+        Set((state.workspaces[workspace]?.processedIssueIds ?? []).map(LinearIssue.ID.init(rawValue:)))
     }
 
     /// Queues an agent to address new reviews on the pull request of an issue

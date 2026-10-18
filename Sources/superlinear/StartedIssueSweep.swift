@@ -28,12 +28,13 @@ enum StartedIssueSweep {
     /// processed and follows through no run or merge watch, with no pull
     /// request from their branch, whose last agent log ends at the limit.
     static func stoppedAtUsageLimit(
-        issues: [LinearIssueStatus], pullRequests: [PullRequest], processed: Set<String>, tracked: Set<String>,
+        issues: [LinearIssueStatus], pullRequests: [PullRequest], processed: Set<LinearIssue.ID>, tracked: Set<LinearIssue.ID>,
         stopped: (LinearIssue.Identifier) -> Bool
     ) -> [LinearIssueStatus] {
         let branches = Set(pullRequests.compactMap(\.headRefName))
         return issues.filter { issue in
-            processed.contains(issue.id) && !tracked.contains(issue.id) && !branches.contains(issue.branchName)
+            let id = LinearIssue.ID(rawValue: issue.id)
+            return processed.contains(id) && !tracked.contains(id) && !branches.contains(issue.branchName)
                 && stopped(issue.identifier)
         }
     }
@@ -56,10 +57,10 @@ enum StartedIssueSweep {
 /// ID, with when each one's log was last written, so each log is recovered
 /// once.
 struct UsageLimitRecoveries {
-    private var logs: [String: Date] = [:]
+    private var logs: [LinearIssue.ID: Date] = [:]
 
     /// Whether to recover `issueId`'s agent now, recording it when so.
-    mutating func claim(issueId: String, logModified: Date?) -> Bool {
+    mutating func claim(issueId: LinearIssue.ID, logModified: Date?) -> Bool {
         guard let logModified, logs[issueId] != logModified else { return false }
         logs[issueId] = logModified
         return true
