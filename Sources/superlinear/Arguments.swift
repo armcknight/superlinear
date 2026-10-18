@@ -9,7 +9,7 @@ enum Command: Equatable {
     case install(force: Bool)
     case uninstall
     /// `since` is how far back "Done autonomously" looks; nil for the default.
-    case status(configPath: String?, since: TimeInterval?)
+    case status(configPath: String?, filter: StatusFilter, since: TimeInterval?)
     case stats(configPath: String?)
     case proposals(configPath: String?, workspace: String?)
     case resume
@@ -38,24 +38,46 @@ enum Command: Equatable {
         case .some(let command) where ["status", "stats"].contains(command):
             rest = rest.dropFirst()
             var configPath: String?
+            var filter = StatusFilter()
             var since: TimeInterval?
             while let argument = rest.first {
                 rest = rest.dropFirst()
-                switch argument {
-                case "--config":
-                    guard let path = rest.first else { return .invalid("--config needs a path") }
-                    configPath = path
-                case "--since" where command == "status":
+                let options = command == "status" ? ["--config", "--status", "--workspace", "--since"] : ["--config"]
+                guard options.contains(argument) else {
+                    return .invalid("unknown option for \(command): \(argument)")
+                }
+                if argument == "--since" {
                     guard let text = rest.first, let duration = StatusReview.duration(text) else {
                         return .invalid("--since needs a duration such as 24h, 7d or 90m")
                     }
                     since = duration
-                default:
-                    return .invalid("unknown option for \(command): \(argument)")
+                    rest = rest.dropFirst()
+                    continue
+                }
+                guard let value = rest.first else {
+                    return .invalid(argument == "--config" ? "--config needs a path" : "\(argument) needs a name")
                 }
                 rest = rest.dropFirst()
+                if argument == "--config" {
+                    configPath = value
+                    continue
+                }
+                // Comma-separated, and the option may repeat.
+                let names = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                guard !names.isEmpty else { return .invalid("\(argument) needs a name") }
+                if argument == "--workspace" {
+                    filter.workspaces = (filter.workspaces ?? []) + names
+                    continue
+                }
+                for name in names {
+                    guard let section = StatusSection(name: name) else {
+                        return .invalid("unknown status: \(name). Statuses: \(StatusSection.all.map(\.name).joined(separator: ", "))")
+                    }
+                    filter.sections = (filter.sections ?? []).union([section])
+                }
             }
-            return command == "status" ? .status(configPath: configPath, since: since) : .stats(configPath: configPath)
+            return command == "status"
+                ? .status(configPath: configPath, filter: filter, since: since) : .stats(configPath: configPath)
         case "proposals":
             rest = rest.dropFirst()
             var configPath: String?

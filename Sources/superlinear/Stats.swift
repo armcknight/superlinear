@@ -249,7 +249,7 @@ enum StatsCommand {
             print("[superlinear] Failed to load config: \(error)")
             return 1
         }
-        let (reports, header) = await StatusCommand.reports(config: config, state: State.loadWithPlanning(), transcripts: Transcripts())
+        let (reports, header) = await StatusCommand.reports(workspaces: config.workspaces, state: State.loadWithPlanning(), transcripts: Transcripts())
         let warnings = header + reports.flatMap { report in report.warnings.map { "warning: \(report.name): \($0)" } }
         let sections = (warnings.isEmpty ? [] : [warnings.joined(separator: "\n")]) + [Stats(reports: reports).rendered()]
         print(sections.joined(separator: "\n\n"))

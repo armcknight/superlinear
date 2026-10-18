@@ -8,7 +8,7 @@ let usage = """
 Usage: superlinear [--config <path>]
        superlinear install [--force]
        superlinear uninstall
-       superlinear status [--since <duration>] [--config <path>]
+       superlinear status [--since <duration>] [--status <names>] [--workspace <names>] [--config <path>]
        superlinear stats [--config <path>]
        superlinear proposals [--workspace <name>] [--config <path>]
        superlinear plan [--workspace <name>] [--config <path>]
@@ -32,6 +32,13 @@ Subcommands:
               Then what superlinear did on its own since --since (default
               24h), and the risks: pauses, CI failing on the default branch,
               the GitHub rate limit.
+              --status shows only the named sections, comma-separated:
+              awaiting-review (what waits on you), drafts, running,
+              addressing-review, resolving-conflicts, interrupted, queued,
+              blocked, needs-human, open-pull-requests, merged,
+              no-pull-request, completed, closed, done, risks, stale.
+              --workspace shows only the named workspaces, comma-separated.
+              Either option may repeat.
   stats       Measure the agents' work: how many items each status section
               holds across all workspaces; per pull request, the lines,
               files, tokens, agent time and CI time, with medians and
@@ -92,10 +99,10 @@ case .uninstall:
         exit(1)
     }
 
-case .status(let path, let since):
+case .status(let path, let filter, let since):
     // Reads the state file and Linear; it takes no daemon lock, so it runs
     // beside a daemon.
-    Task { exit(await StatusCommand.run(configPath: path, since: since)) }
+    Task { exit(await StatusCommand.run(configPath: path, filter: filter, since: since)) }
     dispatchMain()
 
 case .stats(let path):
