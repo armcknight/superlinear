@@ -9,7 +9,7 @@ private struct EmptyLinear: LinearWriting {
     func labelId(named name: String, teamId: LinearTeam.ID) async throws -> LinearLabel.ID { "label" }
     func createIssue(
         teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
-        labelIds: [LinearLabel.ID], stateId: String?
+        labelIds: [LinearLabel.ID], stateId: LinearState.ID?
     ) async throws -> CreatedIssue { CreatedIssue(id: "new", identifier: "NEW-1", url: nil, response: .null) }
     func updateIssueDescription(id: LinearIssue.ID, description: String) async throws -> JSONValue { .null }
     func closeIssue(id: LinearIssue.ID) async throws -> JSONValue { .null }

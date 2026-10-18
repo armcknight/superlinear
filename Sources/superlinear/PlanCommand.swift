@@ -38,7 +38,7 @@ enum PlanCommand {
     /// puts them in Linear. Returns whether the job ran to the end.
     static func runJob(_ workspace: WorkspaceConfig, say: (String) -> Void, runner: PlanningRunner = PlanningRunner()) async -> Bool {
         let name = workspace.name
-        let state = State.loadWithPlanning()
+        let state = State.loadWithPlanning(from: State.stateFileURL(), planning: PlanningRecord.load())
         var planning = PlanningRecord.load()
         if let reason = busy(state.workspaces[name] ?? WorkspaceState(), planning: planning[name]) {
             say("[\(name)] \(reason)")

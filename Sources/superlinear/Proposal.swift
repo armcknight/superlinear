@@ -229,7 +229,7 @@ struct ProposalPost: Codable, Sendable, Equatable {
     var issueId: LinearIssue.ID
     var issueIdentifier: String?
     /// The comment, for a `comment`.
-    var commentId: String?
+    var commentId: LinearComment.ID?
     /// A link to the issue or the comment.
     var url: String?
     /// When it was put in Linear. Expiry counts from then.

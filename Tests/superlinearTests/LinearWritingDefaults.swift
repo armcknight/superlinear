@@ -5,7 +5,7 @@ import Foundation
 /// a team with Triage on, one label, and empty answers. The real client
 /// implements every one of these, so these are for tests alone.
 extension LinearWriting {
-    func viewerId() async throws -> String { "viewer" }
+    func viewerId() async throws -> LinearUser.ID { "viewer" }
 
     func teamStates(id: LinearTeam.ID) async throws -> TeamStates {
         TeamStates(triageEnabled: true, states: [
@@ -22,7 +22,7 @@ extension LinearWriting {
         CreatedComment(id: "comment", url: nil, response: .null)
     }
 
-    func updateComment(id: String, body: String) async throws -> JSONValue { .null }
+    func updateComment(id: LinearComment.ID, body: String) async throws -> JSONValue { .null }
     func addLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue { .null }
     func removeLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue { .null }
     func proposalIssues(ids: [LinearIssue.ID]) async throws -> [ProposalIssueSnapshot] { [] }

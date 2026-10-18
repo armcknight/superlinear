@@ -26,7 +26,7 @@ enum ProposalForm {
 
     /// What the proposal would do, as a clause after "superlinear proposes
     /// to". `related` names the other issue of a relation.
-    static func action(_ proposal: Proposal, related: String? = nil) -> String {
+    static func action(_ proposal: Proposal, related: String?) -> String {
         switch proposal.payload {
         case .createIssue(_, _, let title, _, _): "create the issue \"\(title)\""
         case .editIssue: "update this issue's description"
@@ -49,7 +49,7 @@ enum ProposalForm {
     /// The first line of a proposal's comment: what it proposes, or what
     /// became of it, with the time. A `superseded` comment was asked again
     /// in a newer one.
-    static func headline(_ proposal: Proposal, related: String? = nil, now: Date, superseded: Bool = false) -> String {
+    static func headline(_ proposal: Proposal, related: String?, now: Date, superseded: Bool) -> String {
         let action = action(proposal, related: related)
         let time = time(now)
         if superseded { return "**Superseded \(time).** superlinear proposed to \(action)." }
@@ -64,7 +64,7 @@ enum ProposalForm {
 
     /// The comment on a target issue, the first line being `headline`. Once
     /// the proposal is decided, the line that asks for a reaction is gone.
-    static func commentBody(_ proposal: Proposal, related: String? = nil, now: Date, superseded: Bool = false) -> String {
+    static func commentBody(_ proposal: Proposal, related: String?, now: Date, superseded: Bool) -> String {
         var lines = [headline(proposal, related: related, now: now, superseded: superseded), ""]
         if let note = proposal.reviewNote { lines += ["Note: \(note)", ""] }
         lines += ["Reason: \(proposal.reason)", proposal.source.line]
@@ -90,13 +90,13 @@ enum ProposalForm {
         switch proposal.payload {
         case .createIssue(_, _, let title, _, _): title
         case .changeSpec: "Spec change: \(specName(proposal.target))"
-        default: "superlinear proposes to \(action(proposal))"
+        default: "superlinear proposes to \(action(proposal, related: nil))"
         }
     }
 
     /// The description of the issue that proposes a new issue or a spec
     /// change. `specLink` is where the spec lives, when known.
-    static func issueDescription(_ proposal: Proposal, specLink: String? = nil) -> String {
+    static func issueDescription(_ proposal: Proposal, specLink: String?) -> String {
         switch proposal.payload {
         case .createIssue(_, _, _, let description, _):
             return [description, "Proposed by superlinear: \(proposal.reason)", proposal.source.line]
@@ -133,7 +133,7 @@ enum ProposalAnswer: Equatable {
     /// The answer to `proposal`, from the issue it waits on as Linear has it
     /// now, or nil when Linear no longer has the issue. Only the reactions of
     /// `viewerId`, the API key's user, count.
-    static func read(_ proposal: Proposal, snapshot: ProposalIssueSnapshot?, viewerId: String) -> ProposalAnswer {
+    static func read(_ proposal: Proposal, snapshot: ProposalIssueSnapshot?, viewerId: LinearUser.ID) -> ProposalAnswer {
         guard let post = proposal.post else { return .none }
         guard let snapshot else {
             return .reject(reason: post.isIssue ? "the proposed issue is no longer in Linear" : "its issue is no longer in Linear")
@@ -188,7 +188,7 @@ struct ProposalPoster: Sendable {
         case .createIssue(let teamId, let projectId, let title, _, _):
             return try await postIssue(
                 proposal, teamId: teamId, projectId: projectId, title: title,
-                description: ProposalForm.issueDescription(proposal), labels: [ProposalEngine.label, ProposalEngine.proposedLabel], now: now)
+                description: ProposalForm.issueDescription(proposal, specLink: nil), labels: [ProposalEngine.label, ProposalEngine.proposedLabel], now: now)
         case .changeSpec:
             var link: String?
             if case .document(let id, _) = proposal.target, id == specDocumentId { link = specDocumentURL }
@@ -245,7 +245,7 @@ struct ProposalPoster: Sendable {
         }
         let related = await relatedName(proposal)
         let created = try await linear.createComment(
-            issueId: issueId, body: ProposalForm.commentBody(proposal, related: related, now: now))
+            issueId: issueId, body: ProposalForm.commentBody(proposal, related: related, now: now, superseded: false))
         let labelId = try await linear.labelId(named: ProposalEngine.proposedLabel, teamId: issue.teamId)
         _ = try await linear.addLabel(issueId: issueId, labelId: labelId)
         proposal.post = ProposalPost(
@@ -277,13 +277,13 @@ struct ProposalPoster: Sendable {
                 _ = try await linear.updateComment(
                     id: commentId, body: ProposalForm.commentBody(proposal, related: related, now: now, superseded: true))
                 let created = try await linear.createComment(
-                    issueId: post.issueId, body: ProposalForm.commentBody(proposal, related: related, now: now))
+                    issueId: post.issueId, body: ProposalForm.commentBody(proposal, related: related, now: now, superseded: false))
                 proposal.post = ProposalPost(
                     form: .comment, issueId: post.issueId, issueIdentifier: post.issueIdentifier, commentId: created.id,
                     url: created.url, postedAt: now)
                 return proposal
             }
-            _ = try await linear.updateComment(id: commentId, body: ProposalForm.commentBody(proposal, related: related, now: now))
+            _ = try await linear.updateComment(id: commentId, body: ProposalForm.commentBody(proposal, related: related, now: now, superseded: false))
             if !othersPending { try await removeProposedLabel(from: post.issueId) }
         case .triageIssue, .backlogIssue:
             switch proposal.status {

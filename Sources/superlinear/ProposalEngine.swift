@@ -33,7 +33,7 @@ struct SpecText: Sendable, Equatable {
 /// Backlog.
 struct TeamStates: Sendable, Equatable {
     struct State: Sendable, Equatable {
-        var id: String
+        var id: LinearState.ID
         var type: LinearStateType
         var position: Double
     }
@@ -57,7 +57,7 @@ struct CreatedIssue: Sendable, Equatable {
 
 /// What Linear answered when a comment was created.
 struct CreatedComment: Sendable, Equatable {
-    var id: String
+    var id: LinearComment.ID
     var url: String?
     var response: JSONValue
 }
@@ -66,7 +66,7 @@ struct CreatedComment: Sendable, Equatable {
 /// and its comments with their reactions.
 struct ProposalIssueSnapshot: Sendable, Equatable {
     struct Comment: Sendable, Equatable {
-        var id: String
+        var id: LinearComment.ID
         var reactions: [Reaction]
     }
 
@@ -74,7 +74,7 @@ struct ProposalIssueSnapshot: Sendable, Equatable {
         /// The emoji, as Linear names it: `👍`, `+1` or `thumbsup`, with or
         /// without a skin tone.
         var emoji: String
-        var userId: String?
+        var userId: LinearUser.ID?
     }
 
     var id: LinearIssue.ID
@@ -88,7 +88,7 @@ struct ProposalIssueSnapshot: Sendable, Equatable {
 /// them for real; tests stand in for it. Each write returns Linear's response.
 protocol LinearWriting: Sendable {
     /// The user the API key belongs to, whose reactions answer proposals.
-    func viewerId() async throws -> String
+    func viewerId() async throws -> LinearUser.ID
     func editableIssue(id: LinearIssue.ID) async throws -> EditableIssue
     /// Open issues in the team whose titles look like `title`, as Linear's
     /// search finds them.
@@ -102,7 +102,7 @@ protocol LinearWriting: Sendable {
     /// Creates an issue, in the team's default state when `stateId` is nil.
     func createIssue(
         teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
-        labelIds: [LinearLabel.ID], stateId: String?
+        labelIds: [LinearLabel.ID], stateId: LinearState.ID?
     ) async throws -> CreatedIssue
     func updateIssueDescription(id: LinearIssue.ID, description: String) async throws -> JSONValue
     /// Moves the issue to its team's first canceled state.
@@ -116,7 +116,7 @@ protocol LinearWriting: Sendable {
     func moveIssue(id: LinearIssue.ID, toFirst type: LinearStateType) async throws -> JSONValue
     func createRelation(issueId: LinearIssue.ID, relatedIssueId: LinearIssue.ID, type: String) async throws -> JSONValue
     func createComment(issueId: LinearIssue.ID, body: String) async throws -> CreatedComment
-    func updateComment(id: String, body: String) async throws -> JSONValue
+    func updateComment(id: LinearComment.ID, body: String) async throws -> JSONValue
     func addLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue
     func removeLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue
     /// The issues with these IDs, with their comments and reactions. Issues

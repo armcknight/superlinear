@@ -58,7 +58,7 @@ private actor FakeLinear: PlanningReading, LinearWriting {
 
     func createIssue(
         teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
-        labelIds: [LinearLabel.ID], stateId: String?
+        labelIds: [LinearLabel.ID], stateId: LinearState.ID?
     ) async throws -> CreatedIssue {
         CreatedIssue(id: "new", identifier: "NEW-1", url: nil, response: written("create \(title) in \(teamId) project=\(projectId?.rawValue ?? "none")"))
     }

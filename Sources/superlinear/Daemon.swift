@@ -30,7 +30,7 @@ actor Daemon {
     private var gitHubPausedUntil: Date?
     /// The Linear user of each workspace's API key, whose reactions answer
     /// proposals, once looked up.
-    private var linearViewers: [String: String] = [:]
+    private var linearViewers: [String: LinearUser.ID] = [:]
     /// Whether each workspace's repository is private, once looked up. Only
     /// private ones are stopped by the GitHub Actions spending limit.
     private var repositoryPrivate: [String: Bool] = [:]
@@ -964,7 +964,7 @@ actor Daemon {
     }
 
     /// The Linear user of the workspace's API key, looked up once.
-    private func viewerId(workspace: WorkspaceConfig, client: LinearClient) async throws -> String {
+    private func viewerId(workspace: WorkspaceConfig, client: LinearClient) async throws -> LinearUser.ID {
         if let viewer = linearViewers[workspace.name] { return viewer }
         let viewer = try await client.viewerId()
         linearViewers[workspace.name] = viewer

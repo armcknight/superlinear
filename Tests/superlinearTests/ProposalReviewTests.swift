@@ -9,13 +9,13 @@ private actor FakeLinear: LinearWriting {
     var issues: [LinearIssue.ID: EditableIssue] = [:]
     var urls: [LinearIssue.ID: String] = [:]
     var comments: [LinearIssue.ID: [ProposalIssueSnapshot.Comment]] = [:]
-    var commentBodies: [String: String] = [:]
+    var commentBodies: [LinearComment.ID: String] = [:]
     var labelIds: [String: LinearLabel.ID] = [:]
     var labelNames: [LinearLabel.ID: String] = [:]
     var specs: [String: SpecText] = [:]
     var triageEnabled = true
     var canEnableTriage = true
-    var viewer = "owner"
+    var viewer: LinearUser.ID = "owner"
     var writes: [String] = []
     private var created = 0
 
@@ -27,7 +27,7 @@ private actor FakeLinear: LinearWriting {
 
     // MARK: What the owner does
 
-    func react(_ emoji: String, by user: String, on commentId: String) {
+    func react(_ emoji: String, by user: LinearUser.ID, on commentId: LinearComment.ID) {
         for (issueId, list) in comments {
             guard let index = list.firstIndex(where: { $0.id == commentId }) else { continue }
             comments[issueId]?[index].reactions.append(.init(emoji: emoji, userId: user))
@@ -56,7 +56,7 @@ private actor FakeLinear: LinearWriting {
         return .object(["write": .string(description)])
     }
 
-    func viewerId() async throws -> String { viewer }
+    func viewerId() async throws -> LinearUser.ID { viewer }
 
     func editableIssue(id: LinearIssue.ID) async throws -> EditableIssue {
         guard let issue = issues[id] else { throw LinearClientError.apiError(["Entity not found"]) }
@@ -89,7 +89,7 @@ private actor FakeLinear: LinearWriting {
 
     func createIssue(
         teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
-        labelIds: [LinearLabel.ID], stateId: String?
+        labelIds: [LinearLabel.ID], stateId: LinearState.ID?
     ) async throws -> CreatedIssue {
         created += 1
         let id = LinearIssue.ID(rawValue: "new-\(created)")
@@ -139,13 +139,13 @@ private actor FakeLinear: LinearWriting {
 
     func createComment(issueId: LinearIssue.ID, body: String) async throws -> CreatedComment {
         guard issues[issueId] != nil else { throw LinearClientError.apiError(["Entity not found"]) }
-        let id = "c\(commentBodies.count + 1)"
+        let id = LinearComment.ID(rawValue: "c\(commentBodies.count + 1)")
         commentBodies[id] = body
         comments[issueId, default: []].append(.init(id: id, reactions: []))
         return CreatedComment(id: id, url: "https://linear.app/t/issue/\(issues[issueId]!.identifier)#comment-\(id)", response: written("comment \(issueId)"))
     }
 
-    func updateComment(id: String, body: String) async throws -> JSONValue {
+    func updateComment(id: LinearComment.ID, body: String) async throws -> JSONValue {
         guard commentBodies[id] != nil else { throw LinearClientError.apiError(["Entity not found"]) }
         commentBodies[id] = body
         return written("update \(id)")
@@ -230,7 +230,7 @@ private func engine(_ linear: FakeLinear) -> ProposalEngine {
 }
 
 /// The owner's answer to `proposal`, as a poll would read it.
-private func answer(_ proposal: Proposal, linear: FakeLinear, viewer: String = "owner") async throws -> ProposalAnswer {
+private func answer(_ proposal: Proposal, linear: FakeLinear, viewer: LinearUser.ID = "owner") async throws -> ProposalAnswer {
     let snapshot = try await linear.proposalIssues(ids: [proposal.post!.issueId]).first
     return ProposalAnswer.read(proposal, snapshot: snapshot, viewerId: viewer)
 }

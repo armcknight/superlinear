@@ -1,4 +1,5 @@
 import Foundation
+import Tagged
 
 /// An open pull request waiting on the owner, with what it holds back.
 struct WaitingPullRequest: Sendable, Equatable {
@@ -32,7 +33,7 @@ enum StatusReview {
 
     /// The daemon's activity since `since`, and the proposals applied
     /// automatically since then, oldest first.
-    static func done(_ state: WorkspaceState, since: Date, now: Date = Date()) -> [String] {
+    static func done(_ state: WorkspaceState, since: Date, now: Date) -> [String] {
         struct Line {
             var time: Date
             var text: String
@@ -139,8 +140,11 @@ enum StatusReview {
     }
 
     struct RateLimit: Sendable, Equatable {
-        var remaining: Int
-        var limit: Int
+        /// GraphQL points, which GitHub budgets by the hour.
+        typealias Points = Tagged<RateLimit, Int>
+
+        var remaining: Points
+        var limit: Points
         var reset: Date
     }
 
@@ -155,7 +159,7 @@ enum StatusReview {
             let resources: Resources
         }
         guard let limit = try JSONDecoder().decode(Response.self, from: data).resources.graphql else { return nil }
-        return RateLimit(remaining: limit.remaining, limit: limit.limit, reset: Date(timeIntervalSince1970: limit.reset))
+        return RateLimit(remaining: .init(rawValue: limit.remaining), limit: .init(rawValue: limit.limit), reset: Date(timeIntervalSince1970: limit.reset))
     }
 
     /// The latest completed run on `defaultBranch` among `runs`, as `gh run
@@ -178,7 +182,7 @@ enum StatusReview {
             risks.append("CI \(conclusion.rawValue) on \(defaultBranch)\(name)" + (run.url.map { ": \($0)" } ?? ""))
         }
         if let rateLimit, rateLimit.limit > 0,
-           Double(rateLimit.remaining) < Double(rateLimit.limit) * rateLimitWarning {
+           Double(rateLimit.remaining.rawValue) < Double(rateLimit.limit.rawValue) * rateLimitWarning {
             risks.append("GitHub rate limit: \(rateLimit.remaining) of \(rateLimit.limit) left, "
                 + "resets \(StatusTime.rendered(rateLimit.reset, now: now))")
         }

@@ -40,7 +40,7 @@ private actor FakeLinear: LinearWriting {
 
     func createIssue(
         teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
-        labelIds: [LinearLabel.ID], stateId: String?
+        labelIds: [LinearLabel.ID], stateId: LinearState.ID?
     ) async throws -> CreatedIssue {
         let response = try written("create \(title) labels=\(labelIds.map(\.rawValue)) description=\(description)")
         return CreatedIssue(id: "new", identifier: "NEW-1", url: nil, response: response)

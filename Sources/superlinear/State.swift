@@ -433,7 +433,7 @@ struct State: Codable, Sendable {
 
     /// The state file with the proposals of `superlinear plan` taken in, as
     /// the daemon takes them in at each poll, so a reader sees them at once.
-    static func loadWithPlanning(from url: URL = stateFileURL(), planning: PlanningRecord = .load()) -> State {
+    static func loadWithPlanning(from url: URL, planning: PlanningRecord) -> State {
         var state = load(from: url)
         for (name, record) in planning.workspaces {
             state.takeIn(record, workspace: name, now: Date())

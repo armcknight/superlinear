@@ -494,7 +494,7 @@ struct WorkspaceReport: Sendable {
     /// autonomously" looks.
     static func gather(
         workspace: WorkspaceConfig, state: State, runner: AgentRunner,
-        since: TimeInterval = StatusReview.defaultSince, now: Date = Date()
+        since: TimeInterval, now: Date
     ) async -> WorkspaceReport {
         let workspaceState = state.workspaces[workspace.name] ?? WorkspaceState()
         var warnings: [String] = []
@@ -651,13 +651,13 @@ enum StatusCommand {
     /// Warnings about GitHub's rate limit become one header line, rather than
     /// one per GitHub call in every workspace.
     static func reports(
-        workspaces: [WorkspaceConfig], state: State, transcripts: Transcripts? = nil, since: TimeInterval = StatusReview.defaultSince
+        workspaces: [WorkspaceConfig], state: State, transcripts: Transcripts?, since: TimeInterval
     ) async -> (reports: [WorkspaceReport], header: [String]) {
         let runner = AgentRunner()
         var reports = await withTaskGroup(of: (Int, WorkspaceReport).self) { group in
             for (index, workspace) in workspaces.enumerated() {
                 group.addTask {
-                    var report = await WorkspaceReport.gather(workspace: workspace, state: state, runner: runner, since: since)
+                    var report = await WorkspaceReport.gather(workspace: workspace, state: state, runner: runner, since: since, now: Date())
                     if let transcripts {
                         let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
                         report = report.measured(repoPath: repoPath, transcripts: transcripts)
@@ -687,7 +687,7 @@ enum StatusCommand {
     /// Prints a report for every configured workspace, in config order, or
     /// for those `filter` names, and returns the exit status. `since` is how
     /// far back "Done autonomously" looks; nil for the default.
-    static func run(configPath: String?, filter: StatusFilter = StatusFilter(), since: TimeInterval? = nil) async -> Int32 {
+    static func run(configPath: String?, filter: StatusFilter, since: TimeInterval?) async -> Int32 {
         let config: Config
         do {
             config = try Config.load(from: configPath)
@@ -705,8 +705,8 @@ enum StatusCommand {
             }
             workspaces = config.workspaces.filter { names.contains($0.name) }
         }
-        let state = State.loadWithPlanning()
-        var gathered = await reports(workspaces: workspaces, state: state, since: since ?? StatusReview.defaultSince)
+        let state = State.loadWithPlanning(from: State.stateFileURL(), planning: PlanningRecord.load())
+        var gathered = await reports(workspaces: workspaces, state: state, transcripts: nil, since: since ?? StatusReview.defaultSince)
         if let sections = filter.sections {
             gathered.reports = gathered.reports.map { $0.filtered(to: sections) }
         }

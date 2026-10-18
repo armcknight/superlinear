@@ -291,7 +291,7 @@ enum LinearQuery: CaseIterable, Sendable {
             """
         case .planningProjects: """
             query PlanningProjects($ids: [ID!]) {
-              projects(filter: { id: { in: $ids } }, first: 50) {
+              projects(filter: { id: { in: $ids } }, first: \(Self.planningProjectsPageSize)) {
                 nodes {
                   id
                   name
@@ -366,7 +366,7 @@ enum LinearQuery: CaseIterable, Sendable {
             """
         case .proposalIssues: """
             query ProposalIssues($ids: [ID!], $cursor: String) {
-              issues(filter: { id: { in: $ids } }, first: 25, after: $cursor) {
+              issues(filter: { id: { in: $ids } }, first: \(Self.proposalIssuesPageSize), after: $cursor) {
                 nodes {
                   id
                   identifier
@@ -380,6 +380,15 @@ enum LinearQuery: CaseIterable, Sendable {
             """
         }
     }
+
+    /// How many issues a page of `proposalIssues` holds, and so how many IDs
+    /// a request asks for. Each brings up to 100 comments with their
+    /// reactions, which Linear counts toward the query's complexity.
+    static let proposalIssuesPageSize = 25
+
+    /// How many projects `planningProjects` answers with, and so how many IDs
+    /// a request asks for: it reads no further pages.
+    static let planningProjectsPageSize = 50
 
     private static let planningIssueFields = """
         nodes {
@@ -692,7 +701,7 @@ extension LinearQuery {
         let viewer: Viewer
 
         struct Viewer: Decodable {
-            let id: String
+            let id: LinearUser.ID
         }
     }
 
@@ -705,7 +714,7 @@ extension LinearQuery {
         }
 
         struct State: Decodable {
-            let id: String
+            let id: LinearState.ID
             let type: LinearStateType
             let position: Double
         }
@@ -729,7 +738,7 @@ extension LinearQuery {
         }
 
         struct Comment: Decodable {
-            let id: String
+            let id: LinearComment.ID
             let reactions: [Reaction]
         }
 
@@ -739,7 +748,7 @@ extension LinearQuery {
         }
 
         struct User: Decodable {
-            let id: String
+            let id: LinearUser.ID
         }
 
         var snapshot: ProposalIssueSnapshot {
@@ -755,4 +764,23 @@ extension LinearQuery {
     struct Success: Decodable {
         let success: Bool
     }
+}
+
+/// The names of the variables the queries take, and of the fields of the
+/// inputs and filters given in them.
+enum LinearVariable: String, Sendable {
+    case after, body, content, cursor, description, gt, id, ids, input, issueId, keys, labelId, labelIds, name, numbers
+    case projectId, relatedIssueId, stateId, states, teamId, teamIds, term, title, type, url
+}
+
+/// The names of the fields superlinear reads from Linear's answers: what
+/// each mutation answers in, and the fields of the objects it returns.
+enum LinearField: String, Sendable {
+    case attachmentLinkURL, commentCreate, commentUpdate, documentUpdate, issueAddLabel, issueCreate, issueLabelCreate
+    case issueRelationCreate, issueRemoveLabel, issueUpdate, projectUpdate, projectUpdateCreate, teamUpdate
+    case comment, id, identifier, issue, issueLabel, url
+}
+
+extension JSONValue {
+    subscript(field: LinearField) -> JSONValue? { self[field.rawValue] }
 }

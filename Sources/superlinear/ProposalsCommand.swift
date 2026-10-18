@@ -22,7 +22,7 @@ enum ProposalsCommand {
             }
             names = [workspace]
         }
-        let state = State.loadWithPlanning()
+        let state = State.loadWithPlanning(from: State.stateFileURL(), planning: PlanningRecord.load())
         print(names.map { rendered(state.proposals(workspace: $0), workspace: $0) }.joined(separator: "\n\n"))
         return 0
     }

@@ -2,13 +2,13 @@ import Foundation
 
 /// The reads and writes that proposals make in Linear.
 extension LinearClient: LinearWriting {
-    func viewerId() async throws -> String {
+    func viewerId() async throws -> LinearUser.ID {
         try await execute(.viewer, variables: [:], as: LinearQuery.ViewerData.self).viewer.id
     }
 
     func editableIssue(id: LinearIssue.ID) async throws -> EditableIssue {
         let issue = try await execute(
-            .editableIssue, variables: ["id": id.rawValue], as: LinearQuery.EditableIssueData.self
+            .editableIssue, variables: [.id: id.rawValue], as: LinearQuery.EditableIssueData.self
         ).issue
         return EditableIssue(
             id: issue.id, identifier: issue.identifier, description: issue.description ?? "",
@@ -19,7 +19,7 @@ extension LinearClient: LinearWriting {
 
     func openIssues(like title: String, teamId: LinearTeam.ID) async throws -> [IssueMatch] {
         let nodes = try await execute(
-            .similarIssues, variables: ["term": title, "teamId": teamId.rawValue], as: LinearQuery.SimilarIssuesData.self
+            .similarIssues, variables: [.term: title, .teamId: teamId.rawValue], as: LinearQuery.SimilarIssuesData.self
         ).searchIssues.nodes
         return nodes
             .filter { ![.completed, .canceled].contains($0.state.type) }
@@ -27,73 +27,74 @@ extension LinearClient: LinearWriting {
     }
 
     func labelId(named name: String, teamId: LinearTeam.ID) async throws -> LinearLabel.ID {
-        let labels = try await execute(.labels, variables: ["name": name], as: LinearQuery.LabelsData.self).issueLabels.nodes
+        let labels = try await execute(.labels, variables: [.name: name], as: LinearQuery.LabelsData.self).issueLabels.nodes
         // A workspace label serves every team; another team's does not.
         if let label = labels.first(where: { $0.team == nil || $0.team?.id == teamId }) {
             return label.id
         }
         let response = try await mutate(
-            .createLabel, variables: ["teamId": teamId.rawValue, "name": name], field: "issueLabelCreate"
+            .createLabel, variables: [.teamId: teamId.rawValue, .name: name], field: .issueLabelCreate
         )
-        guard let id = response["issueLabelCreate"]?["issueLabel"]?["id"]?.stringValue else {
+        guard let id = response[.issueLabelCreate]?[.issueLabel]?[.id]?.stringValue else {
             throw LinearClientError.invalidResponse
         }
         return LinearLabel.ID(rawValue: id)
     }
 
     func teamStates(id: LinearTeam.ID) async throws -> TeamStates {
-        let team = try await execute(.teamStates, variables: ["id": id.rawValue], as: LinearQuery.TeamStatesData.self).team
+        let team = try await execute(.teamStates, variables: [.id: id.rawValue], as: LinearQuery.TeamStatesData.self).team
         return TeamStates(
             triageEnabled: team.triageEnabled,
             states: team.states.nodes.map { TeamStates.State(id: $0.id, type: $0.type, position: $0.position) })
     }
 
     func enableTriage(teamId: LinearTeam.ID) async throws {
-        try await mutate(.enableTriage, variables: ["id": teamId.rawValue], field: "teamUpdate")
+        try await mutate(.enableTriage, variables: [.id: teamId.rawValue], field: .teamUpdate)
     }
 
     func createIssue(
         teamId: LinearTeam.ID, projectId: LinearProject.ID?, title: String, description: String,
-        labelIds: [LinearLabel.ID], stateId: String?
+        labelIds: [LinearLabel.ID], stateId: LinearState.ID?
     ) async throws -> CreatedIssue {
-        var input: [String: Any] = [
-            "teamId": teamId.rawValue, "title": title, "description": description, "labelIds": labelIds.map(\.rawValue),
+        var input: [LinearVariable: Any] = [
+            .teamId: teamId.rawValue, .title: title, .description: description, .labelIds: labelIds.map(\.rawValue),
         ]
-        if let projectId { input["projectId"] = projectId.rawValue }
-        if let stateId { input["stateId"] = stateId }
-        let response = try await mutate(.createIssue, variables: ["input": input], field: "issueCreate")
-        guard let issue = response["issueCreate"]?["issue"], let id = issue["id"]?.stringValue,
-              let identifier = issue["identifier"]?.stringValue
+        if let projectId { input[.projectId] = projectId.rawValue }
+        if let stateId { input[.stateId] = stateId.rawValue }
+        let response = try await mutate(.createIssue, variables: [.input: input], field: .issueCreate)
+        guard let issue = response[.issueCreate]?[.issue], let id = issue[.id]?.stringValue,
+              let identifier = issue[.identifier]?.stringValue
         else { throw LinearClientError.invalidResponse }
-        return CreatedIssue(id: LinearIssue.ID(rawValue: id), identifier: identifier, url: issue["url"]?.stringValue, response: response)
+        return CreatedIssue(id: LinearIssue.ID(rawValue: id), identifier: identifier, url: issue[.url]?.stringValue, response: response)
     }
 
     func createComment(issueId: LinearIssue.ID, body: String) async throws -> CreatedComment {
         let response = try await mutate(
-            .createComment, variables: ["issueId": issueId.rawValue, "body": body], field: "commentCreate")
-        guard let comment = response["commentCreate"]?["comment"], let id = comment["id"]?.stringValue else {
+            .createComment, variables: [.issueId: issueId.rawValue, .body: body], field: .commentCreate)
+        guard let comment = response[.commentCreate]?[.comment], let id = comment[.id]?.stringValue else {
             throw LinearClientError.invalidResponse
         }
-        return CreatedComment(id: id, url: comment["url"]?.stringValue, response: response)
+        return CreatedComment(id: LinearComment.ID(rawValue: id), url: comment[.url]?.stringValue, response: response)
     }
 
-    func updateComment(id: String, body: String) async throws -> JSONValue {
-        try await mutate(.updateComment, variables: ["id": id, "body": body], field: "commentUpdate")
+    func updateComment(id: LinearComment.ID, body: String) async throws -> JSONValue {
+        try await mutate(.updateComment, variables: [.id: id.rawValue, .body: body], field: .commentUpdate)
     }
 
     func addLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue {
-        try await mutate(.addLabel, variables: ["id": issueId.rawValue, "labelId": labelId.rawValue], field: "issueAddLabel")
+        try await mutate(.addLabel, variables: [.id: issueId.rawValue, .labelId: labelId.rawValue], field: .issueAddLabel)
     }
 
     func removeLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue {
-        try await mutate(.removeLabel, variables: ["id": issueId.rawValue, "labelId": labelId.rawValue], field: "issueRemoveLabel")
+        try await mutate(.removeLabel, variables: [.id: issueId.rawValue, .labelId: labelId.rawValue], field: .issueRemoveLabel)
     }
 
     func proposalIssues(ids: [LinearIssue.ID]) async throws -> [ProposalIssueSnapshot] {
         var snapshots: [ProposalIssueSnapshot] = []
-        for start in stride(from: 0, to: ids.count, by: 25) {
-            let batch = ids[start..<min(start + 25, ids.count)].map(\.rawValue)
-            let nodes: [LinearQuery.ProposalIssueNode] = try await fetchAll(.proposalIssues, variables: ["ids": batch])
+        let size = LinearQuery.proposalIssuesPageSize
+        for start in stride(from: 0, to: ids.count, by: size) {
+            let batch = ids[start..<min(start + size, ids.count)].map(\.rawValue)
+            let nodes: [LinearQuery.ProposalIssueNode] = try await fetchAll(.proposalIssues, variables: [.ids: batch])
             snapshots += nodes.map(\.snapshot)
         }
         return snapshots
@@ -101,16 +102,16 @@ extension LinearClient: LinearWriting {
 
     func updateIssueDescription(id: LinearIssue.ID, description: String) async throws -> JSONValue {
         try await mutate(
-            .editIssueDescription, variables: ["id": id.rawValue, "description": description], field: "issueUpdate"
+            .editIssueDescription, variables: [.id: id.rawValue, .description: description], field: .issueUpdate
         )
     }
 
     func closeIssue(id: LinearIssue.ID) async throws -> JSONValue {
-        try await moveOrThrow(id: id, toFirst: "canceled")
+        try await moveOrThrow(id: id, toFirst: .canceled)
     }
 
     func promoteIssue(id: LinearIssue.ID) async throws -> JSONValue {
-        try await moveOrThrow(id: id, toFirst: "unstarted")
+        try await moveOrThrow(id: id, toFirst: .unstarted)
     }
 
     func completeIssue(id: LinearIssue.ID) async throws -> Bool {
@@ -118,20 +119,20 @@ extension LinearClient: LinearWriting {
     }
 
     func moveIssue(id: LinearIssue.ID, toFirst type: LinearStateType) async throws -> JSONValue {
-        try await moveOrThrow(id: id, toFirst: type.rawValue)
+        try await moveOrThrow(id: id, toFirst: type)
     }
 
-    private func moveOrThrow(id: LinearIssue.ID, toFirst type: String) async throws -> JSONValue {
+    private func moveOrThrow(id: LinearIssue.ID, toFirst type: LinearStateType) async throws -> JSONValue {
         // With nothing to skip, a move always happens or throws.
-        guard let response = try await move(id: id.rawValue, toFirst: type) else { throw LinearClientError.invalidResponse }
+        guard let response = try await move(id: id.rawValue, toFirst: type.rawValue) else { throw LinearClientError.invalidResponse }
         return response
     }
 
     func createRelation(issueId: LinearIssue.ID, relatedIssueId: LinearIssue.ID, type: String) async throws -> JSONValue {
         try await mutate(
             .createRelation,
-            variables: ["issueId": issueId.rawValue, "relatedIssueId": relatedIssueId.rawValue, "type": type],
-            field: "issueRelationCreate"
+            variables: [.issueId: issueId.rawValue, .relatedIssueId: relatedIssueId.rawValue, .type: type],
+            field: .issueRelationCreate
         )
     }
 
@@ -139,9 +140,9 @@ extension LinearClient: LinearWriting {
         let node: LinearQuery.SpecNode
         switch target {
         case .project(let id, _):
-            node = try await execute(.projectSpec, variables: ["id": id.rawValue], as: LinearQuery.ProjectSpecData.self).project
+            node = try await execute(.projectSpec, variables: [.id: id.rawValue], as: LinearQuery.ProjectSpecData.self).project
         case .document(let id, _):
-            node = try await execute(.documentSpec, variables: ["id": id.rawValue], as: LinearQuery.DocumentSpecData.self).document
+            node = try await execute(.documentSpec, variables: [.id: id.rawValue], as: LinearQuery.DocumentSpecData.self).document
         case .issue, .team:
             throw ProposalError.unsupportedTarget(.changeSpec, target.kind)
         }
@@ -151,9 +152,9 @@ extension LinearClient: LinearWriting {
     func updateSpec(of target: ProposalTarget, content: String) async throws -> JSONValue {
         switch target {
         case .project(let id, _):
-            try await mutate(.changeProjectSpec, variables: ["id": id.rawValue, "content": content], field: "projectUpdate")
+            try await mutate(.changeProjectSpec, variables: [.id: id.rawValue, .content: content], field: .projectUpdate)
         case .document(let id, _):
-            try await mutate(.changeDocumentSpec, variables: ["id": id.rawValue, "content": content], field: "documentUpdate")
+            try await mutate(.changeDocumentSpec, variables: [.id: id.rawValue, .content: content], field: .documentUpdate)
         case .issue, .team:
             throw ProposalError.unsupportedTarget(.changeSpec, target.kind)
         }
@@ -161,7 +162,7 @@ extension LinearClient: LinearWriting {
 
     func postProjectUpdate(projectId: LinearProject.ID, body: String) async throws -> JSONValue {
         try await mutate(
-            .postProjectUpdate, variables: ["projectId": projectId.rawValue, "body": body], field: "projectUpdateCreate"
+            .postProjectUpdate, variables: [.projectId: projectId.rawValue, .body: body], field: .projectUpdateCreate
         )
     }
 }
@@ -171,16 +172,17 @@ extension LinearClient: PlanningReading {
     func planningIssues(teamIds: [LinearTeam.ID]) async throws -> [PlanningIssue] {
         let nodes: [LinearQuery.PlanningIssueNode] = teamIds.isEmpty
             ? try await fetchAll(.planningIssues, variables: [:])
-            : try await fetchAll(.planningIssuesInTeams, variables: ["teamIds": teamIds.map(\.rawValue)])
+            : try await fetchAll(.planningIssuesInTeams, variables: [.teamIds: teamIds.map(\.rawValue)])
         return nodes.map(\.planningIssue)
     }
 
     func planningProjects(ids: [LinearProject.ID]) async throws -> [PlanningProject] {
         var projects: [PlanningProject] = []
-        for start in stride(from: 0, to: ids.count, by: 50) {
-            let batch = ids[start..<min(start + 50, ids.count)].map(\.rawValue)
+        let size = LinearQuery.planningProjectsPageSize
+        for start in stride(from: 0, to: ids.count, by: size) {
+            let batch = ids[start..<min(start + size, ids.count)].map(\.rawValue)
             let nodes = try await execute(
-                .planningProjects, variables: ["ids": batch], as: LinearQuery.PlanningProjectsData.self
+                .planningProjects, variables: [.ids: batch], as: LinearQuery.PlanningProjectsData.self
             ).projects.nodes
             projects += nodes.map {
                 PlanningProject(
@@ -200,8 +202,8 @@ extension LinearClient: PlanningReading {
     }
 
     func completedIssues(teamIds: [LinearTeam.ID], after: Date) async throws -> [LinearIssue.Identifier] {
-        var variables: [String: Any] = ["after": ["gt": ISO8601DateFormatter().string(from: after)]]
-        if !teamIds.isEmpty { variables["teamIds"] = teamIds.map(\.rawValue) }
+        var variables: [LinearVariable: Any] = [.after: [LinearVariable.gt: ISO8601DateFormatter().string(from: after)]]
+        if !teamIds.isEmpty { variables[.teamIds] = teamIds.map(\.rawValue) }
         let nodes: [LinearQuery.CompletedIssueNode] = try await fetchAll(
             teamIds.isEmpty ? .completedIssuesSince : .completedIssuesSinceInTeams, variables: variables)
         return nodes.sorted { $0.completedAt < $1.completedAt }.map(\.identifier)
