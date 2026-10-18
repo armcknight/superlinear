@@ -31,9 +31,9 @@ struct StatusTests {
     @Test("A run in flight is running, interrupted, or queued, whatever its pull request")
     func runsInFlight() {
         let merged = pullRequest(1, state: "MERGED")
-        #expect(TaskCategory.of(run: launched, running: true, issue: nil, pullRequest: merged) == .running)
-        #expect(TaskCategory.of(run: launched, running: false, issue: nil, pullRequest: merged) == .interrupted)
-        #expect(TaskCategory.of(run: queued, running: false, issue: nil, pullRequest: merged) == .queued)
+        #expect(TaskCategory.of(run: launched, running: true, issue: nil, pullRequest: merged, pending: nil) == .running)
+        #expect(TaskCategory.of(run: launched, running: false, issue: nil, pullRequest: merged, pending: nil) == .interrupted)
+        #expect(TaskCategory.of(run: queued, running: false, issue: nil, pullRequest: merged, pending: nil) == .queued)
     }
 
     @Test("A run addressing a review has its own category while running or queued, and resumes as usual when interrupted")
@@ -43,9 +43,9 @@ struct StatusTests {
         running.review = request
         var waiting = queued
         waiting.review = request
-        #expect(TaskCategory.of(run: running, running: true, issue: nil, pullRequest: nil) == .addressingReview)
-        #expect(TaskCategory.of(run: waiting, running: false, issue: nil, pullRequest: nil) == .addressingReview)
-        #expect(TaskCategory.of(run: running, running: false, issue: nil, pullRequest: nil) == .interrupted)
+        #expect(TaskCategory.of(run: running, running: true, issue: nil, pullRequest: nil, pending: nil) == .addressingReview)
+        #expect(TaskCategory.of(run: waiting, running: false, issue: nil, pullRequest: nil, pending: nil) == .addressingReview)
+        #expect(TaskCategory.of(run: running, running: false, issue: nil, pullRequest: nil, pending: nil) == .interrupted)
     }
 
     @Test("A review run's detail gives its pull request, and its log once launched")
@@ -68,25 +68,25 @@ struct StatusTests {
 
     @Test("A finished task with an open pull request is listed with it")
     func openPullRequest() {
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: pullRequest(1, state: "OPEN")) == .openPullRequest)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: pullRequest(1, state: "OPEN"), pending: nil) == .openPullRequest)
     }
 
     // The issue's own rule: merged is not enough, Linear must agree.
     @Test("A merged pull request is complete only once the Linear issue is done")
     func completionNeedsBoth() {
         let merged = pullRequest(1, state: "MERGED")
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "completed"), pullRequest: merged) == .completed)
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "started"), pullRequest: merged) == .merged)
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "canceled"), pullRequest: merged) == .merged)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "completed"), pullRequest: merged, pending: nil) == .completed)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "started"), pullRequest: merged, pending: nil) == .merged)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "canceled"), pullRequest: merged, pending: nil) == .merged)
     }
 
     @Test("Without an open or merged pull request, the Linear state decides")
     func withoutPullRequest() {
         let closedPR = pullRequest(1, state: "CLOSED")
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: nil) == .noPullRequest)
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: closedPR) == .noPullRequest)
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "completed"), pullRequest: nil) == .closed)
-        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "canceled"), pullRequest: closedPR) == .closed)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: nil, pending: nil) == .noPullRequest)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1"), pullRequest: closedPR, pending: nil) == .noPullRequest)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "completed"), pullRequest: nil, pending: nil) == .closed)
+        #expect(TaskCategory.of(run: nil, running: false, issue: issue("SL-1", stateType: "canceled"), pullRequest: closedPR, pending: nil) == .closed)
     }
 
     // MARK: Pull requests

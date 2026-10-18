@@ -161,8 +161,8 @@ struct StatusReviewTests {
           Waiting on you
             SPL-5   #2 PR 2
                     not reviewed · no CI · blocks 2 issues · https://github.com/o/r/pull/2
-            SPL-60  #3 PR 3
-                    stacked on #2 · not reviewed · no CI · https://github.com/o/r/pull/3
+              SPL-60  #3 PR 3
+                      stacked on #2 · not reviewed · no CI · https://github.com/o/r/pull/3
             SPL-7   #1 PR 1
                     not reviewed · no CI · https://github.com/o/r/pull/1
             SPL-20  #20 PR 20

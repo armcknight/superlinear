@@ -73,8 +73,12 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
         return state == .failing && stoppedBranches.contains(headRefName) ? .notStarted : state
     }
 
-    var checkState: CheckState {
-        let checks = statusCheckRollup ?? []
+    var checkState: CheckState { Self.checkState(of: statusCheckRollup) }
+
+    /// What the checks say together: failing if any did, else pending if any
+    /// is, else passing; no CI when there are none.
+    static func checkState(of checks: [Check]?) -> CheckState {
+        let checks = checks ?? []
         guard !checks.isEmpty else { return .none }
         let failed: Set<String> = ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"]
         if checks.contains(where: { failed.contains($0.conclusion ?? "") || failed.contains($0.state ?? "") }) {

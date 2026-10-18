@@ -10,15 +10,21 @@ struct IssueSelectionPlan: Equatable {
     var blocked: [LinearIssue.ID: WaitingIssue] = [:]
     /// Issues carrying a human label, keyed by issue ID.
     var needsHuman: [LinearIssue.ID: WaitingIssue] = [:]
+    /// Of the issues to start, those stacked on their one unmerged blocker's
+    /// pull request, keyed by issue ID.
+    var stacked: [LinearIssue.ID: StackBase] = [:]
 }
 
 extension IssueSelection {
     /// Sorts `candidates` for `workspace`. Issues in `handled`, which the
     /// daemon has processed or is running, and issues no longer in a state an
     /// agent may start from are left out, so they stop waiting. A human label
-    /// wins over open blockers.
+    /// wins over open blockers. An issue whose one open blocker is in
+    /// `stackBases` starts stacked on that blocker's pull request; one with
+    /// two or more open blockers waits whatever their pull requests.
     static func plan(
-        _ candidates: [LinearIssue], workspace: WorkspaceConfig, handled: Set<LinearIssue.ID>
+        _ candidates: [LinearIssue], workspace: WorkspaceConfig, handled: Set<LinearIssue.ID>,
+        stackBases: [LinearIssue.Identifier: StackBase]
     ) -> IssueSelectionPlan {
         var plan = IssueSelectionPlan()
         var seen: Set<LinearIssue.ID> = []
@@ -34,7 +40,9 @@ extension IssueSelection {
                 continue
             }
             let blockers = issue.openBlockers
-            if !blockers.isEmpty {
+            if blockers.count == 1, let firstBlocker = blockers.first, let base = stackBases[firstBlocker] {
+                plan.stacked[issue.id] = base
+            } else if !blockers.isEmpty {
                 plan.blocked[issue.id] = WaitingIssue(issue, blockers: blockers)
                 continue
             }

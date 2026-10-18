@@ -136,6 +136,11 @@ extension Tagged where Tag == GitCommit, RawValue == String {
     var short: String { String(rawValue.prefix(7)) }
 }
 
+/// A git branch, for the tag on its name.
+enum GitBranch {
+    typealias Name = Tagged<GitBranch, String>
+}
+
 /// A Claude Code session, for the tag on its ID. Lowercase, as Claude names
 /// its transcripts.
 enum ClaudeSession {

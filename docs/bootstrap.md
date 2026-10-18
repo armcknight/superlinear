@@ -7,12 +7,31 @@ The guide's sections here describe work that is planned. Each one that is not bu
 <a id="components"></a>
 ## Components
 
-Not built yet: [SPL-17](https://linear.app/superlinear-linear/issue/SPL-17) adds the templates repository and the first component, `apple-app`, and fills in this section.
+A component is a reusable part of a project: `apple-app`, and later `swift-cli`, `vapor-fly`, `supabase` and `web-frontend`. A project can use more than one, such as an Apple app and a Vapor server in one repository.
+
+Components live in the [armcknight/templatr](https://github.com/armcknight/templatr) repository. Each component has a directory, `components/<name>/`, with:
+
+- `component.toml`, its [manifest](#manifests);
+- `scaffold/`, files copied one time into a project, never over a file that exists, including a README with the generated "How this project is built" section's markers;
+- `CLAUDE.md`, conventions for agents, which the project's `CLAUDE.md` includes.
+
+The pieces that projects share — fastlane lanes and Makefile fragments — are at the top of the templates repository. Releases are tags, `v1`, `v1.1`; projects refer to a tag, never to `main`. Reusable GitHub workflows are in [armcknight/workflows](https://github.com/armcknight/workflows), which projects call at its major tag, such as `@4`.
+
+The first component is `apple-app`: an iOS app, with an optional embedded watch app, a tvOS app or a macOS app. It brings the shared `test`, `stage` and `beta` lanes, and workflows that call `ios-ci.yml` from [armcknight/workflows](https://github.com/armcknight/workflows) for pull requests and staging builds. The owner uploads to TestFlight by hand with `make deploy-beta`: see [TestFlight builds](builds.md#testflight).
 
 <a id="manifests"></a>
 ## Manifests
 
-Not built yet: [SPL-17](https://linear.app/superlinear-linear/issue/SPL-17) defines the component manifest, `component.toml`, and fills in this section.
+Each component's `component.toml` says:
+
+- `detect`: how to know from its files that a repository uses the component, such as an `.xcodeproj` with an application target. Each rule is a file glob, optionally with a pattern the file must contain.
+- `inputs`: the values that differ per project, such as the bundle ID and the team ID, each with an example, and `infer`: where to read it in the repository — a build setting, a key in `fastlane/Appfile`, a field in a TOML or YAML file, a file's path or a pattern in a file. An input that is not found is asked for one time.
+- `secrets`: the secrets by name, where each value comes from, who it is shared with, the step a person must do to make it, and how often to rotate it. Most are GitHub Actions secrets. A `local` one, such as the App Store Connect API key, stays in the owner's Keychain and is never a GitHub secret. See [Secrets](#secrets).
+- `steps`: in order, a `check` command for each and a `fix`, which is a command or the text of a [Needs human step](#needs-human-steps).
+- `shared`: the shared pieces the component uses, with their repositories, paths and tags.
+- `docs`: the anchors in this guide that explain the component, from [Anchors](anchors.md).
+
+The [templates repository's README](https://github.com/armcknight/templatr/blob/main/README.md#the-manifest) describes each field, and [its JSON Schema](https://github.com/armcknight/templatr/blob/main/schema/component.schema.json) is the full format.
 
 <a id="secrets"></a>
 ## Secrets and where they come from

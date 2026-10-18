@@ -19,6 +19,11 @@ struct ActivityEvent: Codable, Sendable, Equatable {
         case conflictsResolved
         /// The daemon marked an issue done in Linear after its pull request merged.
         case issueCompleted
+        /// The daemon merged the branch below a stacked pull request into it.
+        case restacked
+        /// The pull request below a stacked one was closed without a merge,
+        /// so the daemon made the stacked one a draft.
+        case stackBaseClosed
     }
 
     var time: Date
@@ -40,6 +45,8 @@ struct ActivityEvent: Codable, Sendable, Equatable {
         case .reviewAddressed: "review addressed on \(identifier)"
         case .conflictsResolved: "conflicts resolved on \(identifier)"
         case .issueCompleted: "\(identifier) completed in Linear after its merge"
+        case .restacked: "merged the branch below \(identifier)'s pull request into it"
+        case .stackBaseClosed: "\(identifier)'s pull request became a draft: the one below it was closed without a merge"
         }
         return detail.map { "\(text): \($0)" } ?? text
     }

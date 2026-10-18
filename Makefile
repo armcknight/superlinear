@@ -63,6 +63,13 @@ install:
 	cp $(BINARY) $(INSTALL_PATH).new
 	mv -f $(INSTALL_PATH).new $(INSTALL_PATH)
 	@echo "Installed $$($(INSTALL_PATH) --version) at $(INSTALL_PATH)"
+	@# The daemon exits when its binary is replaced, but launchd's own restart
+	@# of the new binary can fail with OS_REASON_CODESIGNING and leave it down.
+	@# So restart a daemon that launchd runs from this path here. Agents in
+	@# flight carry on, as they do through any restart.
+	@if launchctl print gui/$$(id -u)/$(LABEL) 2>/dev/null | grep -q "program = $(INSTALL_PATH)$$"; then \
+		launchctl kickstart -k gui/$$(id -u)/$(LABEL) && echo "Restarted the daemon on the new build"; \
+	fi
 	@found="$$(command -v superlinear)"; \
 	if [ -n "$$found" ] && [ "$$found" != "$(INSTALL_PATH)" ]; then \
 		echo "warning: superlinear resolves to $$found in this shell. Put $(dir $(INSTALL_PATH)) before it in PATH to run this build by name."; \
