@@ -266,8 +266,8 @@ struct CommentSessionRunner: Sendable {
     /// The sessions' output for a workspace, appended across sessions.
     func log(workspace: String) -> String { "\(logsDirectory)/comments-\(Transcripts.encoded(workspace)).log" }
 
-    static func claudeArguments(sessionId: ClaudeSession.ID) -> [String] {
-        ["claude", "-p", "--session-id", sessionId.rawValue, "--allowedTools", allowedTools]
+    static func claudeArguments(sessionId: ClaudeSession.ID, model: PlanningModel) -> [String] {
+        ["claude", "-p", "--session-id", sessionId.rawValue] + model.arguments + ["--allowedTools", allowedTools]
     }
 
     /// What a session printed, and its exit status.
@@ -276,8 +276,10 @@ struct CommentSessionRunner: Sendable {
         var status: Int32?
     }
 
-    /// Runs a session in `worktree` with `prompt`, and returns once it ends.
-    func run(prompt: String, sessionId: ClaudeSession.ID, worktree: String, workspace: String) async throws -> Session {
+    /// Runs a session on `model` in `worktree` with `prompt`, and returns once it ends.
+    func run(
+        prompt: String, sessionId: ClaudeSession.ID, model: PlanningModel, worktree: String, workspace: String
+    ) async throws -> Session {
         let fm = FileManager.default
         try fm.createDirectory(atPath: runsDirectory, withIntermediateDirectories: true)
         try fm.createDirectory(atPath: logsDirectory, withIntermediateDirectories: true)
@@ -298,7 +300,7 @@ struct CommentSessionRunner: Sendable {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "\"$@\"", "sh"] + Self.claudeArguments(sessionId: sessionId)
+        process.arguments = ["-c", "\"$@\"", "sh"] + Self.claudeArguments(sessionId: sessionId, model: model)
         process.currentDirectoryURL = URL(fileURLWithPath: worktree)
         process.environment = environment
         process.standardInput = input

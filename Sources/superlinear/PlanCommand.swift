@@ -57,27 +57,22 @@ enum PlanCommand {
             return false
         }
 
-        let (exits, exited) = AsyncStream<Int32?>.makeStream()
-        let process: Process
-        do {
-            let launched: PlanningRun
-            (launched, process) = try runner.launch(run, mode: .start, workspace: name) { status in
-                exited.yield(status)
-                exited.finish()
-            }
-            planning[name].running = launched
-            try planning.save()
-        } catch {
-            say("[\(name)] Could not launch the planning job: \(error)")
-            runner.cleanUp(run.sessionId)
+        // The daemon owns the state file, so a Fable limit found here is not
+        // kept: the next `plan` finds it again, and resumes on the fallback.
+        var model = PlanningModel.current(limit: state.fableLimit, now: Date())
+        guard var status = await launch(run, mode: .start, model: model, workspace: name, runner: runner, planning: &planning, say: say) else {
             return false
         }
-        say("[\(name)] Claude is planning in \(run.worktreePath); this takes a few minutes")
-        say("  Session: \(run.sessionId)")
-        say("  Log: \(runner.log(workspace: name))")
-        var status: Int32?
-        for await exit in exits { status = exit }
-        withExtendedLifetime(process) {}
+        if model == .fable, let hit = runner.usageLimitHit(workspace: name, now: Date()) {
+            model = PlanningModel.fallback
+            let until = FableLimit(hit: hit, now: Date()).until.rawValue
+            say("[\(name)] Fable's usage limit is reached until \(StatusTime.clock(until, now: Date())); "
+                + "resuming the job on \(model.rawValue)")
+            guard let resumed = await launch(run, mode: .resume, model: model, workspace: name, runner: runner, planning: &planning, say: say) else {
+                return false
+            }
+            status = resumed
+        }
 
         var (record, ingest) = job.finish(run, status: status, now: Date())
         for refusal in ingest.refused { say("  Refused \(refusal)") }
@@ -126,6 +121,38 @@ enum PlanCommand {
         if let usage = record.usage { summary += ", and used \(Stats.compact(usage.tokens)) tokens" }
         say(summary + (record.proposed > 0 ? ". The daemon puts them in Linear at its next poll." : "."))
         return true
+    }
+
+    /// Launches the job's session on `model` and waits for it. Returns its
+    /// status, which is nil when it left none, or nil when it did not launch.
+    private static func launch(
+        _ run: PlanningRun, mode: LaunchMode, model: PlanningModel, workspace name: String, runner: PlanningRunner,
+        planning: inout PlanningRecord, say: (String) -> Void
+    ) async -> Int32?? {
+        let (exits, exited) = AsyncStream<Int32?>.makeStream()
+        let process: Process
+        do {
+            let launched: PlanningRun
+            (launched, process) = try runner.launch(run, mode: mode, model: model, workspace: name) { status in
+                exited.yield(status)
+                exited.finish()
+            }
+            planning[name].running = launched
+            try planning.save()
+        } catch {
+            say("[\(name)] Could not launch the planning job: \(error)")
+            runner.cleanUp(run.sessionId)
+            return nil
+        }
+        if mode == .start {
+            say("[\(name)] Claude is planning in \(run.worktreePath) on \(model.rawValue); this takes a few minutes")
+            say("  Session: \(run.sessionId)")
+            say("  Log: \(runner.log(workspace: name))")
+        }
+        var status: Int32?
+        for await exit in exits { status = exit }
+        withExtendedLifetime(process) {}
+        return .some(status)
     }
 
     /// Why a job may not start now: one is running already, the daemon's or

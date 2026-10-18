@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The planning job and the sessions that answer the owner's comments run
+  on Fable. When Fable's own usage limit is reached, they run on Opus until
+  it resets: the stopped planning job resumes in its session on Opus, and a
+  stopped comment answer runs again on Opus. The daemon keeps the reset time
+  in the state file and uses Fable again after it. `superlinear status`
+  shows the limit while it holds.
 - superlinear answers the owner's comments in Linear. A question or a
   request on a pending proposal, on the proposed issue or in the thread of
   the proposal's comment, gets a read-only Claude session. Its answer is

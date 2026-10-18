@@ -43,6 +43,7 @@ Rules:
 | [`planning.md#proposal-rules`](planning.md#proposal-rules) | The rules for applying a proposal. |
 | [`planning.md#audit-log`](planning.md#audit-log) | The audit log, and `superlinear proposals`. |
 | [`planning.md#daily-planning`](planning.md#daily-planning) | The planning job. |
+| [`planning.md#planning-model`](planning.md#planning-model) | The model for planning and answers: Fable, and Opus at Fable's limit. |
 | [`planning.md#follow-ups`](planning.md#follow-ups) | Follow-ups from agents. |
 | [`planning.md#standup`](planning.md#standup) | Reviewing proposals in Linear. The anchor keeps the name of the command this replaced. |
 | [`planning.md#proposal-comments`](planning.md#proposal-comments) | Questions and requests on proposals, answered in Linear. |
