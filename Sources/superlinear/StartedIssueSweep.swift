@@ -39,6 +39,22 @@ enum StartedIssueSweep {
         }
     }
 
+    /// The started issues whose last agent ended without a pull request:
+    /// issues the daemon processed and follows through no run, merge watch
+    /// or record of such an end, with no pull request from their branch,
+    /// whose last agent log does not end at the usage limit.
+    static func endedWithoutPullRequest(
+        issues: [LinearIssueStatus], pullRequests: [PullRequest], processed: Set<LinearIssue.ID>, tracked: Set<LinearIssue.ID>,
+        stopped: (LinearIssue.Identifier) -> Bool
+    ) -> [LinearIssueStatus] {
+        let branches = Set(pullRequests.compactMap(\.headRefName))
+        return issues.filter { issue in
+            let id = LinearIssue.ID(rawValue: issue.id)
+            return processed.contains(id) && !tracked.contains(id) && !branches.contains(issue.branchName)
+                && !stopped(issue.identifier)
+        }
+    }
+
     /// The merge that completes the issue: none while a pull request is still
     /// open, as for follow-up work, nor one from before the issue last moved
     /// into a started state, so an issue reopened after its merge is left

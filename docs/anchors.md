@@ -20,6 +20,7 @@ Rules:
 | [`lifecycle.md#agent`](lifecycle.md#agent) | The agent: the queue, the worktree and the prompt. |
 | [`lifecycle.md#pull-request`](lifecycle.md#pull-request) | The pull request, and how the daemon follows it. |
 | [`lifecycle.md#reviews`](lifecycle.md#reviews) | Reviews that bring an agent back. |
+| [`lifecycle.md#linear-comments`](lifecycle.md#linear-comments) | Comments in Linear that bring an agent back. |
 | [`lifecycle.md#conflicts`](lifecycle.md#conflicts) | Conflicts with the base branch. |
 | [`lifecycle.md#stacks`](lifecycle.md#stacks) | Stacks: dependent work on open pull requests. |
 | [`lifecycle.md#stackable`](lifecycle.md#stackable) | Which issues stack. |
@@ -45,6 +46,8 @@ Rules:
 | [`planning.md#daily-planning`](planning.md#daily-planning) | The planning job. |
 | [`planning.md#follow-ups`](planning.md#follow-ups) | Follow-ups from agents. |
 | [`planning.md#standup`](planning.md#standup) | Reviewing proposals in Linear. The anchor keeps the name of the command this replaced. |
+| [`planning.md#proposal-comments`](planning.md#proposal-comments) | Questions and requests on proposals, answered in Linear. |
+| [`planning.md#spec-comments`](planning.md#spec-comments) | Comments on the spec document. |
 | [`planning.md#standup-needs-human`](planning.md#standup-needs-human) | Signing off Needs human issues in Linear. |
 | [`planning.md#project-updates`](planning.md#project-updates) | Project updates. |
 

@@ -77,6 +77,19 @@ extension LinearClient: LinearWriting {
         return CreatedComment(id: LinearComment.ID(rawValue: id), url: comment[.url]?.stringValue, response: response)
     }
 
+    func createReply(on target: CommentTarget, parentId: LinearComment.ID, body: String) async throws -> CreatedComment {
+        var input: [LinearVariable: Any] = [.parentId: parentId.rawValue, .body: body]
+        switch target {
+        case .issue(let id): input[.issueId] = id.rawValue
+        case .document(let contentId): input[.documentContentId] = contentId
+        }
+        let response = try await mutate(.createReply, variables: [.input: input], field: .commentCreate)
+        guard let comment = response[.commentCreate]?[.comment], let id = comment[.id]?.stringValue else {
+            throw LinearClientError.invalidResponse
+        }
+        return CreatedComment(id: LinearComment.ID(rawValue: id), url: comment[.url]?.stringValue, response: response)
+    }
+
     func updateComment(id: LinearComment.ID, body: String) async throws -> JSONValue {
         try await mutate(.updateComment, variables: [.id: id.rawValue, .body: body], field: .commentUpdate)
     }
@@ -164,6 +177,26 @@ extension LinearClient: LinearWriting {
         try await mutate(
             .postProjectUpdate, variables: [.projectId: projectId.rawValue, .body: body], field: .projectUpdateCreate
         )
+    }
+}
+
+/// The reads that answering the owner's comments makes in Linear.
+extension LinearClient {
+    /// The issues with these IDs, with their comments, oldest first. Issues
+    /// Linear no longer has are absent.
+    func issueComments(ids: [LinearIssue.ID]) async throws -> [IssueComments] {
+        var issues: [IssueComments] = []
+        let size = LinearQuery.issueCommentsPageSize
+        for start in stride(from: 0, to: ids.count, by: size) {
+            let batch = ids[start..<min(start + size, ids.count)].map(\.rawValue)
+            let nodes: [LinearQuery.IssueCommentsNode] = try await fetchAll(.issueComments, variables: [.ids: batch])
+            issues += nodes.map(\.issueComments)
+        }
+        return issues
+    }
+
+    func documentComments(id: LinearDocument.ID) async throws -> DocumentComments {
+        try await execute(.documentComments, variables: [.id: id.rawValue], as: LinearQuery.DocumentCommentsData.self).documentComments
     }
 }
 

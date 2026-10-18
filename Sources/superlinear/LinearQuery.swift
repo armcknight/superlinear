@@ -65,6 +65,12 @@ enum LinearQuery: CaseIterable, Sendable {
     case removeLabel
     /// The issues proposals wait on, with their comments and reactions.
     case proposalIssues
+    /// The issues with some IDs, with their comments' text and authors.
+    case issueComments
+    /// A document's text, with its comments.
+    case documentComments
+    /// A comment in a thread, on an issue or a document.
+    case createReply
 
     var text: String {
         switch self {
@@ -378,8 +384,44 @@ enum LinearQuery: CaseIterable, Sendable {
               }
             }
             """
+        case .issueComments: """
+            query IssueComments($ids: [ID!], $cursor: String) {
+              issues(filter: { id: { in: $ids } }, first: \(Self.issueCommentsPageSize), after: $cursor) {
+                nodes {
+                  id
+                  identifier
+                  state { type }
+                  comments(first: 100) { nodes { \(Self.commentFields) } }
+                }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+            """
+        case .documentComments: """
+            query DocumentComments($id: String!) {
+              document(id: $id) {
+                id
+                documentContentId
+                content
+                updatedAt
+                comments(first: 100) { nodes { \(Self.commentFields) } }
+              }
+            }
+            """
+        case .createReply: """
+            mutation CreateReply($input: CommentCreateInput!) {
+              commentCreate(input: $input) { success comment { id url } }
+            }
+            """
         }
     }
+
+    /// What superlinear reads of a comment to answer it.
+    private static let commentFields = "id body createdAt editedAt url parent { id } user { id name }"
+
+    /// How many issues a page of `issueComments` holds, and so how many IDs
+    /// a request asks for. Each brings up to 100 comments with their text.
+    static let issueCommentsPageSize = 25
 
     /// How many issues a page of `proposalIssues` holds, and so how many IDs
     /// a request asks for. Each brings up to 100 comments with their
@@ -760,6 +802,63 @@ extension LinearQuery {
         }
     }
 
+    /// A comment as the comment queries answer with it.
+    struct CommentNode: Decodable {
+        let id: LinearComment.ID
+        let body: String
+        let createdAt: Date
+        let editedAt: Date?
+        let url: String?
+        let parent: Parent?
+        let user: User?
+
+        struct Parent: Decodable {
+            let id: LinearComment.ID
+        }
+
+        struct User: Decodable {
+            let id: LinearUser.ID
+            let name: String?
+        }
+
+        var comment: LinearThreadComment {
+            LinearThreadComment(
+                id: id, body: body, userId: user?.id, author: user?.name, createdAt: createdAt, editedAt: editedAt,
+                parentId: parent?.id, url: url)
+        }
+    }
+
+    struct IssueCommentsNode: Decodable {
+        let id: LinearIssue.ID
+        let identifier: String
+        let state: ProposalIssueNode.State
+        let comments: Nodes<CommentNode>
+
+        var issueComments: IssueComments {
+            IssueComments(
+                id: id, identifier: identifier, stateType: state.type,
+                comments: comments.nodes.map(\.comment).sorted { $0.createdAt < $1.createdAt })
+        }
+    }
+
+    struct DocumentCommentsData: Decodable {
+        let document: Document
+
+        struct Document: Decodable {
+            let id: LinearDocument.ID
+            let documentContentId: String?
+            let content: String?
+            let updatedAt: Date
+            let comments: Nodes<CommentNode>
+        }
+
+        var documentComments: DocumentComments {
+            DocumentComments(
+                id: document.id, documentContentId: document.documentContentId, content: document.content ?? "",
+                updatedAt: document.updatedAt, comments: document.comments.nodes.map(\.comment).sorted { $0.createdAt < $1.createdAt })
+        }
+    }
+
     /// The part of a mutation's answer that says whether it worked.
     struct Success: Decodable {
         let success: Bool
@@ -769,8 +868,8 @@ extension LinearQuery {
 /// The names of the variables the queries take, and of the fields of the
 /// inputs and filters given in them.
 enum LinearVariable: String, Sendable {
-    case after, body, content, cursor, description, gt, id, ids, input, issueId, keys, labelId, labelIds, name, numbers
-    case projectId, relatedIssueId, stateId, states, teamId, teamIds, term, title, type, url
+    case after, body, content, cursor, description, documentContentId, gt, id, ids, input, issueId, keys, labelId, labelIds
+    case name, numbers, parentId, projectId, relatedIssueId, stateId, states, teamId, teamIds, term, title, type, url
 }
 
 /// The names of the fields superlinear reads from Linear's answers: what

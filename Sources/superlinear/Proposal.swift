@@ -125,11 +125,13 @@ enum ProposalTarget: Codable, Sendable, Equatable, Hashable {
 struct ProposalSource: Codable, Sendable, Equatable {
     enum Kind: String, Codable, Sendable {
         case pullRequest, commitRange, agentSession, workflowRun
+        /// A comment of the owner's in Linear, such as on the spec document.
+        case comment
     }
 
     var kind: Kind
     /// The pull request URL, the commit range such as `abc123..def456`, the
-    /// agent's session ID, or the workflow run's URL.
+    /// agent's session ID, the workflow run's URL, or the comment's URL.
     var value: String
     /// A link to the commit range or the session, when there is one. A pull
     /// request's or a workflow run's value is its link.
@@ -147,7 +149,7 @@ struct ProposalSource: Codable, Sendable, Equatable {
         self.pullRequest = pullRequest
     }
 
-    var link: String? { [.pullRequest, .workflowRun].contains(kind) ? value : url }
+    var link: String? { [.pullRequest, .workflowRun, .comment].contains(kind) ? value : url }
 
     /// The line added to what superlinear writes, saying where it came from.
     var line: String {
@@ -156,6 +158,7 @@ struct ProposalSource: Codable, Sendable, Equatable {
         case .commitRange: "commits \(value)"
         case .agentSession: "agent session \(value)"
         case .workflowRun: value
+        case .comment: "a comment"
         }
         var source = if let link, link != text { "[\(text)](\(link))" } else { text }
         if let issue { source += " for \(issue)" }
