@@ -217,6 +217,9 @@ struct WorkspaceReport: Sendable {
     /// wrote a review or a comment since the issue's last agent started, for
     /// the daemon to queue an agent on.
     var newFeedback: Set<PullRequest.Number> = []
+    /// The latest read-only sessions that answered the owner's comments,
+    /// oldest first, for `superlinear stats`.
+    var commentAnswers: [CommentAnswerRecord] = []
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
     var warnings: [String]
@@ -589,6 +592,7 @@ struct WorkspaceReport: Sendable {
             stale: stale,
             ciStoppedBranches: workspaceState.spendingLimit?.branches ?? [],
             newFeedback: newFeedback,
+            commentAnswers: workspaceState.commentAnswers,
             warnings: warnings
         )
     }
