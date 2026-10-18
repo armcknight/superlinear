@@ -279,7 +279,7 @@ enum LinearQuery: CaseIterable, Sendable {
             """
         case .planningIssues: """
             query PlanningIssues($cursor: String) {
-              issues(filter: { state: { type: { nin: ["completed", "canceled"] } } }, first: 25, after: $cursor) {
+              issues(filter: { state: { type: { nin: ["completed", "canceled", "duplicate"] } } }, first: 25, after: $cursor) {
             \(Self.planningIssueFields)
               }
             }
@@ -287,7 +287,7 @@ enum LinearQuery: CaseIterable, Sendable {
         case .planningIssuesInTeams: """
             query PlanningIssues($teamIds: [ID!], $cursor: String) {
               issues(
-                filter: { state: { type: { nin: ["completed", "canceled"] } }, team: { id: { in: $teamIds } } }
+                filter: { state: { type: { nin: ["completed", "canceled", "duplicate"] } }, team: { id: { in: $teamIds } } }
                 first: 25
                 after: $cursor
               ) {

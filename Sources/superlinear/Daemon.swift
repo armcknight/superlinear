@@ -192,22 +192,27 @@ actor Daemon {
         Set((state.workspaces[workspace]?.processedIssueIds ?? []).map(LinearIssue.ID.init(rawValue:)))
     }
 
-    /// Queues an agent to address new reviews on the pull request of an issue
-    /// awaiting its merge. It works in the issue's existing worktree, under a
+    /// Queues an agent to address new reviews and comments on the pull
+    /// request of an issue awaiting its merge. It works in the issue's existing worktree, under a
     /// new Claude session, and the issue awaits its merge again once it ends.
     /// With `comments`, the owner's new comments on the issue in Linear,
     /// the agent acts on them too, and they count as handled.
     func enqueueReview(
-        of pending: PendingMerge, pullRequest: PullRequest, workspace: WorkspaceConfig, comments: CommentTriage.Comments? = nil
+        of pending: PendingMerge, pullRequest: PullRequest, feedback: [PullRequestFeedback]? = nil,
+        workspace: WorkspaceConfig, comments: CommentTriage.Comments? = nil
     ) {
         // The watch may have ended while the reviews were being read.
         guard state.workspaces[workspace.name]?.pendingMerges[pending.issueId] != nil else { return }
         var context: CommentContext?
         if let comments {
             let fresh = stillFresh(comments.fresh, key: pending.issueId, workspace: workspace.name)
-            guard !fresh.isEmpty else { return }
-            context = CommentContext(thread: comments.context.thread, new: fresh.map { PromptComment($0.comment, previousBody: $0.previousBody) })
-            state.handleComments(fresh, key: pending.issueId, since: Date(), workspace: workspace.name)
+            // Handled meanwhile: an agent is queued only for the pull request's feedback.
+            guard !fresh.isEmpty || feedback != nil else { return }
+            if !fresh.isEmpty {
+                context = CommentContext(
+                    thread: comments.context.thread, new: fresh.map { PromptComment($0.comment, previousBody: $0.previousBody) })
+                state.handleComments(fresh, key: pending.issueId, since: Date(), workspace: workspace.name)
+            }
         }
         let run = AgentRun(
             issueId: pending.issueId,
@@ -215,12 +220,12 @@ actor Daemon {
             branchName: pending.branchName,
             sessionId: UUID().uuidString.lowercased(),
             queuedAt: Date(),
-            review: ReviewRequest(number: pullRequest.number, url: pullRequest.url),
+            review: ReviewRequest(number: pullRequest.number, url: pullRequest.url, feedback: feedback),
             stack: pending.stack,
             comments: context
         )
         state.startReview(run, workspace: workspace.name)
-        let what = context == nil ? "the review on" : "the owner's comments in Linear, and any review on,"
+        let what = context == nil ? "the feedback on" : "the owner's comments in Linear, and any feedback on,"
         log("Queued \(pending.identifier) to address \(what) \(pullRequest.url)", workspace: workspace.name)
         save()
         fillSlots()

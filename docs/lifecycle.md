@@ -31,7 +31,7 @@ Each workspace picks its issues in one of two modes, set by [`selection`](config
 
 In both modes, an issue the selection finds starts only when nothing holds it back:
 
-- **Blockers:** an issue that another issue blocks, through a Linear "blocks" relation, does not start while that issue is neither completed nor canceled. It waits in the state file as blocked, and starts on the first poll after its last blocker is closed. With [`stacking`](configuration.md#stacking) on, an issue whose last open blocker has an open pull request from an agent may start on top of that pull request instead: see [Stacks](#stacks).
+- **Blockers:** an issue that another issue blocks, through a Linear "blocks" relation, does not start while that issue is not completed, canceled or marked a duplicate. It waits in the state file as blocked, and starts on the first poll after its last blocker is closed. With [`stacking`](configuration.md#stacking) on, an issue whose last open blocker has an open pull request from an agent may start on top of that pull request instead: see [Stacks](#stacks).
 - **Human labels:** an issue with a label in [`humanLabels`](configuration.md#human-labels) — "Needs human" or "Spike" by default, in any case — never starts an agent. Should the label come off, it starts like any other issue. These issues are for you: `superlinear status` lists them under "Needs human", and [marking one Done in Linear](planning.md#standup-needs-human) makes the issues it blocks ready.
 - **Holds:** to hold an issue back, move it to Backlog; moving it to Todo again releases it.
 - **Moving on:** a waiting issue moved out of the states an agent starts from, or archived, stops waiting.
@@ -61,7 +61,7 @@ The run — issue, branch, session ID, and the process running it — is kept in
 When the agent exits, the issue waits in the state file for its pull request. Each poll runs `gh pr list --head <branch> --state all` in the repository for every waiting issue:
 
 - **Merged:** see [The merge and completion](#merge).
-- **Open:** the next poll checks again — unless you have reviewed it, or it conflicts with its base branch. See [Reviews](#reviews) and [Conflicts](#conflicts).
+- **Open:** the next poll checks again — unless you have reviewed it or commented on it, or it conflicts with its base branch. See [Reviews](#reviews) and [Conflicts](#conflicts).
 - **Closed without a merge**, or **no pull request:** the daemon logs it and stops watching. The worktree stays for you to inspect. If there is no pull request, and the agent did not stop at the [Claude usage limit](#claude-usage-limit), your next comment on the issue brings an agent back: see [Comments in Linear](#linear-comments).
 
 Each poll also attaches the pull requests opened from an issue's branch to the issue in Linear, from the first poll after the pull request is opened, so the link is there whether or not Linear's GitHub integration is set up for the repository.
@@ -71,13 +71,15 @@ superlinear never merges. Require review before merge on every repository it wor
 <a id="reviews"></a>
 ## Reviews
 
-Review a pull request the daemon is watching, and an agent comes back to address it. Each poll reads the reviews on the open pull request of every issue awaiting its merge. A review counts when:
+Review a pull request the daemon is watching, or comment in its conversation, and an agent comes back to address it. Each poll reads the reviews and the conversation comments on the open pull request of every issue awaiting its merge, in one listing. A review counts when:
 
 - it is from the GitHub user `gh` is signed in as,
 - it was submitted after the issue's last agent started, and
 - it asks for something: changes requested, a comment review — including one made only of comments on lines of code — or an approval with a note. An approval with nothing written, a draft review and a dismissed review do not count.
 
-The issue then goes back in the queue. Its agent runs in the same worktree, on the same branch, under a new Claude session, with a prompt to read every review and its inline comments, satisfy the points not yet addressed, commit, push and see CI through. It does not reply on GitHub. When it ends, the issue waits for its merge again, and only reviews submitted after that agent started bring it back. Reviews from other people and from bots, such as Seer, are left alone: the first agent already handles bots' reviews.
+A comment in the pull request's conversation, outside any review, counts the same way: when it is from that user, was made after the issue's last agent started, and has something written in it. A reply in the thread of an earlier review, made outside a new review, is a review of its own on GitHub, submitted when you reply, so it counts as a new comment review.
+
+The issue then goes back in the queue, once for all the reviews and comments that came in. Its agent runs in the same worktree, on the same branch, under a new Claude session, with a prompt that lists those reviews and comments, with a link to each comment, and tells it to read every review, its inline comments and their replies, and every conversation comment, satisfy the points not yet addressed, answer questions in the pull request description, commit, push and see CI through. It does not reply on GitHub. When it ends, the issue waits for its merge again, and only reviews and comments made after that agent started bring it back. Reviews and comments from other people and from bots, such as Seer, are left alone: the first agent already handles bots' reviews.
 
 Issues already awaiting their merge when you upgrade to a version that follows reviews take their pull request's newest commit as the starting point: a review submitted after the last push still starts an agent, and older reviews, which the agent may have addressed, do not.
 
@@ -111,7 +113,7 @@ When an issue's blocker has an open pull request that waits for your review, its
 
 An issue is **stackable** when:
 
-- every blocker is completed or canceled, except exactly one;
+- every blocker is completed, canceled or marked a duplicate, except exactly one;
 - that one's agent has ended, and its pull request is open, not a draft, with CI passing; and
 - the resulting stack is no deeper than [`maxStackDepth`](configuration.md#max-stack-depth) pull requests, the bottom one included, 3 by default.
 
@@ -183,7 +185,7 @@ When the limit is used up, or a payment fails, GitHub starts no jobs in private 
 <a id="merge"></a>
 ## The merge and completion
 
-When the pull request merges, the issue moves to its team's first completed state in Linear, unless it is already completed or canceled, and `work finish <branch>` removes the worktree and the local branch. If Linear cannot be updated, the next poll tries again. With Linear's GitHub integration installed for the repository, Linear moves the issue to done when the pull request merges, by default; without it, the daemon does.
+When the pull request merges, the issue moves to its team's first completed state in Linear, unless it is already completed, canceled or marked a duplicate, and `work finish <branch>` removes the worktree and the local branch. If Linear cannot be updated, the next poll tries again. With Linear's GitHub integration installed for the repository, Linear moves the issue to done when the pull request merges, by default; without it, the daemon does.
 
 A task is completed only when both its pull request is merged and its Linear issue is done.
 

@@ -505,16 +505,12 @@ struct WorkspaceProcessor: Sendable {
                     case .pushed, .conflicted: continue
                     }
                 }
-                if let owner = comments?.reviews[pending.issueId], let pullRequest = pullRequests.first(where: { $0.state == .open }) {
-                    log("\(pending.identifier) has \(owner.fresh.count) new comment(s) from the owner in Linear")
-                    await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace, comments: owner)
-                    continue
-                }
                 // One agent at a time on a branch: conflicts wait for the
                 // review agent to end.
                 // A conflict run waits too when the reviews could not be checked,
                 // as the watch after it would count them as addressed.
-                guard await checkReviews(of: pending, pullRequests: pullRequests, repoPath: repoPath) == .none
+                guard await checkReviews(
+                    of: pending, pullRequests: pullRequests, linear: comments?.reviews[pending.issueId], repoPath: repoPath) == .none
                 else { continue }
                 await checkConflicts(of: pending, pullRequests: pullRequests, listing: listing)
                 continue
@@ -708,8 +704,12 @@ struct WorkspaceProcessor: Sendable {
     }
 
     /// Queues an agent for the open pull request when `gh`'s own user has
-    /// reviewed it since the issue's last agent started.
-    private func checkReviews(of pending: PendingMerge, pullRequests: [PullRequest], repoPath: String) async -> ReviewCheck {
+    /// reviewed it, or commented in its conversation, since the issue's last
+    /// agent started, or when the owner commented on the issue in Linear:
+    /// `linear`. One agent takes them all.
+    private func checkReviews(
+        of pending: PendingMerge, pullRequests: [PullRequest], linear: CommentTriage.Comments?, repoPath: String
+    ) async -> ReviewCheck {
         guard let pullRequest = pullRequests.first(where: { $0.state == .open }) else { return .none }
         // A watch from before reviews were followed counts from the pull
         // request's head commit. Looked up once, before looking at reviews, so
@@ -727,13 +727,20 @@ struct WorkspaceProcessor: Sendable {
         }
         let handledThrough = await daemon.reviewsHandledThrough(
             pending, lastCommit: lastCommit, workspace: workspace.name)
-        guard let reviews = pullRequest.reviews, !reviews.isEmpty else { return .none }
+        let reviews = pullRequest.reviews ?? []
+        let comments = pullRequest.comments ?? []
+        guard !reviews.isEmpty || !comments.isEmpty else {
+            guard let linear else { return .none }
+            log("\(pending.identifier) has \(linear.fresh.count) new comment(s) from the owner in Linear")
+            await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace, comments: linear)
+            return .queued
+        }
         let login: String
         do {
             login = try await daemon.viewerLogin(repoPath: repoPath)
         } catch {
             if await pausedForRateLimit(error, repoPath: repoPath) { return .failed }
-            await logOnce("Could not find the GitHub user whose reviews to address: \(error)")
+            await logOnce("Could not find the GitHub user whose reviews and comments to address: \(error)")
             return .failed
         }
         // A daemon from before the Claude pause took the reviews of an agent
@@ -744,13 +751,19 @@ struct WorkspaceProcessor: Sendable {
            PullRequestReview.stoppedAtUsageLimit(reviews, by: login, logWrittenAt: logModified),
            await daemon.claimUsageLimitRecovery(issueId: LinearIssue.ID(rawValue: pending.issueId), logModified: logModified) {
             log("\(pending.identifier)'s last agent stopped at the Claude usage limit; queuing its reviews on \(pullRequest.url) again")
-            await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
+            await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace, comments: linear)
             return .queued
         }
-        let unaddressed = PullRequestReview.unaddressed(reviews, by: login, after: handledThrough)
-        guard !unaddressed.isEmpty else { return .none }
-        log("\(pending.identifier) has \(unaddressed.count) new review(s) from \(login) on \(pullRequest.url)")
-        await daemon.enqueueReview(of: pending, pullRequest: pullRequest, workspace: workspace)
+        let unaddressed = PullRequestFeedback.unaddressed(
+            reviews: reviews, comments: comments, by: login, after: handledThrough)
+        guard !unaddressed.isEmpty || linear != nil else { return .none }
+        let reviewCount = unaddressed.filter { $0.kind == .review }.count
+        var found = "\(reviewCount) new review(s) and \(unaddressed.count - reviewCount) new comment(s) from \(login) on \(pullRequest.url)"
+        if let linear { found += ", and \(linear.fresh.count) new comment(s) from the owner in Linear" }
+        log("\(pending.identifier) has \(found)")
+        await daemon.enqueueReview(
+            of: pending, pullRequest: pullRequest, feedback: unaddressed.isEmpty ? nil : unaddressed, workspace: workspace,
+            comments: linear)
         return .queued
     }
 
@@ -780,9 +793,9 @@ struct WorkspaceProcessor: Sendable {
     }
 
     private enum ReviewCheck {
-        /// An agent is queued to address new reviews.
+        /// An agent is queued to address new reviews or comments.
         case queued
-        /// No review needs an agent.
+        /// No review or comment needs an agent.
         case none
         /// The reviews could not be checked; tried again next poll.
         case failed

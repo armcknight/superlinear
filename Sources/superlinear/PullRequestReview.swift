@@ -19,6 +19,10 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
     var baseRefName: String? = nil
     /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN`.
     var mergeable: String? = nil
+    /// Every review, with its author and time, and the comments in the
+    /// conversation, for telling whether the owner wrote since the last agent.
+    var reviews: [PullRequestReview]? = nil
+    var comments: [PullRequestComment]? = nil
 
     struct Review: Codable, Sendable, Equatable {
         /// `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED` and so on.
@@ -33,7 +37,7 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
     }
 
     static let jsonFields =
-        "number,url,title,headRefName,isDraft,reviewDecision,latestReviews,statusCheckRollup,additions,deletions,changedFiles,baseRefName,mergeable"
+        "number,url,title,headRefName,isDraft,reviewDecision,latestReviews,statusCheckRollup,additions,deletions,changedFiles,baseRefName,mergeable,reviews,comments"
 
     enum ReviewState: String, Equatable {
         case notReviewed = "not reviewed"
@@ -113,7 +117,17 @@ struct ReviewablePullRequest: Codable, Sendable, Equatable {
     static func listOpen(in repoPath: String) throws -> [ReviewablePullRequest] {
         let data = try GitHubCLI.run(
             ["pr", "list", "--state", "open", "--limit", "1000", "--json", jsonFields], in: repoPath)
-        return try JSONDecoder().decode([ReviewablePullRequest].self, from: data)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([ReviewablePullRequest].self, from: data)
+    }
+
+    /// Whether `login` reviewed it, or commented in its conversation, after
+    /// `date` in a way that asks for something: what queues a review agent.
+    func hasFeedback(by login: String, after date: Date) -> Bool {
+        !PullRequestFeedback.unaddressed(
+            reviews: reviews ?? [], comments: comments ?? [], by: login, after: date
+        ).isEmpty
     }
 }
 

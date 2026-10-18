@@ -133,13 +133,14 @@ func reviewPrompt(for review: ReviewRequest, comments: CommentContext? = nil) ->
     An earlier agent already implemented the issue on this branch and opened pull request \
     #\(review.number): \(review.url)
 
-    The maintainer has since reviewed it. Your task:
+    The maintainer has since reviewed it or commented on it. \(feedbackList(review.feedback ?? []))Your task:
     1. Read the Linear issue for this branch with `direnv exec . linctl issue get`, and the branch's \
     commits against the base branch, to learn what was done.
     2. Read every review on the pull request and every comment in them, including the inline \
-    comments on lines of code: `gh pr view \(review.number) --json reviews` and \
-    `gh api repos/{owner}/{repo}/pulls/\(review.number)/comments`. Work out which review points \
-    are not yet addressed by the commits on the branch.
+    comments on lines of code and the replies in their threads, and every comment in the pull \
+    request's conversation: `gh pr view \(review.number) --json reviews,comments` and \
+    `gh api repos/{owner}/{repo}/pulls/\(review.number)/comments`. Work out which points from the \
+    maintainer are not yet addressed by the commits on the branch.
     3. Implement whatever is needed to satisfy each of those points. If a point asks a question \
     rather than for a change, answer it in the pull request description.
     4. Run /armcknight-claude:commit to stage and commit your changes, then push the branch.
@@ -157,6 +158,19 @@ func reviewPrompt(for review: ReviewRequest, comments: CommentContext? = nil) ->
     """
     if let comments, !comments.new.isEmpty { prompt += "\n\n" + ownerCommentsSection(comments) }
     return prompt
+}
+
+/// The reviews and comments that queued a review run, as lines for its
+/// prompt, or nothing when the run does not know them.
+private func feedbackList(_ feedback: [PullRequestFeedback]) -> String {
+    guard !feedback.isEmpty else { return "" }
+    let formatter = ISO8601DateFormatter()
+    let lines = feedback.map { item in
+        let what = item.kind == .review ? "A review submitted" : "A comment in the conversation made"
+        return "- \(what) at \(formatter.string(from: item.at))" + (item.url.map { ": \($0)" } ?? "")
+    }
+    return "These came in since the last agent started, so answer them first:\n"
+        + lines.joined(separator: "\n") + "\n\n"
 }
 
 /// The prompt for a run that merges the base branch into the branch of a pull

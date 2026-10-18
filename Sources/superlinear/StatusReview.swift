@@ -72,6 +72,24 @@ enum StatusReview {
         return result
     }
 
+    /// The open pull requests of issues awaiting their merge that `login`
+    /// reviewed, or commented on, since the issue's last agent started. A
+    /// watch from before reviews were followed has no baseline yet; the
+    /// daemon sets it on its next poll.
+    static func newFeedback(
+        _ pullRequests: [ReviewablePullRequest], state: WorkspaceState, by login: String
+    ) -> Set<PullRequest.Number> {
+        let handledThrough = Dictionary(
+            state.pendingMerges.values.compactMap { pending in pending.reviewsHandledThrough.map { (pending.branchName, $0) } },
+            uniquingKeysWith: { a, b in max(a, b) })
+        return Set(pullRequests.compactMap { pullRequest in
+            guard let date = handledThrough[pullRequest.headRefName],
+                  pullRequest.hasFeedback(by: login, after: date)
+            else { return nil }
+            return pullRequest.number
+        })
+    }
+
     /// Open pull requests ready for review, by stack, the stacks holding back
     /// the most work first: the issues their pull requests block, and the
     /// pull requests stacked on the bottom one. Each stack is listed bottom

@@ -56,6 +56,13 @@ struct IssueSelectionTests {
         #expect(plan.start.map(\.identifier) == ["SL-2", "SL-3"])
     }
 
+    @Test("A blocker marked a duplicate no longer blocks")
+    func duplicateBlockerDoesNotBlock() throws {
+        let plan = IssueSelection.plan(
+            [issue("SL-2", blockers: [("SL-1", "duplicate")])], workspace: try workspace(), handled: [], stackBases: [:])
+        #expect(plan.start.map(\.identifier) == ["SL-2"])
+    }
+
     // MARK: Human labels
 
     @Test("An issue with a human label never starts, even with no blockers, whatever the label's case")
