@@ -10,6 +10,7 @@ enum Command: Equatable {
     case uninstall
     /// `since` is how far back "Done autonomously" looks; nil for the default.
     case status(configPath: String?, since: TimeInterval?)
+    case stats(configPath: String?)
     case proposals(configPath: String?, workspace: String?)
     case resume
     case plan(configPath: String?, workspace: String?)
@@ -34,7 +35,7 @@ enum Command: Equatable {
         case "uninstall":
             if let extra = rest.dropFirst().first { return .invalid("unknown option for uninstall: \(extra)") }
             return .uninstall
-        case "status":
+        case .some(let command) where ["status", "stats"].contains(command):
             rest = rest.dropFirst()
             var configPath: String?
             var since: TimeInterval?
@@ -44,17 +45,17 @@ enum Command: Equatable {
                 case "--config":
                     guard let path = rest.first else { return .invalid("--config needs a path") }
                     configPath = path
-                case "--since":
+                case "--since" where command == "status":
                     guard let text = rest.first, let duration = StatusReview.duration(text) else {
                         return .invalid("--since needs a duration such as 24h, 7d or 90m")
                     }
                     since = duration
                 default:
-                    return .invalid("unknown option for status: \(argument)")
+                    return .invalid("unknown option for \(command): \(argument)")
                 }
                 rest = rest.dropFirst()
             }
-            return .status(configPath: configPath, since: since)
+            return command == "status" ? .status(configPath: configPath, since: since) : .stats(configPath: configPath)
         case "proposals":
             rest = rest.dropFirst()
             var configPath: String?

@@ -9,6 +9,7 @@ Usage: superlinear [--config <path>]
        superlinear install [--force]
        superlinear uninstall
        superlinear status [--since <duration>] [--config <path>]
+       superlinear stats [--config <path>]
        superlinear proposals [--workspace <name>] [--config <path>]
        superlinear plan [--workspace <name>] [--config <path>]
        superlinear resume
@@ -31,6 +32,12 @@ Subcommands:
               Then what superlinear did on its own since --since (default
               24h), and the risks: pauses, CI failing on the default branch,
               the GitHub rate limit.
+  stats       Measure the agents' work: how many items each status section
+              holds across all workspaces; per pull request, the lines,
+              files, tokens, agent time and CI time, with medians and
+              histograms; the totals over every tracked task; and the same
+              by project. Reads the Claude transcripts, the CI runs and the
+              local repositories, so it takes longer than status.
   proposals   List the changes to Linear that superlinear proposed: those
               pending, with where they wait in Linear, then those applied,
               rejected or expired in the last 7 days, with reasons, sources
@@ -89,6 +96,10 @@ case .status(let path, let since):
     // Reads the state file and Linear; it takes no daemon lock, so it runs
     // beside a daemon.
     Task { exit(await StatusCommand.run(configPath: path, since: since)) }
+    dispatchMain()
+
+case .stats(let path):
+    Task { exit(await StatsCommand.run(configPath: path)) }
     dispatchMain()
 
 case .proposals(let path, let workspace):

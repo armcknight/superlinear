@@ -123,7 +123,7 @@ enum PlanCommand {
             return false
         }
         var summary = "[\(name)] The planning job proposed \(record.proposed), skipped \(record.skipped)"
-        if let usage = record.usage { summary += ", and used \(StatusSummary.compact(usage.tokens)) tokens" }
+        if let usage = record.usage { summary += ", and used \(Stats.compact(usage.tokens)) tokens" }
         say(summary + (record.proposed > 0 ? ". The daemon puts them in Linear at its next poll." : "."))
         return true
     }

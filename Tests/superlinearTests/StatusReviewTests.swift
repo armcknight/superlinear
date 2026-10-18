@@ -188,7 +188,7 @@ struct StatusReviewTests {
     func summary() throws {
         let state = try loadState()
         let report = WorkspaceReport(name: "w", entries: [], proposalsWaiting: state.proposals.filter(\.isPosted), warnings: [])
-        #expect(StatusSummary(reports: [report]).counts.map { "\($0.heading) \($0.count)" } == ["Proposals in Linear 2"])
+        #expect(Stats(reports: [report]).counts.map { "\($0.heading) \($0.count)" } == ["Proposals in Linear 2"])
     }
 
     @Test("Risks list CI failing on the default branch and a low rate limit")
