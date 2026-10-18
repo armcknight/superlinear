@@ -213,4 +213,4 @@ A request to change the spec, such as "this should also cover X", becomes a `cha
 <a id="project-updates"></a>
 ## Project updates
 
-Not built yet: [SPL-13](https://linear.app/superlinear-linear/issue/SPL-13) adds them, and fills in this section.
+superlinear does not post project updates on its own. The `postProjectUpdate` kind is in the proposal store, so it has a [trust level](#trust-levels) and a [form in Linear](#standup), but nothing makes such proposals: the project updates and milestone forecasts that SPL-13 planned were canceled.
