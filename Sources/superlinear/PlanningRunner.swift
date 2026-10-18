@@ -32,10 +32,13 @@ struct PlanningRunner: Sendable {
     /// Claude's output for a workspace's jobs, appended across runs.
     func log(workspace: String) -> String { "\(logsDirectory)/planning-\(Transcripts.encoded(workspace)).log" }
 
-    static func claudeArguments(sessionId: ClaudeSession.ID, mode: LaunchMode, runsDirectory: String) -> [String] {
+    static func claudeArguments(
+        sessionId: ClaudeSession.ID, mode: LaunchMode, model: PlanningModel, runsDirectory: String
+    ) -> [String] {
         [
             "claude", "-p",
             mode == .resume ? "--resume" : "--session-id", sessionId.rawValue,
+        ] + model.arguments + [
             "--allowedTools", allowedTools,
             "--add-dir", runsDirectory,
         ]
@@ -51,11 +54,12 @@ struct PlanningRunner: Sendable {
             .write(toFile: promptFile(sessionId), atomically: true, encoding: .utf8)
     }
 
-    /// Starts the session for `run` and calls `onExit` with Claude's status —
-    /// nil when it left none — once it ends. Returns the run with the
-    /// launched process recorded.
+    /// Starts the session for `run` on `model` and calls `onExit` with
+    /// Claude's status — nil when it left none — once it ends. Returns the run
+    /// with the launched process and its model recorded.
     func launch(
-        _ run: PlanningRun, mode: LaunchMode, workspace: String, onExit: @escaping @Sendable (Int32?) -> Void
+        _ run: PlanningRun, mode: LaunchMode, model: PlanningModel, workspace: String,
+        onExit: @escaping @Sendable (Int32?) -> Void
     ) throws -> (PlanningRun, Process) {
         let fm = FileManager.default
         try fm.createDirectory(atPath: runsDirectory, withIntermediateDirectories: true)
@@ -82,7 +86,7 @@ struct PlanningRunner: Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", AgentRunner.wrapperScript, "sh"]
-            + Self.claudeArguments(sessionId: run.sessionId, mode: mode, runsDirectory: runsDirectory)
+            + Self.claudeArguments(sessionId: run.sessionId, mode: mode, model: model, runsDirectory: runsDirectory)
         process.currentDirectoryURL = URL(fileURLWithPath: run.worktreePath)
         process.environment = environment.merging(
             ["SUPERLINEAR_STATUS_FILE": statusFile(run.sessionId)], uniquingKeysWith: { $1 }
@@ -103,7 +107,15 @@ struct PlanningRunner: Sendable {
         var launched = run
         launched.pid = process.processIdentifier
         launched.processStartedAt = AgentRunner.startTime(of: process.processIdentifier)
+        launched.model = model
         return (launched, process)
+    }
+
+    /// The Claude usage limit the workspace's last session stopped at, from
+    /// the end of its log. A workspace runs one job at a time, so the end of
+    /// the log is that job's.
+    func usageLimitHit(workspace: String, now: Date) -> ClaudeUsageLimit.Hit? {
+        AgentRunner.usageLimitHit(inLog: log(workspace: workspace), now: now)
     }
 
     /// What a restarted daemon does with a job it finds in the state file.
@@ -167,7 +179,10 @@ struct PlanningRunner: Sendable {
             transcripts.append((data, false))
             // Subagents' transcripts, under a directory named after the session.
             let subagents = "\(projects)/\(directory)/\(sessionId)"
-            for case let path as String in fm.enumerator(atPath: subagents) ?? NSEnumerator() where path.hasSuffix(".jsonl") {
+            // Not `enumerator(atPath:) ?? NSEnumerator()`: with no such
+            // directory, the fallback is an abstract class, and enumerating
+            // it raises an exception that ends the daemon.
+            for path in (try? fm.subpathsOfDirectory(atPath: subagents)) ?? [] where path.hasSuffix(".jsonl") {
                 if let data = fm.contents(atPath: "\(subagents)/\(path)") { transcripts.append((data, true)) }
             }
         }

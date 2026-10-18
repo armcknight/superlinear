@@ -204,7 +204,8 @@ struct WorkflowFailureTests {
     func oneProposal() async throws {
         let engine = ProposalEngine(
             workspace: "w", autonomy: Autonomy(), linear: EmptyLinear(),
-            audit: AuditLog(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+            audit: AuditLog(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            duplicates: StubDuplicates()
         )
         let first = WorkflowFailures.draft(run("CI", .failure, at: 1), branch: "main", teamId: "team")
         guard case .store(let proposal, _) = try await engine.screen(first, existing: []) else {

@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A new issue is compared with the open issues and proposals by an agent,
+  for the same work in other words, not by its title alone. This replaces
+  the close-title match. The candidates are the open issues that Linear's
+  search finds for its title, and the team's pending and rejected proposed
+  issues. A duplicate is merged, not dropped: what it adds to an open issue
+  becomes an `editIssue` proposal for that issue, and what it adds to a
+  pending proposal goes into it. A new issue that may be a duplicate is
+  proposed for review, with a comment on it that links each candidate. Mark
+  it a duplicate of one in Linear, and superlinear rejects it, names that
+  issue in the reason, and proposes to add its text to that issue.
+- The planning job and the sessions that answer the owner's comments run
+  on Fable. When Fable's own usage limit is reached, they run on Opus until
+  it resets: the stopped planning job resumes in its session on Opus, and a
+  stopped comment answer runs again on Opus. The daemon keeps the reset time
+  in the state file and uses Fable again after it. `superlinear status`
+  shows the limit while it holds.
+- `superlinear stats` shows how many sessions answered the owner's comments,
+  and the tokens, cache reads and agent time they used.
+- `superlinear stats` shows how many planning jobs ran, and the tokens, cache
+  reads and agent time they used.
 - superlinear answers the owner's comments in Linear. A question or a
   request on a pending proposal, on the proposed issue or in the thread of
   the proposal's comment, gets a read-only Claude session. Its answer is
@@ -260,6 +280,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workspace. The same goes after `make reset`.
 
 ### Fixed
+
+- A comment in a pull request's conversation that starts with an
+  @-mention, such as the `@sentry review` an agent posts as you, no longer
+  queues a review agent that has nothing to do.
+
+- A reply to a comment has the line `*Written by superlinear.*` and its
+  note on a change only one time, also when the session copies them from
+  superlinear's earlier replies in the thread.
+
+- The daemon no longer crashes when it reads the token use of a session
+  with no subagents, such as the one that answers a comment. It crashed
+  at every restart, before any comment was answered.
 
 - Proposals reach Linear again. Linear's `duplicate` state type, which every
   team has, failed the decoding of a team's states, so no proposal could be

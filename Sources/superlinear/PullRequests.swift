@@ -104,11 +104,20 @@ struct PullRequestComment: Codable, Sendable, Equatable {
     let createdAt: Date?
     let url: String?
 
-    /// The comments by `login`, made after `date`, with something written.
+    /// Whether the comment starts with an @-mention, such as `@sentry review`:
+    /// it is addressed to a bot or to another person, not to the agent.
+    /// Agents run as the owner and post such comments themselves.
+    var isAddressedToSomeoneElse: Bool {
+        body.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("@")
+    }
+
+    /// The comments by `login`, made after `date`, with something written,
+    /// that are not addressed to someone else.
     static func unaddressed(_ comments: [PullRequestComment], by login: String, after date: Date) -> [PullRequestComment] {
         comments.filter { comment in
             guard comment.author?.login == login,
                   !comment.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !comment.isAddressedToSomeoneElse,
                   let createdAt = comment.createdAt
             else { return false }
             return createdAt > date

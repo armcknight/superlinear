@@ -42,8 +42,10 @@ Rules:
 | [`planning.md#trust-levels`](planning.md#trust-levels) | The trust levels: `auto`, `review` and `never`. |
 | [`planning.md#proposal-kinds`](planning.md#proposal-kinds) | The kinds of proposal and their default trust levels. |
 | [`planning.md#proposal-rules`](planning.md#proposal-rules) | The rules for applying a proposal. |
+| [`planning.md#duplicate-check`](planning.md#duplicate-check) | Duplicate issues: how a new issue is compared with open issues and proposals, and merged. |
 | [`planning.md#audit-log`](planning.md#audit-log) | The audit log, and `superlinear proposals`. |
 | [`planning.md#daily-planning`](planning.md#daily-planning) | The planning job. |
+| [`planning.md#planning-model`](planning.md#planning-model) | The model for planning and answers: Fable, and Opus at Fable's limit. |
 | [`planning.md#follow-ups`](planning.md#follow-ups) | Follow-ups from agents. |
 | [`planning.md#standup`](planning.md#standup) | Reviewing proposals in Linear. The anchor keeps the name of the command this replaced. |
 | [`planning.md#proposal-comments`](planning.md#proposal-comments) | Questions and requests on proposals, answered in Linear. |

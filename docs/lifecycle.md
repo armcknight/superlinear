@@ -59,7 +59,7 @@ To start an agent, the daemon picks a Claude session ID, writes the prompt to a 
 work start --headless --prompt-file <prompt> --log-file <log> --session-id <uuid> <issue-branch-name>
 ```
 
-This creates a worktree at `worktrees/<branch>`, runs `make init`, and pipes the prompt into `claude -p` under that session ID. Agents work on Opus: the daemon sets `ANTHROPIC_MODEL=opus` for them, whatever the default model in Claude's settings is. Branch names come from Linear's own `branchName` field, so the branch matches what the Linear UI shows.
+This creates a worktree at `worktrees/<branch>`, runs `make init`, and pipes the prompt into `claude -p` under that session ID. Agents work on Opus: the daemon sets `ANTHROPIC_MODEL=opus` for them, whatever the default model in Claude's settings is. The planning job and the sessions that answer comments run on [Fable](planning.md#planning-model). Branch names come from Linear's own `branchName` field, so the branch matches what the Linear UI shows.
 
 The prompt instructs the agent to run `/armcknight-claude:start`, implement the change, run `/armcknight-claude:commit`, then run `/armcknight-claude:pr --autonomous` to open a pull request and see CI through. The agent is told not to pause for confirmation. The target repository's `CLAUDE.md` tells it how the project is built and tested. The prompt also has the issue's comments, read when the issue is queued, so the agent does not depend on what `linctl issue get` prints. Before the agent starts, comments cause nothing else.
 
@@ -87,7 +87,7 @@ Review a pull request the daemon is watching, or comment in its conversation, an
 - it was submitted after the issue's last agent started, and
 - it asks for something: changes requested, a comment review — including one made only of comments on lines of code — or an approval with a note. An approval with nothing written, a draft review and a dismissed review do not count.
 
-A comment in the pull request's conversation, outside any review, counts the same way: when it is from that user, was made after the issue's last agent started, and has something written in it. A reply in the thread of an earlier review, made outside a new review, is a review of its own on GitHub, submitted when you reply, so it counts as a new comment review.
+A comment in the pull request's conversation, outside any review, counts the same way: when it is from that user, was made after the issue's last agent started, and has something written in it. A comment that starts with an @-mention, such as `@sentry review`, is addressed to a bot or to another person, so it does not count. Agents run as you and post such comments themselves. A reply in the thread of an earlier review, made outside a new review, is a review of its own on GitHub, submitted when you reply, so it counts as a new comment review.
 
 The issue then goes back in the queue, once for all the reviews and comments that came in. Its agent runs in the same worktree, on the same branch, under a new Claude session, with a prompt that lists those reviews and comments, with a link to each comment, and tells it to read every review, its inline comments and their replies, and every conversation comment, satisfy the points not yet addressed, answer questions in the pull request description, commit, push and see CI through. It does not reply on GitHub. When it ends, the issue waits for its merge again, and only reviews and comments made after that agent started bring it back. Reviews and comments from other people and from bots, such as Seer, are left alone: the first agent already handles bots' reviews.
 
@@ -169,6 +169,8 @@ When a session — an agent for a new issue, a review or a conflict — ends wit
 - Every 15 minutes while paused, runs one very small session (`claude -p` with a one-word prompt and no tools), at a cost of a few tokens. When it answers, the limit was lifted, as when you bought more usage: the pause ends at once. When it gives the limit message again, the pause goes on, until its new reset time.
 - Ends the pause at once on [`superlinear resume`](operations.md#usage).
 - When the pause ends — at the reset time, after a check, or on `superlinear resume` — resumes the interrupted sessions first, with their session IDs, then the queue in its usual order. A resumed session that hits the limit again at once pauses everything again, until the new reset time; nothing retries in a loop.
+
+Fable's own usage limit does not pause sessions: the planning job and comment answers go on [on Opus](planning.md#planning-model) until it resets.
 
 A daemon from before this pause took an agent that the limit stopped for one that ended without a pull request, and dropped it. Each poll's [started-issue sweep](#started-issue-sweep) finds such agents again from the end of their logs in `~/.local/share/superlinear/logs/<issue>.log`:
 

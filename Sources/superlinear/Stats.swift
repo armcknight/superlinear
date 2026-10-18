@@ -2,7 +2,8 @@ import Foundation
 
 /// What `superlinear stats` prints: how many items each section of the
 /// status report holds across all workspaces, what the agents' pull requests
-/// took, and the same per workspace.
+/// took, and the same per workspace, then what the sessions that answered
+/// the owner's comments and the planning jobs took.
 struct Stats: Sendable {
     let reports: [WorkspaceReport]
 
@@ -118,6 +119,30 @@ struct Stats: Sendable {
             ] + (all.contains { $0.ciTime != nil } ? ["\(Self.duration(ciTime)) CI time"] : [])
             lines.append("")
             lines.append("All \(all.count) tracked tasks: " + totals.joined(separator: ", "))
+        }
+
+        let answers = reports.flatMap(\.commentAnswers)
+        if !answers.isEmpty {
+            let usage = answers.compactMap(\.usage)
+            let totals = [
+                "\(Self.compact(usage.map(\.tokens).reduce(0, +))) tokens",
+                "\(Self.compact(usage.map(\.cacheReadTokens).reduce(0, +))) cache reads",
+                "\(Self.duration(usage.map(\.activeTime).reduce(0, +))) agent time",
+            ]
+            lines.append("")
+            lines.append("\(answers.count) comment answer\(answers.count == 1 ? "" : "s"): " + totals.joined(separator: ", "))
+        }
+
+        let planningRuns = reports.flatMap(\.planningRuns)
+        if !planningRuns.isEmpty {
+            let usage = planningRuns.compactMap(\.usage)
+            let totals = [
+                "\(Self.compact(usage.map(\.tokens).reduce(0, +))) tokens",
+                "\(Self.compact(usage.map(\.cacheReadTokens).reduce(0, +))) cache reads",
+                "\(Self.duration(usage.map(\.activeTime).reduce(0, +))) agent time",
+            ]
+            lines.append("")
+            lines.append("\(planningRuns.count) planning job\(planningRuns.count == 1 ? "" : "s"): " + totals.joined(separator: ", "))
         }
 
         let projects = reports.filter { !$0.entries.isEmpty || !$0.pullRequestStats.isEmpty }
@@ -249,7 +274,13 @@ enum StatsCommand {
             print("[superlinear] Failed to load config: \(error)")
             return 1
         }
-        let (reports, header) = await StatusCommand.reports(workspaces: config.workspaces, state: State.loadWithPlanning(from: State.stateFileURL(), planning: PlanningRecord.load()), transcripts: Transcripts(), since: StatusReview.defaultSince)
+        let planning = PlanningRecord.load()
+        let state = State.loadWithPlanning(from: State.stateFileURL(), planning: planning)
+        var (reports, header) = await StatusCommand.reports(workspaces: config.workspaces, state: state, transcripts: Transcripts(), since: StatusReview.defaultSince)
+        for index in reports.indices {
+            let name = reports[index].name
+            reports[index].planningRuns = state.planningRuns(workspace: name, planning: planning.workspaces[name] ?? WorkspacePlanning())
+        }
         let warnings = header + reports.flatMap { report in report.warnings.map { "warning: \(report.name): \($0)" } }
         let sections = (warnings.isEmpty ? [] : [warnings.joined(separator: "\n")]) + [Stats(reports: reports).rendered()]
         print(sections.joined(separator: "\n\n"))

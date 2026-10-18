@@ -663,6 +663,16 @@ actor Daemon {
         return true
     }
 
+    /// Remembers that Fable's limit is used up, so project-management
+    /// sessions run on the fallback model until it resets.
+    private func recordFableLimit(_ hit: ClaudeUsageLimit.Hit, now: Date, workspace: String) {
+        state.recordFableLimit(hit, now: now)
+        save()
+        let until = state.fableLimit.map { StatusTime.clock($0.until.rawValue, now: now) } ?? "its reset"
+        log("Fable's usage limit is reached; planning and comment answers run on \(PlanningModel.fallback.rawValue) "
+            + "until \(until)", workspace: workspace)
+    }
+
     private func endClaudePause(_ reason: String) {
         guard state.claudePause != nil else { return }
         state.claudePause = nil
@@ -956,10 +966,24 @@ actor Daemon {
     @discardableResult
     func propose(_ draft: ProposalDraft, workspace: WorkspaceConfig) async throws -> Proposal? {
         let screening = try await proposalEngine(workspace).screen(draft, existing: state.proposals(workspace: workspace.name))
-        guard case .store(let proposal, let applyNow) = screening else {
-            if case .skip(let reason) = screening {
-                log("Not proposing \(draft.payload.kind.rawValue): \(reason)", workspace: workspace.name)
+        let proposal: Proposal, applyNow: Bool
+        switch screening {
+        case .store(let stored, let now):
+            (proposal, applyNow) = (stored, now)
+        case .merge(let merged):
+            // Unless it was put in Linear, or decided, while the screening waited.
+            guard let current = state.proposals(workspace: workspace.name).first(where: { $0.id == merged.id }),
+                  current.status == .pending, current.post == nil
+            else {
+                log("Not proposing \(draft.payload.kind.rawValue): it repeats proposal \(merged.id), which was put in Linear meanwhile", workspace: workspace.name)
+                return nil
             }
+            state.recordProposal(merged, workspace: workspace.name)
+            save()
+            log("Merged a \(draft.payload.kind.rawValue) proposal into \(merged.id), the same work: \(draft.reason)", workspace: workspace.name)
+            return merged
+        case .skip(let reason):
+            log("Not proposing \(draft.payload.kind.rawValue): \(reason)", workspace: workspace.name)
             return nil
         }
         // Another proposal may have been stored while the screening waited on Linear.
@@ -990,7 +1014,7 @@ actor Daemon {
     private func proposalEngine(_ workspace: WorkspaceConfig) -> ProposalEngine {
         ProposalEngine(
             workspace: workspace.name, autonomy: workspace.autonomy,
-            linear: LinearClient(apiKey: workspace.apiKey), audit: AuditLog()
+            linear: LinearClient(apiKey: workspace.apiKey), audit: AuditLog(), duplicates: ClaudeDuplicateJudge()
         )
     }
 
@@ -1045,6 +1069,9 @@ actor Daemon {
                         if snapshot != nil, let rejected = state.proposals(workspace: name).first(where: { $0.id == proposal.id }) {
                             await settle(rejected, poster: poster, workspace: workspace, now: now)
                         }
+                        if let original = snapshot?.duplicateOf {
+                            await proposeMerge(proposal, into: original, client: client, workspace: workspace)
+                        }
                     }
                 }
             } catch {
@@ -1060,6 +1087,23 @@ actor Daemon {
         save()
         for proposal in expired {
             await settle(proposal, poster: poster, workspace: workspace, now: now)
+        }
+    }
+
+    /// Proposes to add the text of a proposed issue, which the owner marked
+    /// a duplicate of `original` in Linear, to `original`, so that what it
+    /// says is not lost. A failure is logged; the proposal stays rejected.
+    private func proposeMerge(
+        _ proposal: Proposal, into original: ProposalIssueSnapshot.Related, client: LinearClient, workspace: WorkspaceConfig
+    ) async {
+        guard proposal.kind == .createIssue, let post = proposal.post else { return }
+        do {
+            let text = try await client.editableIssue(id: post.issueId).description
+            let issue = try await client.editableIssue(id: original.id)
+            guard !issue.handsOff, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            try await propose(IssueMerge.draft(merging: proposal, text: text, into: issue), workspace: workspace)
+        } catch {
+            log("Could not propose to merge \(post.issueIdentifier ?? post.issueId.rawValue) into \(original.identifier): \(error)", workspace: workspace.name)
         }
     }
 
@@ -1205,14 +1249,22 @@ actor Daemon {
         if case .spec = question.subject, let issues = try? await linear.planningIssues(teamIds: workspace.watchedTeams) {
             openIssues = issues.map { "\($0.identifier) [\($0.stateName)] \($0.title)" }
         }
-        let sessionId = ClaudeSession.ID(rawValue: UUID().uuidString.lowercased())
+        var sessionId = ClaudeSession.ID(rawValue: UUID().uuidString.lowercased())
         let startedAt = Date()
-        log("Answering the owner's comment on \(question.location) in session \(sessionId)", workspace: name)
-        let session: CommentSessionRunner.Session
+        var model = state.planningModel(now: startedAt)
+        log("Answering the owner's comment on \(question.location) in session \(sessionId), on \(model.rawValue)", workspace: name)
+        var session: CommentSessionRunner.Session
         do {
-            session = try await commentRunner.run(
-                prompt: CommentAnswerPrompt.render(question, openIssues: openIssues), sessionId: sessionId, worktree: worktree,
-                workspace: name)
+            let prompt = CommentAnswerPrompt.render(question, openIssues: openIssues)
+            session = try await commentRunner.run(prompt: prompt, sessionId: sessionId, model: model, worktree: worktree, workspace: name)
+            // At Fable's limit, the question is asked again on the fallback, in a new session.
+            if model == .fable, let hit = ClaudeUsageLimit.hit(in: session.output, now: Date(), timeZone: .current) {
+                recordFableLimit(hit, now: Date(), workspace: name)
+                model = PlanningModel.fallback
+                sessionId = ClaudeSession.ID(rawValue: UUID().uuidString.lowercased())
+                log("Answering the comment on \(question.location) again in session \(sessionId), on \(model.rawValue)", workspace: name)
+                session = try await commentRunner.run(prompt: prompt, sessionId: sessionId, model: model, worktree: worktree, workspace: name)
+            }
         } catch {
             failed(question, "Could not start Claude: \(error)", workspace: name)
             return
@@ -1353,15 +1405,18 @@ actor Daemon {
 
     private func launchPlanning(_ run: PlanningRun, mode: LaunchMode, workspace: WorkspaceConfig) {
         let name = workspace.name
+        let model = state.planningModel(now: Date())
+        var run = run
+        run.model = model
         do {
-            let (launched, process) = try planningRunner.launch(run, mode: mode, workspace: name) { [run] status in
+            let (launched, process) = try planningRunner.launch(run, mode: mode, model: model, workspace: name) { [run] status in
                 Task { await self.finishPlanning(run, status: status, workspace: workspace) }
             }
             planningProcesses[name] = process
             state.startPlanning(launched, workspace: name)
             save()
             log(mode == .resume ? "Resuming the planning job" : "Started the planning job in \(run.worktreePath)", workspace: name)
-            log("  Session: \(run.sessionId)", workspace: name)
+            log("  Session: \(run.sessionId), on \(model.rawValue)", workspace: name)
             log("  Log: \(planningRunner.log(workspace: name))", workspace: name)
         } catch {
             log("Could not launch the planning job: \(error)", workspace: name)
@@ -1409,6 +1464,16 @@ actor Daemon {
         planningWatchers[name] = nil
         // A job is finished once; a late duplicate notice finds nothing to do.
         guard state.workspaces[name]?.planningRun?.sessionId == run.sessionId else { return }
+        let now = Date()
+        // A job Fable's limit stopped resumes in its session on the fallback.
+        if run.model == .fable, let hit = planningRunner.usageLimitHit(workspace: name, now: now) {
+            recordFableLimit(hit, now: now, workspace: name)
+            var resumed = run
+            resumed.pid = nil
+            resumed.processStartedAt = nil
+            launchPlanning(resumed, mode: planningRunner.launchMode(for: resumed), workspace: workspace)
+            return
+        }
         state.workspaces[name]?.planningRun = nil
         planningBusy.insert(name)
         defer { planningBusy.remove(name) }

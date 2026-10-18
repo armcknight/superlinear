@@ -17,6 +17,7 @@ private actor FakeLinear: LinearWriting {
     var canEnableTriage = true
     var viewer: LinearUser.ID = "owner"
     var writes: [String] = []
+    var duplicateOf: [LinearIssue.ID: ProposalIssueSnapshot.Related] = [:]
     private var created = 0
 
     init(issues: [EditableIssue] = [], triageEnabled: Bool = true, canEnableTriage: Bool = true) {
@@ -36,6 +37,11 @@ private actor FakeLinear: LinearWriting {
 
     func move(_ id: LinearIssue.ID, to type: LinearStateType) {
         issues[id]?.stateType = type
+    }
+
+    func markDuplicate(_ id: LinearIssue.ID, of original: ProposalIssueSnapshot.Related) {
+        issues[id]?.stateType = .duplicate
+        duplicateOf[id] = original
     }
 
     func unlabel(_ id: LinearIssue.ID, _ name: String) {
@@ -167,7 +173,8 @@ private actor FakeLinear: LinearWriting {
         ids.compactMap { id in
             guard let issue = issues[id] else { return nil }
             return ProposalIssueSnapshot(
-                id: id, identifier: issue.identifier, stateType: issue.stateType, labels: issue.labels, comments: comments[id] ?? [])
+                id: id, identifier: issue.identifier, stateType: issue.stateType, labels: issue.labels, comments: comments[id] ?? [],
+                duplicateOf: duplicateOf[id])
         }
     }
 
@@ -226,7 +233,7 @@ private func poster(_ linear: FakeLinear) -> ProposalPoster {
 
 private func engine(_ linear: FakeLinear) -> ProposalEngine {
     let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("superlinear-\(UUID().uuidString)")
-    return ProposalEngine(workspace: "w", autonomy: Autonomy(), linear: linear, audit: AuditLog(directory: scratch))
+    return ProposalEngine(workspace: "w", autonomy: Autonomy(), linear: linear, audit: AuditLog(directory: scratch), duplicates: StubDuplicates())
 }
 
 /// The owner's answer to `proposal`, as a poll would read it.
@@ -368,6 +375,41 @@ struct ProposalAnswerTests {
         let posted = try await poster(linear).post(newIssue(), now: now).proposal
         await linear.move(posted.post!.issueId, to: .duplicate)
         #expect(try await answer(posted, linear: linear) == .reject(reason: "marked a duplicate in Linear"))
+    }
+
+    @Test("A proposed issue marked a duplicate of another names it, and its text can be merged into that one")
+    func duplicateOfAnother() async throws {
+        let original = EditableIssue(
+            id: "i9", identifier: "SPL-9", description: "Mine.", updatedAt: now, labels: [], stateType: .backlog, teamId: "team")
+        let linear = FakeLinear(issues: [original])
+        let posted = try await poster(linear).post(newIssue(), now: now).proposal
+        await linear.markDuplicate(posted.post!.issueId, of: .init(id: "i9", identifier: "SPL-9"))
+        #expect(try await answer(posted, linear: linear) == .reject(reason: "marked a duplicate of SPL-9 in Linear"))
+
+        let merge = IssueMerge.draft(merging: posted, text: "Do it.", into: original)
+        #expect(merge.payload == .editIssue(oldText: "", newText: "### Also from \"Add retries\"\n\nDo it."))
+        #expect(merge.target == .issue("i9", name: "SPL-9"))
+        #expect(merge.targetUpdatedAt == now)
+        #expect(merge.reason.contains("marked a duplicate of SPL-9"))
+    }
+
+    @Test("A proposed issue that may repeat others lists them in a comment")
+    func possibleDuplicatesListed() async throws {
+        let linear = FakeLinear()
+        var proposal = newIssue()
+        proposal.possibleDuplicates = [
+            PossibleDuplicate(name: "SPL-9", title: "Make sync robust", url: "https://l/SPL-9"),
+            PossibleDuplicate(name: "proposal 1a2b3c4d", title: "Old idea", note: "rejected proposal"),
+        ]
+        let posted = try await poster(linear).post(proposal, now: now)
+        #expect(posted.warnings.isEmpty)
+        let comments = await linear.comments[posted.proposal.post!.issueId] ?? []
+        #expect(comments.count == 1)
+        let body = try #require(await linear.commentBodies[comments[0].id])
+        #expect(body.hasPrefix("**Possible duplicates.**"))
+        #expect(body.contains("- [SPL-9](https://l/SPL-9): Make sync robust"))
+        #expect(body.contains("- proposal 1a2b3c4d: Old idea (rejected proposal)"))
+        #expect(body.contains("mark it a duplicate"))
     }
 
     @Test("Declining a proposed issue rejects it, so the same issue is not proposed again")

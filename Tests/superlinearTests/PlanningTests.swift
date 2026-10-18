@@ -334,9 +334,12 @@ struct PlanningTests {
 
     @Test("A new session gets its ID; an interrupted one is resumed")
     func claudeArguments() {
-        let start = PlanningRunner.claudeArguments(sessionId: "s1", mode: .start, runsDirectory: "/runs")
-        #expect(start == ["claude", "-p", "--session-id", "s1", "--allowedTools", PlanningRunner.allowedTools, "--add-dir", "/runs"])
-        #expect(PlanningRunner.claudeArguments(sessionId: "s1", mode: .resume, runsDirectory: "/runs").contains("--resume"))
+        let start = PlanningRunner.claudeArguments(sessionId: "s1", mode: .start, model: .fable, runsDirectory: "/runs")
+        #expect(start == [
+            "claude", "-p", "--session-id", "s1", "--model", "fable", "--allowedTools", PlanningRunner.allowedTools, "--add-dir", "/runs",
+        ])
+        let resume = PlanningRunner.claudeArguments(sessionId: "s1", mode: .resume, model: .opus, runsDirectory: "/runs")
+        #expect(resume.starts(with: ["claude", "-p", "--resume", "s1", "--model", "opus"]))
     }
 
     @Test("A finished job's proposals are read back against its context; a failed one records why")
@@ -366,6 +369,26 @@ struct PlanningTests {
         #expect(job.finish(run, status: 0, now: updated).0.error?.contains("no proposals file") == true)
         runner.cleanUp("s1")
         #expect(!FileManager.default.fileExists(atPath: runner.contextFile("s1")))
+    }
+
+    // A session with no subagents has no directory for their transcripts;
+    // reading its usage once crashed the daemon, at every restart.
+    @Test("A session's usage is read with and without its subagents' transcripts")
+    func usageWithoutSubagents() throws {
+        let home = scratch()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let runner = PlanningRunner(home: home.path, environment: [:])
+        let project = home.appendingPathComponent(".claude/projects/-repo")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let line = #"{"type":"assistant","timestamp":"2026-10-18T00:00:00Z","message":{"id":"m1","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}}}"#
+        try Data((line + "\n").utf8).write(to: project.appendingPathComponent("s1.jsonl"))
+        #expect(runner.usage("s1")?.outputTokens == 5)
+        #expect(runner.usage("missing") == nil)
+
+        let subagents = project.appendingPathComponent("s1/subagents")
+        try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
+        try Data((line.replacingOccurrences(of: "m1", with: "m2") + "\n").utf8).write(to: subagents.appendingPathComponent("a.jsonl"))
+        #expect(runner.usage("s1")?.outputTokens == 10)
     }
 
     // MARK: Each kind of proposal
@@ -505,7 +528,7 @@ struct PlanningTests {
         #expect(result.drafts.map(\.payload.kind) == PlanningPrompt.kinds)
         let audit = scratch()
         defer { try? FileManager.default.removeItem(at: audit) }
-        let engine = ProposalEngine(workspace: "w", autonomy: Autonomy(), linear: linear, audit: AuditLog(directory: audit))
+        let engine = ProposalEngine(workspace: "w", autonomy: Autonomy(), linear: linear, audit: AuditLog(directory: audit), duplicates: StubDuplicates())
         var stored: [Proposal] = []
         for draft in result.drafts {
             guard case .store(let proposal, let applyNow) = try await engine.screen(draft, existing: stored) else {

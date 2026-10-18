@@ -238,6 +238,9 @@ struct State: Codable, Sendable {
     /// The pause of every Claude session while the usage limit is used up.
     /// All workspaces share one Claude login, so it is for all of them.
     var claudePause: ClaudePause?
+    /// Fable's own usage limit, while it is used up: project-management
+    /// sessions run on the fallback model until it resets.
+    var fableLimit: FableLimit?
 
     init() {
         workspaces = [:]
@@ -286,6 +289,24 @@ struct State: Codable, Sendable {
     mutating func liftClaudePause() -> Bool {
         defer { claudePause = nil }
         return claudePause != nil
+    }
+
+    /// The model for a project-management session that starts at `now`.
+    /// Forgets a Fable limit that has reset, so Fable is used again at once.
+    mutating func planningModel(now: Date) -> PlanningModel {
+        if let limit = fableLimit, limit.isOver(now: now) { fableLimit = nil }
+        return PlanningModel.current(limit: fableLimit, now: now)
+    }
+
+    /// Records that a Fable session hit the limit at `now`, or moves the
+    /// reset of the limit already recorded to the new one, when it gives one.
+    mutating func recordFableLimit(_ hit: ClaudeUsageLimit.Hit, now: Date) {
+        guard var current = fableLimit, !current.isOver(now: now) else {
+            fableLimit = FableLimit(hit: hit, now: now)
+            return
+        }
+        if let reset = hit.resetAt, reset.rawValue > now { current.until = reset }
+        fableLimit = current
     }
 
     /// The runs waiting for a slot in every workspace, which a Claude pause

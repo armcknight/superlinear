@@ -155,6 +155,20 @@ struct PullRequestTests {
         #expect(PullRequestComment.unaddressed(comments, by: "someone", after: Date(timeIntervalSince1970: 500)).isEmpty)
     }
 
+    // Agents run as the signed-in user, and in some repositories they ask a
+    // bot for a review with a comment such as `@sentry review`. That comment
+    // must not bring another agent back.
+    @Test("A comment that starts with an @-mention does not count")
+    func commentsAddressedToSomeoneElse() {
+        let comments = [
+            comment("me", "@sentry review", at: 200),
+            comment("me", "  @coderabbitai review\n", at: 300),
+            comment("me", "Ask @sentry about this", at: 400),
+        ]
+        let found = PullRequestComment.unaddressed(comments, by: "me", after: Date(timeIntervalSince1970: 100))
+        #expect(found == [comments[2]])
+    }
+
     @Test("A review and a comment together are one list of feedback, oldest first")
     func feedback() {
         let found = PullRequestFeedback.unaddressed(

@@ -471,10 +471,15 @@ struct AgentRunner: Sendable {
     /// The Claude usage limit that the last agent for `identifier` stopped
     /// at, from the end of its log.
     func usageLimitHit(identifier: LinearIssue.Identifier, now: Date) -> ClaudeUsageLimit.Hit? {
-        guard let handle = FileHandle(forReadingAtPath: "\(logsDirectory)/\(identifier).log") else { return nil }
+        Self.usageLimitHit(inLog: "\(logsDirectory)/\(identifier).log", now: now)
+    }
+
+    /// The Claude usage limit message at the end of the log at `path`.
+    static func usageLimitHit(inLog path: String, now: Date) -> ClaudeUsageLimit.Hit? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
-        try? handle.seek(toOffset: size > Self.logTailSize ? size - Self.logTailSize : 0)
+        try? handle.seek(toOffset: size > logTailSize ? size - logTailSize : 0)
         guard let data = try? handle.readToEnd() else { return nil }
         return ClaudeUsageLimit.hit(in: String(decoding: data, as: UTF8.self), now: now, timeZone: .current)
     }

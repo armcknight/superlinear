@@ -38,8 +38,31 @@ The workspace's [`autonomy`](configuration.md#autonomy) config sets what happens
 - **Your text is yours.** In an issue without the `superlinear` label, an edit changes only the managed block between `<!-- superlinear -->` and `<!-- /superlinear -->`, which Linear does not show; it adds the block at the end when there is none. The rest of the description is left exactly as it was. In an issue with the label, an edit replaces the description.
 - **Hands off.** An issue with the label `superlinear: hands off` is never edited, closed, promoted or related. A proposal to change one is rejected.
 - **No lost updates.** A proposal records the target's `updatedAt` when it was worked out. Before an edit, closure, promotion or spec change, superlinear reads the target again. If it changed after that time, the proposal is not applied but stays pending, sent back for review with a note, even when its kind is `auto`: it is [asked again in Linear](#standup), against the target as it is now. A proposal without the time is checked against the old text instead. Times within a second count as the same, as the state file keeps dates to the second.
-- **No duplicates.** Before a new issue is proposed, Linear's search looks for open issues in its team with the same title or a close one, by the [Sørensen–Dice coefficient](https://en.wikipedia.org/wiki/Dice-S%C3%B8rensen_coefficient) of their letter pairs, at 0.8 or more, once case and punctuation are set aside. When one is found, nothing is proposed, or, for an issue that follows from another, a `related` relation between that one and the open one. A change already pending, or rejected before, is not proposed again: the same kind and target, and for a new issue the same title, for a relation the same other issue and type.
+- **No duplicates.** A change already pending, or rejected before, is not proposed again: the same kind and target, and for a new issue the same title once case and punctuation are set aside, for a relation the same other issue and type. A new issue is also compared with the open issues and proposals by an agent, for the same work in other words: see [Duplicate issues](#duplicate-check).
 - **Proposals expire.** A proposal still pending [`proposalExpiryDays`](configuration.md#proposal-expiry-days) days after it was [put in Linear](#standup) expires: its comment says so, or its issue is canceled with a note. One not yet in Linear does not expire. Applied and expired proposals drop out of the state file 30 days after; rejected ones stay, to keep the change from coming back.
+
+<a id="duplicate-check"></a>
+### Duplicate issues
+
+Before a new issue is proposed, superlinear looks for the same work under another title. Its candidates are:
+
+- the open issues in its team that Linear's search finds for its title, at most 10;
+- the team's proposed issues that are pending or were rejected, at most 20, newest first. One already in Linear counts as the issue it is.
+
+When there is one or more, a short headless Claude session, `claude -p` with no tools, gets the new issue's title and description and each candidate's, and says whether the new issue is the same work as one of them, may be the same work as some, or is the same work as none. Two issues are the same work when doing one would do the other: "Retry failed syncs" and "Make sync robust to network errors" are. Duplicates can say different things, so superlinear merges them, rather than keeping one and losing the other:
+
+| The new issue is | What is proposed |
+| --- | --- |
+| The same work as an open issue, and says something that issue does not | An `editIssue` proposal that adds what it says to that issue, under the heading `Also from "<title>"`: to the description of an issue superlinear created, or else to the managed block. |
+| The same work as an open issue, and adds nothing | Nothing, or, for an issue that follows from another, a `related` relation between that one and the open one. |
+| The same work as a pending proposal not yet in Linear | Nothing new: what it adds goes into that proposal's description. |
+| The same work as a rejected proposal | Nothing. |
+| Maybe the same work as some candidates | The new issue, for review even when `createIssue` is `auto`, with a comment on the proposed issue that links each candidate. |
+| The same work as none | The new issue. |
+
+The session's answer names the candidates by their keys, and keys it does not know are dropped. When the session fails or its answer cannot be read, the daemon logs it and proposes the new issue for review, with every candidate listed. A hands-off issue gets no edit.
+
+On a proposed issue that lists possible duplicates, you decide: accept it, decline it, or mark it a duplicate of one of them in Linear. Marking it a duplicate rejects the proposal, with the issue it duplicates in the reason, and proposes an `editIssue` that adds the proposed issue's description to that issue, so that nothing it says is lost. Reject that edit with 👎 when the issue says it all already.
 
 <a id="audit-log"></a>
 ### The audit log
@@ -65,7 +88,7 @@ There is no schedule. At each poll, when no job is running for the workspace, th
 
 Jobs for one workspace run one at a time, so several merges while one runs make one job after it, which covers them all. A failed job counts: the branch has to move, or an issue be completed, before the next. `superlinear plan` runs a job at once, in the foreground, for the workspace named, or for every workspace with planning on. The session is told why its job runs.
 
-A job runs one headless Claude session, `claude -p`, in the worktree that has the repository's default branch checked out, which is that of `origin/HEAD`, or `main` or `master`. superlinear first fetches the branch and fast-forwards that worktree to it when the worktree is clean. The session may read the code and run `git log`, `git show` and `git diff`, and write one file. Its prompt gives:
+A job runs one headless Claude session, `claude -p` on [Fable](#planning-model), in the worktree that has the repository's default branch checked out, which is that of `origin/HEAD`, or `main` or `master`. superlinear first fetches the branch and fast-forwards that worktree to it when the worktree is clean. The session may read the code and run `git log`, `git show` and `git diff`, and write one file. Its prompt gives:
 
 - the commits on the default branch since the head the last successful job looked at, or, on the first job, those of the last 24 hours, at most 100, each with its pull request, from `gh pr list --state merged`, and the Linear issues its message, branch or title names;
 - the issues of the watched teams completed since the last job ended, or, on the first job, in the last 24 hours, which are no longer among the open issues;
@@ -87,6 +110,21 @@ The job has no token budget of its own. Like an agent, it outlives a daemon rest
 
 `superlinear plan` stores its proposals and runs in `~/.local/share/superlinear/planning.json`, apart from the state file that only the daemon writes; the daemon and `superlinear proposals` take them in from there, and the daemon puts them in Linear at its next poll. It refuses to start while the daemon or another `plan` runs a job for the workspace.
 
+<a id="planning-model"></a>
+## The model for planning and answers
+
+The planning job and the sessions that [answer your comments](#proposal-comments) run on Fable: the daemon passes `--model fable` to `claude`. Agents that work on issues run on Opus: see [The agent](lifecycle.md#agent).
+
+Fable has a usage limit of its own. When one of these sessions ends with a usage limit message while it runs on Fable, such as `Fable weekly limit reached ∙ resets Mon 9am`, the daemon:
+
+- Remembers the limit in the state file, until the reset time in the message, or for one hour when it gives none. A later message with a later reset time moves it.
+- Runs these sessions on Opus until then: it resumes the stopped planning job in its Claude session on Opus, and asks a stopped comment question again in a new session on Opus. Agents are not paused.
+- Uses Fable again for the first session that starts after the reset time.
+
+`superlinear status` shows the limit while it holds, as `Fable usage limit: planning and comment answers run on opus until …`. `superlinear plan` reads the limit from the state file and starts on Opus while it holds. When its job stops at Fable's limit, it resumes the job on Opus, but does not write the limit, as only the daemon writes the state file.
+
+A session on Opus that stops at the usage limit is handled as before: a comment answer pauses every session at the [Claude usage limit](lifecycle.md#claude-usage-limit), and a planning job ends as failed.
+
 <a id="follow-ups"></a>
 ## Follow-ups from agents
 
@@ -106,7 +144,7 @@ Agents find bugs and missing work outside their issue. Every agent's prompt — 
 
 `kind` is `bug`, `task`, `test` or `spec`. `evidence` is the file and line, the failing command, or a log excerpt. `relatedIssue` is optional: the issue the work blocks or relates to. Before each launch, the daemon adds `/.superlinear/` to the repository's `info/exclude`, which every worktree shares, so git ignores the file.
 
-When an agent exits, the daemon reads the file and stores each entry as a `createIssue` proposal in the team of the agent's issue. Its description has the entry's description, kind, evidence and related issue, and its source is the agent's session, issue and pull request. The new issue follows from `relatedIssue`, or else from the agent's issue, so an open issue with a close title becomes an `addRelation` proposal between the two instead. For a [GitHub issue's](lifecycle.md#github-issues) agent, which has no Linear issue, the proposal goes to the workspace's first `teamIds` entry or else Linear's first team, and follows from `relatedIssue` alone. Entries that could not be proposed, as when Linear is down, stay in the file for the next agent on the issue; the rest are removed with it. A malformed file — not a JSON array of entries, an unknown `kind`, or a blank title, description or evidence — is logged, nothing in it is proposed, and it stays where it is for inspection.
+When an agent exits, the daemon reads the file and stores each entry as a `createIssue` proposal in the team of the agent's issue. Its description has the entry's description, kind, evidence and related issue, and its source is the agent's session, issue and pull request. The new issue follows from `relatedIssue`, or else from the agent's issue, so an open issue that is the [same work](#duplicate-check), with nothing to add to it, becomes an `addRelation` proposal between the two instead. For a [GitHub issue's](lifecycle.md#github-issues) agent, which has no Linear issue, the proposal goes to the workspace's first `teamIds` entry or else Linear's first team, and follows from `relatedIssue` alone. Entries that could not be proposed, as when Linear is down, stay in the file for the next agent on the issue; the rest are removed with it. A malformed file — not a JSON array of entries, an unknown `kind`, or a blank title, description or evidence — is logged, nothing in it is proposed, and it stays where it is for inspection.
 
 Two more sources make `createIssue` proposals:
 
@@ -120,7 +158,7 @@ Proposals that need you are reviewed in Linear, where the rest of your triage ha
 
 | Kind | In Linear | Approve | Reject |
 | --- | --- | --- | --- |
-| `createIssue` | The issue itself, created at once in the team's **Triage** state, with the labels `superlinear` and `superlinear: proposed`, its reason and its source. | Accept it from Triage, into any state. | Decline or cancel it, or mark it a duplicate. |
+| `createIssue` | The issue itself, created at once in the team's **Triage** state, with the labels `superlinear` and `superlinear: proposed`, its reason and its source, and a comment that links its [possible duplicates](#duplicate-check), if any. | Accept it from Triage, into any state. | Decline or cancel it, or mark it a duplicate. Marking it a duplicate of an issue proposes to add its text to that issue. |
 | `editIssue`, `closeIssue`, `addRelation`, `promoteIssue` | A comment on the target issue, written by superlinear: what it proposes, the reason, the source, and for an edit the diff of the managed block. The issue gets the label `superlinear: proposed` while it waits. | React 👍 on the comment. | React 👎 on the comment. |
 | `changeSpec` | An issue in Triage, labeled `superlinear: spec` as well, with the diff of the spec and a link to the document or the project. | Accept it from Triage. The change is applied to the document or project, and the issue completed. | Decline or cancel it, or mark it a duplicate. |
 | `postProjectUpdate` | A comment on the project's overview issue, as above. | React 👍. | React 👎. |
@@ -134,7 +172,7 @@ Once answered, superlinear edits the comment's first line to say so, with the ti
 
 Ask about a proposal in a comment, and superlinear answers in the comment's thread. A comment counts when you write it on a proposed issue that waits in Triage or Backlog, or as a reply in the thread of a proposal's comment. Only comments from the API key's user count. superlinear's own comments do not count: each reply it writes starts with the line `*Written by superlinear.*`, and its proposal comments start with what they propose.
 
-For each comment, the daemon runs a short headless Claude session that only reads. It can read the code and its history in the repository's default-branch worktree, and look at pull requests and CI runs with `gh`. It cannot edit files, commit, push, open pull requests, or write to Linear or GitHub. Its prompt has the proposal (its kind, reason, source, and the text or the diff), the comments before yours, and your comment. The answer is posted as a reply under your comment. Ask "What would this cost in CI?" on a proposed CI change, and the reply estimates the minutes it adds to each run, and says on which runners.
+For each comment, the daemon runs a short headless Claude session on [Fable](#planning-model) that only reads. It can read the code and its history in the repository's default-branch worktree, and look at pull requests and CI runs with `gh`. It cannot edit files, commit, push, open pull requests, or write to Linear or GitHub. Its prompt has the proposal (its kind, reason, source, and the text or the diff), the comments before yours, and your comment. The answer is posted as a reply under your comment. superlinear adds the marker line at the start of the reply, and its notes, such as the one that says it changed the proposal, at the end; the prompt tells the session not to write them, and superlinear removes them from the start and end of the answer should the session copy them from its earlier replies. Ask "What would this cost in CI?" on a proposed CI change, and the reply estimates the minutes it adds to each run, and says on which runners.
 
 When the comment asks for a change to the proposal, such as "make it optional" or "only for main", the session may also return new text. superlinear then edits the proposed issue's description, or the proposal's comment, and says in the reply that it did. The proposal still waits for your answer. This applies to the kinds that have text: a new issue's description, an edit's new text, a spec change, and a project update. For a closure, a relation or a promotion, the reply tells you to reject the proposal and say what you want instead.
 
