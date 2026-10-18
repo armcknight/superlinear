@@ -298,4 +298,27 @@ struct StatsTests {
         """)
         #expect(!Stats(reports: [WorkspaceReport(name: "one", entries: [], warnings: [])]).rendered().contains("comment answer"))
     }
+
+    @Test("The stats total what the planning jobs took, across workspaces")
+    func planningRuns() {
+        func run(_ usage: AgentUsage?) -> PlanningRunRecord {
+            PlanningRunRecord(
+                sessionId: ClaudeSession.ID(rawValue: UUID().uuidString), startedAt: Date(), endedAt: Date(),
+                usage: usage, error: usage == nil ? "failed" : nil)
+        }
+        let one = WorkspaceReport(
+            name: "one", entries: [],
+            planningRuns: [run(AgentUsage(inputTokens: 900, outputTokens: 300, cacheReadTokens: 5000, activeTime: 120)), run(nil)],
+            warnings: [])
+        let two = WorkspaceReport(
+            name: "two", entries: [],
+            planningRuns: [run(AgentUsage(inputTokens: 100, outputTokens: 200, cacheReadTokens: 1000, activeTime: 60))],
+            warnings: [])
+        #expect(Stats(reports: [one, two]).rendered() == """
+        Projects  2
+
+        3 planning jobs: 1.5k tokens, 6.0k cache reads, 3m agent time
+        """)
+        #expect(!Stats(reports: [WorkspaceReport(name: "one", entries: [], warnings: [])]).rendered().contains("planning job"))
+    }
 }

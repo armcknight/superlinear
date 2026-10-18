@@ -220,6 +220,9 @@ struct WorkspaceReport: Sendable {
     /// The latest read-only sessions that answered the owner's comments,
     /// oldest first, for `superlinear stats`.
     var commentAnswers: [CommentAnswerRecord] = []
+    /// The latest planning jobs of the daemon and of `superlinear plan`,
+    /// oldest first, for `superlinear stats`.
+    var planningRuns: [PlanningRunRecord] = []
     /// Problems that left the report incomplete, such as Linear or GitHub
     /// being out of reach.
     var warnings: [String]
