@@ -95,7 +95,8 @@ struct CommentAnswer: Codable, Sendable, Equatable {
                 continue
             }
             if answer.revision?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true { answer.revision = nil }
-            guard !answer.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CommentAnswerError.emptyAnswer }
+            answer.answer = CommentResponder.bare(answer.answer)
+            guard !answer.answer.isEmpty else { throw CommentAnswerError.emptyAnswer }
             return answer
         }
         throw CommentAnswerError.noAnswer(String(text.suffix(500)))
@@ -191,7 +192,8 @@ enum CommentAnswerPrompt {
             + renderedComments([PromptComment(question.comment.comment, previousBody: question.comment.previousBody)]))
         var reply = """
             Answer in Markdown, plainly and briefly, to the owner. When the answer is an estimate, say what it \
-            rests on. Reply with only a JSON object, and nothing after it:
+            rests on. superlinear adds the line "\(CommentMarker.line)" at the start of the reply, and its own \
+            note on what became of a change at the end: write neither. Reply with only a JSON object, and nothing after it:
 
             {"answer": "<your answer>", "revision": null}
             """
@@ -364,7 +366,7 @@ struct CommentResponder: Sendable {
                     id: post.issueId, description: ProposalForm.issueDescription(changed, specLink: link))
             }
             revised = changed
-            text += "\n\nsuperlinear changed the proposal as asked. It still waits for your answer."
+            text += "\n\n" + Self.revisedNote
         }
         let reply = try await linear.createReply(
             on: .issue(issueId), parentId: question.comment.comment.rootId, body: CommentMarker.reply(text))
@@ -387,11 +389,48 @@ struct CommentResponder: Sendable {
     static func specReply(_ answer: String, proposal: Proposal?, asked: Bool) -> String {
         guard asked else { return answer }
         guard let proposal else {
-            return answer + "\n\nsuperlinear proposed no change: the same change is pending already, or you rejected it."
+            return answer + "\n\n" + noChangeNote
         }
         let link = proposal.post.map { post in
             post.url.map { "[\(post.issueIdentifier ?? "the proposal")](\($0))" } ?? (post.issueIdentifier ?? "an issue")
         } ?? "a proposal"
-        return answer + "\n\nsuperlinear proposed this change as \(link), in Triage. The document changes only when you accept it."
+        return answer + "\n\n\(proposedNotePrefix)\(link)\(proposedNoteSuffix)"
+    }
+
+    /// The note on a reply whose answer changed the proposal.
+    static let revisedNote = "superlinear changed the proposal as asked. It still waits for your answer."
+    /// The note on a spec reply whose change was not proposed.
+    static let noChangeNote = "superlinear proposed no change: the same change is pending already, or you rejected it."
+    /// The start of the note on a spec reply whose change was proposed.
+    static let proposedNotePrefix = "superlinear proposed this change as "
+    /// The end of the note on a spec reply whose change was proposed.
+    static let proposedNoteSuffix = ", in Triage. The document changes only when you accept it."
+
+    /// A session's answer without the marker line at its start and the
+    /// notes at its end that superlinear adds to the reply itself, which a
+    /// session copies from superlinear's earlier replies in the thread.
+    ///
+    /// One pass over the answer's lines, from each end: it removes only lines
+    /// that are blank, the marker, or a whole note, and stops at the first
+    /// other line, so a quote of them in the answer's text stays.
+    static func bare(_ answer: String) -> String {
+        let lines = answer.components(separatedBy: "\n")
+        let kept = lines
+            .drop { isBlank($0) || $0.trimmingCharacters(in: .whitespaces) == CommentMarker.line }
+            .reversed()
+            .drop { isBlank($0) || isNote($0) }
+            .reversed()
+        return kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isBlank(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Whether the line is, in full, a note that superlinear adds to a reply.
+    private static func isNote(_ line: String) -> Bool {
+        let line = line.trimmingCharacters(in: .whitespaces)
+        return line == revisedNote || line == noChangeNote
+            || (line.hasPrefix(proposedNotePrefix) && line.hasSuffix(proposedNoteSuffix))
     }
 }
