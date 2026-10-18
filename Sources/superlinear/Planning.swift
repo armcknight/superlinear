@@ -15,6 +15,9 @@ struct PlanningRun: Codable, Sendable, Equatable {
     var processStartedAt: Date?
     /// How many times the session was resumed after an interruption.
     var resumes: Int = 0
+    /// The model the session was last launched on; nil for a job an older
+    /// daemon launched, which ran on Claude's default model.
+    var model: PlanningModel?
 }
 
 /// What one planning job did, kept for the trigger and `superlinear status`.

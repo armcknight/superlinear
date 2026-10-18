@@ -12,7 +12,7 @@ import Tagged
 /// - `You've hit your session limit · resets 2:30am (America/Anchorage)`, and
 ///   `You've hit your limit`, `You've hit your weekly limit` and the like
 /// - `5-hour limit reached ∙ resets 3pm`, `Weekly limit reached ∙ resets Oct 20, 3pm`
-///   and `Opus weekly limit reached ∙ resets Mon 9am`
+///   and `Opus weekly limit reached ∙ resets Mon 9am`, and the same for Fable
 /// - `Claude usage limit reached. Your limit will reset at 3pm (America/Los_Angeles).`
 ///
 /// Any of them may come without a reset time.
@@ -51,8 +51,8 @@ enum ClaudeUsageLimit {
             return Hit(resetAt: reset.map(ResetTime.init(rawValue:)))
         }
         let forms = [
-            /^You(?:'|’)ve hit your (?:(?:usage|session|weekly|daily|opus|sonnet|\d+-hour) )*limit\b/.ignoresCase(),
-            /^(?:Claude (?:AI )?usage |(?:(?:session|weekly|daily|opus|sonnet|\d+-hour) )+)limit reached\b/.ignoresCase(),
+            /^You(?:'|’)ve hit your (?:(?:usage|session|weekly|daily|opus|sonnet|fable|\d+-hour) )*limit\b/.ignoresCase(),
+            /^(?:Claude (?:AI )?usage |(?:(?:session|weekly|daily|opus|sonnet|fable|\d+-hour) )+)limit reached\b/.ignoresCase(),
         ]
         guard forms.contains(where: { text.firstMatch(of: $0) != nil }) else { return nil }
         return Hit(resetAt: resetTime(in: text, now: now, timeZone: timeZone).map(ResetTime.init(rawValue:)))

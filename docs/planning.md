@@ -65,7 +65,7 @@ There is no schedule. At each poll, when no job is running for the workspace, th
 
 Jobs for one workspace run one at a time, so several merges while one runs make one job after it, which covers them all. A failed job counts: the branch has to move, or an issue be completed, before the next. `superlinear plan` runs a job at once, in the foreground, for the workspace named, or for every workspace with planning on. The session is told why its job runs.
 
-A job runs one headless Claude session, `claude -p`, in the worktree that has the repository's default branch checked out, which is that of `origin/HEAD`, or `main` or `master`. superlinear first fetches the branch and fast-forwards that worktree to it when the worktree is clean. The session may read the code and run `git log`, `git show` and `git diff`, and write one file. Its prompt gives:
+A job runs one headless Claude session, `claude -p` on [Fable](#planning-model), in the worktree that has the repository's default branch checked out, which is that of `origin/HEAD`, or `main` or `master`. superlinear first fetches the branch and fast-forwards that worktree to it when the worktree is clean. The session may read the code and run `git log`, `git show` and `git diff`, and write one file. Its prompt gives:
 
 - the commits on the default branch since the head the last successful job looked at, or, on the first job, those of the last 24 hours, at most 100, each with its pull request, from `gh pr list --state merged`, and the Linear issues its message, branch or title names;
 - the issues of the watched teams completed since the last job ended, or, on the first job, in the last 24 hours, which are no longer among the open issues;
@@ -86,6 +86,21 @@ When the session ends, superlinear checks the file against what the job was give
 The job has no token budget of its own. Like an agent, it outlives a daemon restart: a later daemon waits for it, takes in its proposals if it ended meanwhile, or resumes its Claude session if it was interrupted, up to three times. A session that the Claude usage limit stops ends as a failed job for now; pausing and resuming it as agents will be is [SPL-26](https://linear.app/superlinear-linear/issue/SPL-26). Jobs do not count toward `maxConcurrentAgents`.
 
 `superlinear plan` stores its proposals and runs in `~/.local/share/superlinear/planning.json`, apart from the state file that only the daemon writes; the daemon and `superlinear proposals` take them in from there, and the daemon puts them in Linear at its next poll. It refuses to start while the daemon or another `plan` runs a job for the workspace.
+
+<a id="planning-model"></a>
+## The model for planning and answers
+
+The planning job and the sessions that [answer your comments](#proposal-comments) run on Fable: the daemon passes `--model fable` to `claude`. Agents that work on issues run on Opus: see [The agent](lifecycle.md#agent).
+
+Fable has a usage limit of its own. When one of these sessions ends with a usage limit message while it runs on Fable, such as `Fable weekly limit reached ∙ resets Mon 9am`, the daemon:
+
+- Remembers the limit in the state file, until the reset time in the message, or for one hour when it gives none. A later message with a later reset time moves it.
+- Runs these sessions on Opus until then: it resumes the stopped planning job in its Claude session on Opus, and asks a stopped comment question again in a new session on Opus. Agents are not paused.
+- Uses Fable again for the first session that starts after the reset time.
+
+`superlinear status` shows the limit while it holds, as `Fable usage limit: planning and comment answers run on opus until …`. `superlinear plan` reads the limit from the state file and starts on Opus while it holds. When its job stops at Fable's limit, it resumes the job on Opus, but does not write the limit, as only the daemon writes the state file.
+
+A session on Opus that stops at the usage limit is handled as before: a comment answer pauses every session at the [Claude usage limit](lifecycle.md#claude-usage-limit), and a planning job ends as failed.
 
 <a id="follow-ups"></a>
 ## Follow-ups from agents
@@ -134,7 +149,7 @@ Once answered, superlinear edits the comment's first line to say so, with the ti
 
 Ask about a proposal in a comment, and superlinear answers in the comment's thread. A comment counts when you write it on a proposed issue that waits in Triage or Backlog, or as a reply in the thread of a proposal's comment. Only comments from the API key's user count. superlinear's own comments do not count: each reply it writes starts with the line `*Written by superlinear.*`, and its proposal comments start with what they propose.
 
-For each comment, the daemon runs a short headless Claude session that only reads. It can read the code and its history in the repository's default-branch worktree, and look at pull requests and CI runs with `gh`. It cannot edit files, commit, push, open pull requests, or write to Linear or GitHub. Its prompt has the proposal (its kind, reason, source, and the text or the diff), the comments before yours, and your comment. The answer is posted as a reply under your comment. superlinear adds the marker line at the start of the reply, and its notes, such as the one that says it changed the proposal, at the end; the prompt tells the session not to write them, and superlinear removes them from the start and end of the answer should the session copy them from its earlier replies. Ask "What would this cost in CI?" on a proposed CI change, and the reply estimates the minutes it adds to each run, and says on which runners.
+For each comment, the daemon runs a short headless Claude session on [Fable](#planning-model) that only reads. It can read the code and its history in the repository's default-branch worktree, and look at pull requests and CI runs with `gh`. It cannot edit files, commit, push, open pull requests, or write to Linear or GitHub. Its prompt has the proposal (its kind, reason, source, and the text or the diff), the comments before yours, and your comment. The answer is posted as a reply under your comment. superlinear adds the marker line at the start of the reply, and its notes, such as the one that says it changed the proposal, at the end; the prompt tells the session not to write them, and superlinear removes them from the start and end of the answer should the session copy them from its earlier replies. Ask "What would this cost in CI?" on a proposed CI change, and the reply estimates the minutes it adds to each run, and says on which runners.
 
 When the comment asks for a change to the proposal, such as "make it optional" or "only for main", the session may also return new text. superlinear then edits the proposed issue's description, or the proposal's comment, and says in the reply that it did. The proposal still waits for your answer. This applies to the kinds that have text: a new issue's description, an edit's new text, a spec change, and a project update. For a closure, a relation or a promotion, the reply tells you to reject the proposal and say what you want instead.
 

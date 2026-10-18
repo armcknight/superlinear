@@ -93,7 +93,7 @@ Two options narrow the report:
 - `--status <names>` shows only the named sections, by the names in the table, comma-separated: `superlinear status --status running,blocked`. The option may repeat. An unknown name is an error that lists the names there are.
 - `--workspace <names>` shows only the named workspaces, comma-separated, in config order: `superlinear status --workspace app,web`. The option may repeat. The pause lines and the polls follow the selection. A name no workspace has is an error that lists the configured ones.
 
-When a [pause](lifecycle.md#limits) is active, the report begins with one line for it.
+When a [pause](lifecycle.md#limits) is active, the report begins with one line for it. So does [Fable's usage limit](planning.md#planning-model), while it holds.
 
 The report ends with this command's version and binary, then the daemon's: its pid, version, binary and start time, or that it is not running. It warns when the daemon's binary has been replaced since the daemon started. Last, under **Polls**, each workspace shows when its last poll ended, whether it failed, and when the next one is due, or, once that time has passed, that it is polling now. Each workspace polls on its own loop, which waits its `pollIntervalSeconds` after each poll ends, so each has its own times.
 
