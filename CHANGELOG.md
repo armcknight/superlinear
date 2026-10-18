@@ -157,6 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Agents work on Opus. The daemon sets `ANTHROPIC_MODEL=opus` for them, as
+  `work` passes no model and the default in Claude's settings can be another.
 - A pending proposal expires `proposalExpiryDays` after the first standup
   that showed it, not after it was made.
 - The first poll of a workspace with no state, in `new` mode, starts nothing

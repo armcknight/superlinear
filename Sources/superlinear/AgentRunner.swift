@@ -149,6 +149,11 @@ struct AgentRunner: Sendable {
     /// does not keep being restarted.
     static let maxResumes = 3
 
+    /// The model agents work on issues with, given to `claude` through
+    /// `ANTHROPIC_MODEL`, since `work` passes no model and the default one
+    /// in Claude's settings can be another.
+    static let model = "opus"
+
     let home: String
     /// The environment agents launch with. `work` and `claude` are found
     /// through its PATH.
@@ -226,7 +231,7 @@ struct AgentRunner: Sendable {
         )
         process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
         process.environment = environment.merging(
-            ["SUPERLINEAR_STATUS_FILE": statusFile(for: run)], uniquingKeysWith: { $1 }
+            ["SUPERLINEAR_STATUS_FILE": statusFile(for: run), "ANTHROPIC_MODEL": Self.model], uniquingKeysWith: { $1 }
         )
         // A file rather than a pipe: a pipe would break when the daemon exits
         // and take the agent down with it.
