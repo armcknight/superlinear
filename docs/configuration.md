@@ -41,7 +41,7 @@ Each workspace entry is one Linear-account-to-repository pairing. List several t
 | Key | Required | Description |
 | --- | --- | --- |
 | <a id="name"></a>`name` | yes | Label for logs. Also the key under which state is stored. |
-| <a id="api-key"></a>`apiKey` | yes | Linear personal API key. |
+| <a id="api-key"></a>`apiKey` | yes | Linear personal API key. Claude sessions get it too, in their environment: see [the Linear key](lifecycle.md#linear-key). |
 | <a id="repo-path"></a>`repoPath` | yes | Repository the agent works in. `~` is expanded. |
 | <a id="team-ids"></a>`teamIds` | no | Linear team IDs to watch. Empty or absent means all teams. Defaults to `[]`. |
 | <a id="poll-interval-seconds"></a>`pollIntervalSeconds` | no | Seconds between polls. Defaults to `60`. |

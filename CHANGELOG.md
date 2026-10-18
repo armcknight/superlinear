@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agents, the planning job and the sessions that answer the owner's comments
+  get the workspace's Linear key in `LINCTL_API_KEY`,
+  in place of any key in the daemon's environment, so `linctl` reads the
+  right workspace without an `.envrc`.
+- The planning job and the comment answer sessions may read the workspace's
+  Linear issues with `linctl issue get`, `list` and `search`, and no `linctl`
+  command that writes. A comment answer's prompt has the issues of the
+  workspace that the comment or the proposal names, so "is this a duplicate
+  of TEM-22?" needs no tool call.
 - A new issue is compared with the open issues and proposals by an agent,
   for the same work in other words, not by its title alone. This replaces
   the close-title match. The candidates are the open issues that Linear's

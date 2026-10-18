@@ -309,7 +309,7 @@ struct AgentRunner: Sendable {
     /// status — nil when it left none — once it ends. Returns the run with the
     /// launched process recorded.
     func launch(
-        _ run: AgentRun, mode: LaunchMode, repoPath: String,
+        _ run: AgentRun, mode: LaunchMode, repoPath: String, apiKey: String,
         onExit: @escaping @Sendable (Int32?) -> Void
     ) throws -> (AgentRun, Process) {
         let fm = FileManager.default
@@ -334,9 +334,7 @@ struct AgentRunner: Sendable {
             run: run, mode: mode, promptFile: promptFile(for: run), logFile: agentLog(for: run)
         )
         process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
-        process.environment = environment.merging(
-            ["SUPERLINEAR_STATUS_FILE": statusFile(for: run), "ANTHROPIC_MODEL": Self.model], uniquingKeysWith: { $1 }
-        )
+        process.environment = launchEnvironment(for: run, apiKey: apiKey)
         // A file rather than a pipe: a pipe would break when the daemon exits
         // and take the agent down with it.
         process.standardOutput = output
@@ -354,6 +352,14 @@ struct AgentRunner: Sendable {
         launched.pid = process.processIdentifier
         launched.processStartedAt = Self.startTime(of: process.processIdentifier)
         return (launched, process)
+    }
+
+    /// The environment the run's agent launches with: the daemon's, with the
+    /// workspace's Linear key `apiKey`, the status file and the model.
+    func launchEnvironment(for run: AgentRun, apiKey: String) -> [String: String] {
+        LinearKey.environment(environment, apiKey: apiKey).merging(
+            ["SUPERLINEAR_STATUS_FILE": statusFile(for: run), "ANTHROPIC_MODEL": Self.model], uniquingKeysWith: { $1 }
+        )
     }
 
     /// The prompt that starts the run's session.
