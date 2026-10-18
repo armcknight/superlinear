@@ -38,6 +38,12 @@ struct AgentRun: Codable, Sendable, Equatable {
     /// The pull request the issue's work is stacked on, for an issue started
     /// on top of its blocker's open pull request.
     var stack: StackBase?
+    /// The issue's comments in Linear, for its prompt, and for a run started
+    /// by the owner's comments, those to act on.
+    var comments: CommentContext?
+
+    /// Whether the owner's comments in Linear started the run.
+    var answersComments: Bool { !(comments?.new.isEmpty ?? true) }
 
     /// Waiting for a free slot: recorded, but not launched, or launched and
     /// since requeued after an interruption.
@@ -134,6 +140,13 @@ struct WorkspaceState: Codable, Sendable {
     var planningRun: PlanningRun?
     /// The planning jobs the daemon ran, oldest first.
     var planningRuns: [PlanningRunRecord]
+    /// What superlinear handled of the owner's comments, by issue ID, or by
+    /// `CommentTriage.documentKey` for the spec document.
+    var commentLedgers: [String: CommentLedger]
+    /// Issues whose last agent ended without a pull request, by issue ID.
+    var endedAgents: [LinearIssue.ID: EndedAgent]
+    /// The sessions that answered the owner's comments, oldest first.
+    var commentAnswers: [CommentAnswerRecord]
 
     init() {
         processedIssueIds = []
@@ -146,6 +159,9 @@ struct WorkspaceState: Codable, Sendable {
         proposals = []
         activity = []
         planningRuns = []
+        commentLedgers = [:]
+        endedAgents = [:]
+        commentAnswers = []
     }
 
     // State files written before runs were tracked have no `inFlight`, those
@@ -153,7 +169,8 @@ struct WorkspaceState: Codable, Sendable {
     // `linkedPullRequests`, and those written before blockers and human labels
     // were followed have no `blocked` or `needsHuman`. Those from before
     // proposals have none, those from before activity was kept none, and
-    // those from before the planning job no planning runs.
+    // those from before the planning job no planning runs. Those from before
+    // comments were answered have no ledgers, ended agents or answers.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         processedIssueIds = try container.decode(Set<String>.self, forKey: .processedIssueIds)
@@ -169,6 +186,9 @@ struct WorkspaceState: Codable, Sendable {
         spendingLimit = try container.decodeIfPresent(SpendingLimitStop.self, forKey: .spendingLimit)
         planningRun = try container.decodeIfPresent(PlanningRun.self, forKey: .planningRun)
         planningRuns = try container.decodeIfPresent([PlanningRunRecord].self, forKey: .planningRuns) ?? []
+        commentLedgers = try container.decodeIfPresent([String: CommentLedger].self, forKey: .commentLedgers) ?? [:]
+        endedAgents = try container.decodeIfPresent([LinearIssue.ID: EndedAgent].self, forKey: .endedAgents) ?? [:]
+        commentAnswers = try container.decodeIfPresent([CommentAnswerRecord].self, forKey: .commentAnswers) ?? []
     }
 
     /// Issues an agent may not start on yet.
@@ -467,6 +487,33 @@ struct State: Codable, Sendable {
         workspaces[workspace, default: WorkspaceState()].planningRun = nil
         let runs = workspaces[workspace]?.planningRuns ?? []
         workspaces[workspace]?.planningRuns = PlanningHistory.appending(record, to: runs)
+    }
+
+    /// Adds the ledgers of issues watched for the first time, drops those of
+    /// issues no longer watched, and forgets ended agents whose issues were
+    /// completed or canceled. The spec document's ledger is kept.
+    mutating func recordCommentWatch(_ plan: CommentTriage.Plan, workspace: String) {
+        var ledgers = workspaces[workspace, default: WorkspaceState()].commentLedgers
+        ledgers = ledgers.filter { plan.watched.contains($0.key) || $0.key.hasPrefix("document:") }
+        ledgers.merge(plan.baselines) { current, _ in current }
+        workspaces[workspace, default: WorkspaceState()].commentLedgers = ledgers
+        for id in plan.finished { workspaces[workspace]?.endedAgents[id] = nil }
+    }
+
+    /// Records the comments as handled, each with the text it has now.
+    mutating func handleComments(_ comments: [FreshComment], key: String, since: Date, workspace: String) {
+        var ledger = workspaces[workspace, default: WorkspaceState()].commentLedgers[key] ?? CommentLedger(since: since)
+        ledger.handle(comments)
+        workspaces[workspace, default: WorkspaceState()].commentLedgers[key] = ledger
+    }
+
+    /// How many answer sessions are kept for their token use.
+    static let commentAnswerRetention = 100
+
+    mutating func recordCommentAnswer(_ record: CommentAnswerRecord, workspace: String) {
+        var answers = workspaces[workspace, default: WorkspaceState()].commentAnswers
+        answers.append(record)
+        workspaces[workspace, default: WorkspaceState()].commentAnswers = Array(answers.suffix(Self.commentAnswerRetention))
     }
 
     static func stateFileURL() -> URL {

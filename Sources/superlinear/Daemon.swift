@@ -56,6 +56,18 @@ actor Daemon {
     /// Failed workflow runs already screened for a proposal, so that each is
     /// screened once rather than searched for in Linear every poll.
     private var screenedWorkflowRuns: Set<String> = []
+    private let commentRunner = CommentSessionRunner()
+    /// The owner's comments waiting for a read-only session, by workspace.
+    private var commentQuestions: [String: [CommentQuestion]] = [:]
+    /// Workspaces whose comments a session is answering now.
+    private var answeringComments: Set<String> = []
+    /// Comments queued or being answered, by workspace, comment and text, so
+    /// a poll does not queue one twice.
+    private var queuedComments: Set<String> = []
+    /// Failed sessions by comment, after `maxAnswerFailures` of which the
+    /// comment is taken as handled rather than tried each poll.
+    private var answerFailures: [String: Int] = [:]
+    static let maxAnswerFailures = 3
 
     init(config: Config) {
         self.config = config
@@ -118,14 +130,17 @@ actor Daemon {
     /// issue counts as processed from the moment it is queued, so no later poll
     /// queues it twice, and the poll does not wait for its agent. Issues queued
     /// at once start in the order of their `queuedAt`.
-    func enqueueAgent(for issue: LinearIssue, workspace: WorkspaceConfig, queuedAt: Date, stack: StackBase?) {
+    func enqueueAgent(
+        for issue: LinearIssue, workspace: WorkspaceConfig, queuedAt: Date, stack: StackBase?, comments: CommentContext? = nil
+    ) {
         let run = AgentRun(
             issueId: issue.id.rawValue,
             identifier: issue.identifier,
             branchName: issue.branchName,
             sessionId: UUID().uuidString.lowercased(),
             queuedAt: queuedAt,
-            stack: stack
+            stack: stack,
+            comments: comments
         )
         state.markProcessed(issue.id.rawValue, workspace: workspace.name)
         state.recordRun(run, workspace: workspace.name)
@@ -180,9 +195,20 @@ actor Daemon {
     /// Queues an agent to address new reviews on the pull request of an issue
     /// awaiting its merge. It works in the issue's existing worktree, under a
     /// new Claude session, and the issue awaits its merge again once it ends.
-    func enqueueReview(of pending: PendingMerge, pullRequest: PullRequest, workspace: WorkspaceConfig) {
+    /// With `comments`, the owner's new comments on the issue in Linear,
+    /// the agent acts on them too, and they count as handled.
+    func enqueueReview(
+        of pending: PendingMerge, pullRequest: PullRequest, workspace: WorkspaceConfig, comments: CommentTriage.Comments? = nil
+    ) {
         // The watch may have ended while the reviews were being read.
         guard state.workspaces[workspace.name]?.pendingMerges[pending.issueId] != nil else { return }
+        var context: CommentContext?
+        if let comments {
+            let fresh = stillFresh(comments.fresh, key: pending.issueId, workspace: workspace.name)
+            guard !fresh.isEmpty else { return }
+            context = CommentContext(thread: comments.context.thread, new: fresh.map { PromptComment($0.comment, previousBody: $0.previousBody) })
+            state.handleComments(fresh, key: pending.issueId, since: Date(), workspace: workspace.name)
+        }
         let run = AgentRun(
             issueId: pending.issueId,
             identifier: pending.identifier,
@@ -190,12 +216,50 @@ actor Daemon {
             sessionId: UUID().uuidString.lowercased(),
             queuedAt: Date(),
             review: ReviewRequest(number: pullRequest.number, url: pullRequest.url),
-            stack: pending.stack
+            stack: pending.stack,
+            comments: context
         )
         state.startReview(run, workspace: workspace.name)
-        log("Queued \(pending.identifier) to address the review on \(pullRequest.url)", workspace: workspace.name)
+        let what = context == nil ? "the review on" : "the owner's comments in Linear, and any review on,"
+        log("Queued \(pending.identifier) to address \(what) \(pullRequest.url)", workspace: workspace.name)
         save()
         fillSlots()
+    }
+
+    /// Queues a new agent, in the issue's worktree, to act on the owner's
+    /// comments on an issue whose last agent ended without a pull request.
+    /// Once it ends, the issue awaits its pull request again.
+    func enqueueCommentAgent(_ comments: CommentTriage.Comments, workspace: WorkspaceConfig) {
+        let name = workspace.name
+        guard let ended = state.workspaces[name]?.endedAgents[comments.issueId],
+              state.workspaces[name]?.inFlight[ended.issueId.rawValue] == nil,
+              state.workspaces[name]?.pendingMerges[ended.issueId.rawValue] == nil
+        else { return }
+        let fresh = stillFresh(comments.fresh, key: ended.issueId.rawValue, workspace: name)
+        guard !fresh.isEmpty else { return }
+        let run = AgentRun(
+            issueId: ended.issueId.rawValue,
+            identifier: ended.identifier,
+            branchName: ended.branchName,
+            sessionId: UUID().uuidString.lowercased(),
+            queuedAt: Date(),
+            comments: CommentContext(thread: comments.context.thread, new: fresh.map { PromptComment($0.comment, previousBody: $0.previousBody) })
+        )
+        state.handleComments(fresh, key: ended.issueId.rawValue, since: Date(), workspace: name)
+        state.workspaces[name]?.endedAgents[ended.issueId] = nil
+        state.recordRun(run, workspace: name)
+        log("Queued \(ended.identifier) to act on \(fresh.count) comment(s) from the owner in Linear; its last agent "
+            + "opened no pull request", workspace: name)
+        save()
+        fillSlots()
+    }
+
+    /// Those of `comments` that the ledger does not have as handled with
+    /// the text they have now: another task may have handled them since the
+    /// poll read the ledger.
+    private func stillFresh(_ comments: [FreshComment], key: String, workspace: String) -> [FreshComment] {
+        let handled = state.workspaces[workspace]?.commentLedgers[key]?.handled ?? [:]
+        return comments.filter { handled[$0.comment.id.rawValue] != $0.comment.body }
     }
 
     /// Queues an agent to merge the base branch into the branch of an issue
@@ -343,13 +407,16 @@ actor Daemon {
             processes[run.issueId] = process
             state.recordRun(launched, workspace: workspace.name)
             log(mode == .resume ? "Resuming \(run.identifier)" : "Starting \(run.identifier)", workspace: workspace.name)
-            if run.review == nil, run.conflict == nil, mode == .start, run.resumes == 0, firstLaunch {
+            if run.review == nil, run.conflict == nil, !run.answersComments, mode == .start, run.resumes == 0, firstLaunch {
                 state.recordActivity(
                     ActivityEvent(time: Date(), kind: .agentStarted, identifier: run.identifier), workspace: workspace.name)
                 if workspace.selection == .ready { markStarted(run, workspace: workspace) }
             }
             if let review = run.review {
                 log("  Addressing the review on \(review.url)", workspace: workspace.name)
+            }
+            if run.review == nil, run.answersComments {
+                log("  Acting on the owner's comments in Linear", workspace: workspace.name)
             }
             if let conflict = run.conflict {
                 log("  Resolving the conflicts of \(conflict.url) with \(conflict.baseBranch)", workspace: workspace.name)
@@ -1004,11 +1071,206 @@ actor Daemon {
     }
 
     /// The Linear user of the workspace's API key, looked up once.
-    private func viewerId(workspace: WorkspaceConfig, client: LinearClient) async throws -> LinearUser.ID {
+    func viewerId(workspace: WorkspaceConfig, client: LinearClient) async throws -> LinearUser.ID {
         if let viewer = linearViewers[workspace.name] { return viewer }
         let viewer = try await client.viewerId()
         linearViewers[workspace.name] = viewer
         return viewer
+    }
+
+    // MARK: - The owner's comments
+
+    /// What the comment check needs from the state file.
+    func commentInputs(workspace: String) -> CommentTriage.Inputs {
+        let workspaceState = state.workspaces[workspace] ?? WorkspaceState()
+        return CommentTriage.Inputs(
+            proposals: workspaceState.proposals, pendingMerges: Array(workspaceState.pendingMerges.values),
+            ended: Array(workspaceState.endedAgents.values), runs: Array(workspaceState.inFlight.values),
+            ledgers: workspaceState.commentLedgers)
+    }
+
+    func recordCommentWatch(_ plan: CommentTriage.Plan, workspace: String) {
+        state.recordCommentWatch(plan, workspace: workspace)
+        save()
+    }
+
+    /// Records that the issue's last agent ended without a pull request, so
+    /// the owner's next comment on it queues a new agent.
+    func recordEndedAgent(_ ended: EndedAgent, workspace: String) {
+        guard state.workspaces[workspace]?.endedAgents[ended.issueId] == nil else { return }
+        state.workspaces[workspace, default: WorkspaceState()].endedAgents[ended.issueId] = ended
+        save()
+    }
+
+    func endedAgentIds(workspace: String) -> Set<LinearIssue.ID> {
+        Set(state.workspaces[workspace]?.endedAgents.keys.map { $0 } ?? [])
+    }
+
+    /// The owner's questions on the spec document to answer. The document's
+    /// first check counts only comments from then on.
+    func specQuestions(_ document: DocumentComments, url: String?, viewer: LinearUser.ID, workspace: String, now: Date) -> [CommentQuestion] {
+        let key = CommentTriage.documentKey(document.id)
+        guard let ledger = state.workspaces[workspace]?.commentLedgers[key] else {
+            state.workspaces[workspace, default: WorkspaceState()].commentLedgers[key] = CommentLedger(since: now)
+            save()
+            return []
+        }
+        return CommentQuestion.spec(document, url: url, ledger: ledger, viewer: viewer)
+    }
+
+    /// Queues the questions for read-only sessions, one at a time per
+    /// workspace, in the background, so the poll does not wait for them.
+    func queueCommentAnswers(_ questions: [CommentQuestion], workspace: WorkspaceConfig) {
+        let name = workspace.name
+        for question in questions {
+            guard queuedComments.insert(Self.commentKey(question, workspace: name)).inserted else { continue }
+            commentQuestions[name, default: []].append(question)
+        }
+        guard !answeringComments.contains(name), !(commentQuestions[name] ?? []).isEmpty else { return }
+        answeringComments.insert(name)
+        Task { await self.answerQueuedComments(workspace) }
+    }
+
+    private static func commentKey(_ question: CommentQuestion, workspace: String) -> String {
+        "\(workspace) \(question.comment.comment.id) \(question.comment.comment.body.hashValue)"
+    }
+
+    private func answerQueuedComments(_ workspace: WorkspaceConfig) async {
+        let name = workspace.name
+        defer { answeringComments.remove(name) }
+        while let question = commentQuestions[name]?.first {
+            commentQuestions[name]?.removeFirst()
+            defer { queuedComments.remove(Self.commentKey(question, workspace: name)) }
+            // The Claude pause holds them back; the next poll after it finds them again.
+            guard claudeAvailable(now: Date()) else {
+                for other in commentQuestions[name] ?? [] { queuedComments.remove(Self.commentKey(other, workspace: name)) }
+                commentQuestions[name] = []
+                return
+            }
+            guard !stillFresh([question.comment], key: question.key, workspace: name).isEmpty else { continue }
+            await answer(question, workspace: workspace)
+        }
+    }
+
+    /// Runs a read-only session on the question and writes its answer in
+    /// Linear. The comment counts as handled once the reply is posted; a
+    /// session stopped at the usage limit pauses Claude and leaves it for
+    /// after the pause.
+    private func answer(_ question: CommentQuestion, workspace: WorkspaceConfig) async {
+        let name = workspace.name
+        let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+        let worktree = PlanningGit.defaultBranch(repoPath: repoPath).flatMap { PlanningGit.worktree(of: $0, repoPath: repoPath) } ?? repoPath
+        let linear = LinearClient(apiKey: workspace.apiKey)
+        var openIssues: [String] = []
+        if case .spec = question.subject, let issues = try? await linear.planningIssues(teamIds: workspace.watchedTeams) {
+            openIssues = issues.map { "\($0.identifier) [\($0.stateName)] \($0.title)" }
+        }
+        let sessionId = ClaudeSession.ID(rawValue: UUID().uuidString.lowercased())
+        let startedAt = Date()
+        log("Answering the owner's comment on \(question.location) in session \(sessionId)", workspace: name)
+        let session: CommentSessionRunner.Session
+        do {
+            session = try await commentRunner.run(
+                prompt: CommentAnswerPrompt.render(question, openIssues: openIssues), sessionId: sessionId, worktree: worktree,
+                workspace: name)
+        } catch {
+            failed(question, "Could not start Claude: \(error)", workspace: name)
+            return
+        }
+        var record = CommentAnswerRecord(
+            sessionId: sessionId, startedAt: startedAt, endedAt: Date(), location: question.location,
+            usage: planningRunner.usage(sessionId))
+        defer {
+            state.recordCommentAnswer(record, workspace: name)
+            save()
+        }
+        if let hit = ClaudeUsageLimit.hit(in: session.output, now: Date(), timeZone: .current) {
+            record.error = "stopped at the Claude usage limit"
+            log("The session answering the comment on \(question.location) stopped at the Claude usage limit; "
+                + "it is answered after the pause", workspace: name)
+            pauseClaude(hit, now: Date())
+            return
+        }
+        let answer: CommentAnswer
+        do {
+            guard session.status == 0 else {
+                throw CommentAnswerError.noAnswer("Claude exited \(session.status.map(String.init) ?? "without a status")")
+            }
+            answer = try CommentAnswer.parse(session.output)
+        } catch {
+            record.error = "\(error)"
+            failed(question, "\(error); see \(commentRunner.log(workspace: name))", workspace: name)
+            return
+        }
+
+        let responder = CommentResponder(linear: linear, specDocumentURL: workspace.planning.specDocumentURL)
+        do {
+            switch question.subject {
+            case .proposal(let asked, _):
+                // The owner may have answered the proposal while the session ran.
+                guard let proposal = state.proposals(workspace: name).first(where: { $0.id == asked.id }), proposal.isPosted else {
+                    log("Not replying on \(question.location): the proposal was answered meanwhile", workspace: name)
+                    break
+                }
+                let answered = try await responder.answer(question, about: proposal, with: answer, now: Date())
+                if let revised = answered.revised {
+                    state.recordProposal(revised, workspace: name)
+                    log("Changed \(proposal.kind.rawValue) \(proposal.id) as the owner asked", workspace: name)
+                }
+                log("Replied on \(question.location)" + (answered.reply.url.map { ": \($0)" } ?? ""), workspace: name)
+            case .spec(let document, _):
+                var proposal: Proposal?
+                let asked = answer.revision.map { $0 != document.content } ?? false
+                if asked, let text = answer.revision {
+                    proposal = try await proposeSpecChange(text, document: document, question: question, workspace: workspace)
+                }
+                let reply = try await responder.reply(
+                    to: question, text: CommentResponder.specReply(answer.answer, proposal: proposal, asked: asked))
+                log("Replied on \(question.location)" + (reply.url.map { ": \($0)" } ?? ""), workspace: name)
+            }
+        } catch {
+            record.error = "\(error)"
+            failed(question, "Could not reply in Linear: \(error)", workspace: name)
+            return
+        }
+        state.handleComments([question.comment], key: question.key, since: question.since, workspace: name)
+        answerFailures[Self.commentKey(question, workspace: name)] = nil
+        if let usage = record.usage { log("  The session used \(Stats.compact(usage.tokens)) tokens", workspace: name) }
+    }
+
+    /// Proposes the spec change a comment asked for, and puts it in Linear
+    /// at once, so the reply can link it. Nil when the same change is
+    /// pending or was rejected.
+    private func proposeSpecChange(
+        _ text: String, document: DocumentComments, question: CommentQuestion, workspace: WorkspaceConfig
+    ) async throws -> Proposal? {
+        let draft = CommentQuestion.specDraft(text, document: document, comment: question.comment.comment)
+        guard let proposal = try await propose(draft, workspace: workspace) else { return nil }
+        guard proposal.status == .pending, proposal.post == nil else { return proposal }
+        let client = LinearClient(apiKey: workspace.apiKey)
+        let poster = ProposalPoster(
+            linear: client,
+            specTeamId: { try await client.proposalTeamId(teamIds: workspace.teamIds) },
+            specDocumentId: workspace.planning.specDocumentId, specDocumentURL: workspace.planning.specDocumentURL,
+            expiryDays: workspace.proposalExpiryDays)
+        await post(proposal, poster: poster, workspace: workspace, now: Date())
+        return state.proposals(workspace: workspace.name).first { $0.id == proposal.id }
+    }
+
+    /// Logs a failed answer. After `maxAnswerFailures` the comment is taken
+    /// as handled, so that one no session can answer is not tried forever.
+    private func failed(_ question: CommentQuestion, _ reason: String, workspace: String) {
+        let key = Self.commentKey(question, workspace: workspace)
+        let failures = (answerFailures[key] ?? 0) + 1
+        answerFailures[key] = failures
+        guard failures >= Self.maxAnswerFailures else {
+            log("Could not answer the comment on \(question.location), trying again next poll: \(reason)", workspace: workspace)
+            return
+        }
+        log("Giving up on the comment on \(question.location) after \(failures) failed sessions: \(reason)", workspace: workspace)
+        answerFailures[key] = nil
+        state.handleComments([question.comment], key: question.key, since: question.since, workspace: workspace)
+        save()
     }
 
     // MARK: - Planning

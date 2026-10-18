@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- superlinear answers the owner's comments in Linear. A question or a
+  request on a pending proposal, on the proposed issue or in the thread of
+  the proposal's comment, gets a read-only Claude session. Its answer is
+  posted as a reply that starts with `*Written by superlinear.*`. A request
+  for a change can also edit the proposal, which still waits for an answer.
+  The reply keeps the label `superlinear: proposed` on the issue. A comment
+  on an issue with an open pull request queues a review agent with the
+  comment. A comment on a started issue whose agent ended without a pull
+  request queues a new agent. A comment on the spec document is answered
+  the same way, and a request to change the spec becomes a `changeSpec`
+  proposal. An agent's first prompt has the issue's comments. Each comment
+  is handled once for each version of its text. At the first poll after the
+  upgrade, only comments made after the issue's last proposal or agent
+  start count.
+
 - Proposals are reviewed in Linear. A `createIssue` proposal is created at
   once in the team's Triage state, labeled `superlinear` and `superlinear:
   proposed`, with its reason and source; accepting it from Triage approves
