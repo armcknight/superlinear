@@ -95,6 +95,8 @@ Rules:
 | [`configuration.md#planning`](configuration.md#planning) | `planning` |
 | [`configuration.md#stacking`](configuration.md#stacking) | `stacking` |
 | [`configuration.md#max-stack-depth`](configuration.md#max-stack-depth) | `maxStackDepth` |
+| [`configuration.md#autonomy-levels`](configuration.md#autonomy-levels) | The `autonomy` map and its trust levels. |
+| [`configuration.md#planning-keys`](configuration.md#planning-keys) | The `planning` keys. |
 | [`configuration.md#config-changes`](configuration.md#config-changes) | Changing the config. |
 | [`configuration.md#files`](configuration.md#files) | The files superlinear reads and writes. |
 
