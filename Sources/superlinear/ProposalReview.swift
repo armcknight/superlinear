@@ -141,12 +141,15 @@ enum ProposalAnswer: Equatable {
         switch post.form {
         case .triageIssue:
             switch snapshot.stateType {
-            case .triage: return .none
+            case .triage, .unknown: return .none
             case .canceled: return .reject(reason: "declined in Linear")
+            case .duplicate: return .reject(reason: "marked a duplicate in Linear")
             default: return .approve
             }
         case .backlogIssue:
             if snapshot.stateType == .canceled { return .reject(reason: "canceled in Linear") }
+            if snapshot.stateType == .duplicate { return .reject(reason: "marked a duplicate in Linear") }
+            if snapshot.stateType == .unknown { return .none }
             let labeled = snapshot.labels.contains { $0.caseInsensitiveCompare(ProposalEngine.proposedLabel) == .orderedSame }
             return snapshot.stateType != .backlog || !labeled ? .approve : .none
         case .comment:

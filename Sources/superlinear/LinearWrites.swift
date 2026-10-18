@@ -22,7 +22,7 @@ extension LinearClient: LinearWriting {
             .similarIssues, variables: [.term: title, .teamId: teamId.rawValue], as: LinearQuery.SimilarIssuesData.self
         ).searchIssues.nodes
         return nodes
-            .filter { ![.completed, .canceled].contains($0.state.type) }
+            .filter { !LinearStateType.closed.contains($0.state.type) }
             .map { IssueMatch(id: $0.id, identifier: $0.identifier, title: $0.title) }
     }
 

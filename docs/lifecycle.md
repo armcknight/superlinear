@@ -31,7 +31,7 @@ Each workspace picks its issues in one of two modes, set by [`selection`](config
 
 In both modes, an issue the selection finds starts only when nothing holds it back:
 
-- **Blockers:** an issue that another issue blocks, through a Linear "blocks" relation, does not start while that issue is neither completed nor canceled. It waits in the state file as blocked, and starts on the first poll after its last blocker is closed. With [`stacking`](configuration.md#stacking) on, an issue whose last open blocker has an open pull request from an agent may start on top of that pull request instead: see [Stacks](#stacks).
+- **Blockers:** an issue that another issue blocks, through a Linear "blocks" relation, does not start while that issue is not completed, canceled or marked a duplicate. It waits in the state file as blocked, and starts on the first poll after its last blocker is closed. With [`stacking`](configuration.md#stacking) on, an issue whose last open blocker has an open pull request from an agent may start on top of that pull request instead: see [Stacks](#stacks).
 - **Human labels:** an issue with a label in [`humanLabels`](configuration.md#human-labels) — "Needs human" or "Spike" by default, in any case — never starts an agent. Should the label come off, it starts like any other issue. These issues are for you: `superlinear status` lists them under "Needs human", and [marking one Done in Linear](planning.md#standup-needs-human) makes the issues it blocks ready.
 - **Holds:** to hold an issue back, move it to Backlog; moving it to Todo again releases it.
 - **Moving on:** a waiting issue moved out of the states an agent starts from, or archived, stops waiting.
@@ -100,7 +100,7 @@ When an issue's blocker has an open pull request that waits for your review, its
 
 An issue is **stackable** when:
 
-- every blocker is completed or canceled, except exactly one;
+- every blocker is completed, canceled or marked a duplicate, except exactly one;
 - that one's agent has ended, and its pull request is open, not a draft, with CI passing; and
 - the resulting stack is no deeper than [`maxStackDepth`](configuration.md#max-stack-depth) pull requests, the bottom one included, 3 by default.
 
@@ -172,7 +172,7 @@ When the limit is used up, or a payment fails, GitHub starts no jobs in private 
 <a id="merge"></a>
 ## The merge and completion
 
-When the pull request merges, the issue moves to its team's first completed state in Linear, unless it is already completed or canceled, and `work finish <branch>` removes the worktree and the local branch. If Linear cannot be updated, the next poll tries again. With Linear's GitHub integration installed for the repository, Linear moves the issue to done when the pull request merges, by default; without it, the daemon does.
+When the pull request merges, the issue moves to its team's first completed state in Linear, unless it is already completed, canceled or marked a duplicate, and `work finish <branch>` removes the worktree and the local branch. If Linear cannot be updated, the next poll tries again. With Linear's GitHub integration installed for the repository, Linear moves the issue to done when the pull request merges, by default; without it, the daemon does.
 
 A task is completed only when both its pull request is merged and its Linear issue is done.
 

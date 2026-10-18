@@ -229,6 +229,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Proposals reach Linear again. Linear's `duplicate` state type, which every
+  team has, failed the decoding of a team's states, so no proposal could be
+  put in Linear. A state type Linear adds later is now `unknown` rather than
+  an error, except in `readyStates`. An issue marked a duplicate counts as
+  closed, as a canceled one does: it blocks nothing, and a proposed issue
+  marked a duplicate is rejected.
 - Agents that the Claude usage limit stopped while a daemon from before the
   pause ran are found again: a started issue with no pull request whose
   agent log ends at the limit is queued first and resumes its worktree's
