@@ -2,7 +2,8 @@ import Foundation
 
 /// What `superlinear stats` prints: how many items each section of the
 /// status report holds across all workspaces, what the agents' pull requests
-/// took, and the same per workspace.
+/// took, and the same per workspace, then what the sessions that answered
+/// the owner's comments took.
 struct Stats: Sendable {
     let reports: [WorkspaceReport]
 
@@ -118,6 +119,18 @@ struct Stats: Sendable {
             ] + (all.contains { $0.ciTime != nil } ? ["\(Self.duration(ciTime)) CI time"] : [])
             lines.append("")
             lines.append("All \(all.count) tracked tasks: " + totals.joined(separator: ", "))
+        }
+
+        let answers = reports.flatMap(\.commentAnswers)
+        if !answers.isEmpty {
+            let usage = answers.compactMap(\.usage)
+            let totals = [
+                "\(Self.compact(usage.map(\.tokens).reduce(0, +))) tokens",
+                "\(Self.compact(usage.map(\.cacheReadTokens).reduce(0, +))) cache reads",
+                "\(Self.duration(usage.map(\.activeTime).reduce(0, +))) agent time",
+            ]
+            lines.append("")
+            lines.append("\(answers.count) comment answer\(answers.count == 1 ? "" : "s"): " + totals.joined(separator: ", "))
         }
 
         let projects = reports.filter { !$0.entries.isEmpty || !$0.pullRequestStats.isEmpty }

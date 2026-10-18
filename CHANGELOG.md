@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stopped comment answer runs again on Opus. The daemon keeps the reset time
   in the state file and uses Fable again after it. `superlinear status`
   shows the limit while it holds.
+- `superlinear stats` shows how many sessions answered the owner's comments,
+  and the tokens, cache reads and agent time they used.
 - superlinear answers the owner's comments in Linear. A question or a
   request on a pending proposal, on the proposed issue or in the thread of
   the proposal's comment, gets a read-only Claude session. Its answer is
@@ -255,6 +257,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workspace. The same goes after `make reset`.
 
 ### Fixed
+
+- A comment in a pull request's conversation that starts with an
+  @-mention, such as the `@sentry review` an agent posts as you, no longer
+  queues a review agent that has nothing to do.
 
 - The daemon no longer crashes when it reads the token use of a session
   with no subagents, such as the one that answers a comment. It crashed
