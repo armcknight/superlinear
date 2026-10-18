@@ -280,7 +280,7 @@ struct ProposalDuplicateTests {
     func duplicateOfRejected() async throws {
         var earlier = Proposal(newIssue("Make sync robust"), trust: .review, now: proposedAt)
         earlier.status = .rejected
-        let duplicates = StubDuplicates(.duplicate(key: "proposal-\(earlier.id.rawValue.prefix(8))", added: "More."))
+        let duplicates = StubDuplicates(.duplicate(key: DuplicateCandidate.Key(rawValue: "proposal-\(earlier.id.rawValue.prefix(8))"), added: "More."))
         let screening = try await engine(FakeLinear(), duplicates: duplicates).screen(newIssue("Retry failed syncs"), existing: [earlier])
         guard case .skip(let reason) = screening else {
             Issue.record("A duplicate of a rejected proposal was stored: \(screening)")
@@ -292,7 +292,7 @@ struct ProposalDuplicateTests {
     @Test("A new issue that is the same work as a pending proposal not yet in Linear is merged into it")
     func duplicateOfPending() async throws {
         let earlier = Proposal(newIssue("Make sync robust", description: "Robust."), trust: .review, now: proposedAt)
-        let duplicates = StubDuplicates(.duplicate(key: "proposal-\(earlier.id.rawValue.prefix(8))", added: "Back off."))
+        let duplicates = StubDuplicates(.duplicate(key: DuplicateCandidate.Key(rawValue: "proposal-\(earlier.id.rawValue.prefix(8))"), added: "Back off."))
         let screening = try await engine(FakeLinear(), duplicates: duplicates).screen(newIssue("Retry failed syncs"), existing: [earlier])
         guard case .merge(let merged) = screening else {
             Issue.record("A duplicate of a pending proposal was not merged: \(screening)")
@@ -313,7 +313,7 @@ struct ProposalDuplicateTests {
         let candidates = DuplicateCandidate.gather(
             teamId: "team", matches: [match("Make sync robust"), IssueMatch(id: "i10", identifier: "SPL-10", title: "Other")],
             existing: [earlier, rejected])
-        #expect(candidates.map(\.key) == ["SPL-9", "proposal-\(rejected.id.rawValue.prefix(8))", "SPL-10"])
+        #expect(candidates.map(\.key) == ["SPL-9", DuplicateCandidate.Key(rawValue: "proposal-\(rejected.id.rawValue.prefix(8))"), "SPL-10"])
         #expect(candidates.first?.description == "Robust.")
         #expect(candidates[1].possible.note == "rejected proposal")
     }
@@ -339,7 +339,7 @@ struct ProposalDuplicateTests {
 
     @Test("The agent's answer is read, and keys that are not candidates dropped")
     func verdicts() throws {
-        let keys = ["SPL-9", "SPL-10"]
+        let keys: [DuplicateCandidate.Key] = ["SPL-9", "SPL-10"]
         #expect(try DuplicatePrompt.verdict(from: #"{"verdict": "distinct", "of": []}"#, keys: keys) == .distinct)
         #expect(try DuplicatePrompt.verdict(
             from: "Here:\n```json\n{\"verdict\": \"duplicate\", \"of\": [\"SPL-9\"], \"added\": \" More. \"}\n```", keys: keys)

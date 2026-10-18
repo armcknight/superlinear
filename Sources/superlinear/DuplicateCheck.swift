@@ -1,4 +1,5 @@
 import Foundation
+import Tagged
 
 /// An open issue or a proposal that may be the same work as a proposed new
 /// issue, as the proposed issue lists it for the owner.
@@ -24,11 +25,14 @@ enum DuplicateCandidate: Sendable, Equatable {
     case issue(IssueMatch)
     case proposal(Proposal)
 
+    /// How the agent names a candidate, such as `SPL-9` or `proposal-1a2b3c4d`.
+    typealias Key = Tagged<DuplicateCandidate, String>
+
     /// How the agent names it.
-    var key: String {
+    var key: Key {
         switch self {
-        case .issue(let match): match.identifier
-        case .proposal(let proposal): "proposal-\(proposal.id.rawValue.prefix(8))"
+        case .issue(let match): Key(rawValue: match.identifier)
+        case .proposal(let proposal): Key(rawValue: "proposal-\(proposal.id.rawValue.prefix(8))")
         }
     }
 
@@ -110,9 +114,9 @@ enum DuplicateVerdict: Sendable, Equatable {
     case distinct
     /// It is the same work as the candidate with `key`. `added` is what the
     /// new issue says that the candidate does not, in Markdown, or empty.
-    case duplicate(key: String, added: String)
+    case duplicate(key: DuplicateCandidate.Key, added: String)
     /// It may be the same work as these candidates; the owner decides.
-    case possible(keys: [String])
+    case possible(keys: [DuplicateCandidate.Key])
 }
 
 /// Asks whether a new issue is the same work as another. `ClaudeDuplicateJudge`
@@ -179,14 +183,14 @@ enum DuplicatePrompt {
 
     private struct Answer: Decodable {
         var verdict: String
-        var of: [String]?
+        var of: [DuplicateCandidate.Key]?
         var added: String?
     }
 
     /// The verdict in `output`, the first JSON object in it. Keys that are
     /// not candidates are dropped; a duplicate of none is a possible one of
     /// none, which is distinct.
-    static func verdict(from output: String, keys: [String]) throws -> DuplicateVerdict {
+    static func verdict(from output: String, keys: [DuplicateCandidate.Key]) throws -> DuplicateVerdict {
         guard let start = output.firstIndex(of: "{"), let end = output.lastIndex(of: "}"), start < end,
               let answer = try? JSONDecoder().decode(Answer.self, from: Data(output[start...end].utf8))
         else { throw DuplicateCheckError.unreadable(output.trimmingCharacters(in: .whitespacesAndNewlines)) }
