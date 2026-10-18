@@ -189,7 +189,7 @@ enum RoadmapError: Error, CustomStringConvertible {
     }
 }
 
-/// Builds a roadmap, the same for the daemon and `superlinear roadmap`.
+/// Builds a roadmap, the same for the daemon and `superlinear plan`.
 struct RoadmapBuilder: Sendable {
     var runner = RoadmapRunner()
 
@@ -289,9 +289,10 @@ struct RoadmapBuilder: Sendable {
     }
 }
 
-/// `superlinear roadmap`: prints the last roadmap, or builds one.
+/// `superlinear roadmap`: prints the roadmap the daemon last built. It
+/// builds nothing and writes nothing.
 enum RoadmapCommand {
-    static func run(configPath: String?, workspaces names: [String]?, json: Bool, refresh: Bool) async -> Int32 {
+    static func run(configPath: String?, workspaces names: [String]?, json: Bool) async -> Int32 {
         let config: Config
         do {
             config = try Config.load(from: configPath)
@@ -314,26 +315,14 @@ enum RoadmapCommand {
             return 1
         }
 
-        let key = RoadmapRecord.key(workspaces.map(\.name))
-        var roadmap = refresh ? nil : RoadmapRecord.load().roadmaps[key]
-        if roadmap == nil {
-            // Progress goes to standard error, so `--json` prints only JSON.
-            let say: @Sendable (String) -> Void = { FileHandle.standardError.write(Data("[superlinear] \($0)\n".utf8)) }
-            let state = State.loadWithPlanning(from: State.stateFileURL(), planning: PlanningRecord.load())
-            // The daemon owns the state file, so a Fable limit found here is
-            // not kept: the next build finds it again.
-            let model = PlanningModel.current(limit: state.fableLimit, now: Date())
-            switch await RoadmapBuilder().build(workspaces: workspaces, state: state, model: model, say: say).0 {
-            case .built(let built):
-                roadmap = built
-            case .busy(let reason), .failed(let reason):
-                say(reason)
-                roadmap = RoadmapRecord.load().roadmaps[key]
-                guard roadmap != nil else { return 1 }
-                say("Showing the last roadmap instead")
-            }
+        // The daemon builds the roadmap of every workspace; --workspace shows
+        // part of it.
+        let record = RoadmapRecord.load()
+        guard var roadmap = record.roadmaps[RoadmapRecord.key(config.workspaces.map(\.name))] else {
+            print("[superlinear] " + record.pointer(workspaces: config.workspaces.map(\.name), now: Date()))
+            return 1
         }
-        guard let roadmap else { return 1 }
+        if names != nil { roadmap = roadmap.filtered(to: workspaces.map(\.name)) }
 
         if json {
             do {

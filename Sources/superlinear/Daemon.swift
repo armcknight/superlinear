@@ -84,6 +84,9 @@ actor Daemon {
 
         recoverRuns()
         sweepWorktrees()
+        // `superlinear roadmap` only shows what the daemon built, so build
+        // one now when there is none.
+        if RoadmapRecord.load().roadmaps[RoadmapRecord.key(config.workspaces.map(\.name))] == nil { rebuildRoadmap() }
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             for workspace in config.workspaces {

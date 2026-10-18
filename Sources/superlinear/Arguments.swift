@@ -15,7 +15,7 @@ enum Command: Equatable {
     case resume
     case plan(configPath: String?, workspace: String?)
     /// `workspaces` nil for every configured workspace.
-    case roadmap(configPath: String?, workspaces: [String]?, json: Bool, refresh: Bool)
+    case roadmap(configPath: String?, workspaces: [String]?, json: Bool)
     case version
     case help
     case invalid(String)
@@ -117,14 +117,11 @@ enum Command: Equatable {
             var configPath: String?
             var workspaces: [String]?
             var json = false
-            var refresh = false
             while let argument = rest.first {
                 rest = rest.dropFirst()
                 switch argument {
                 case "--json":
                     json = true
-                case "--refresh":
-                    refresh = true
                 case "--config", "--workspace":
                     guard let value = rest.first else {
                         return .invalid(argument == "--config" ? "--config needs a path" : "--workspace needs a name")
@@ -142,7 +139,7 @@ enum Command: Equatable {
                     return .invalid("unknown option for roadmap: \(argument)")
                 }
             }
-            return .roadmap(configPath: configPath, workspaces: workspaces, json: json, refresh: refresh)
+            return .roadmap(configPath: configPath, workspaces: workspaces, json: json)
         default:
             break
         }

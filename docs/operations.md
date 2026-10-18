@@ -37,7 +37,7 @@ superlinear status [--since <duration>] [--status <names>] [--workspace <names>]
 superlinear stats [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear plan [--workspace <name>] [--config <path>]
-superlinear roadmap [--workspace <names>] [--json] [--refresh] [--config <path>]
+superlinear roadmap [--workspace <names>] [--json] [--config <path>]
 superlinear resume
 ```
 

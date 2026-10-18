@@ -157,6 +157,26 @@ struct Roadmap: Codable, Sendable, Equatable {
         steps.first { $0.issues.contains { $0.identifier == identifier && $0.workspace == workspace } }?.number
     }
 
+    /// The part of the roadmap about `names`: the steps with an issue of
+    /// those workspaces, with their numbers kept, so "unblocks step N" still
+    /// reads right; the actions for those steps, or for their issues; the
+    /// notes about their issues; and the waits from or to them.
+    func filtered(to names: [String]) -> Roadmap {
+        let names = Set(names)
+        var roadmap = self
+        roadmap.workspaces = workspaces.filter { names.contains($0) }
+        roadmap.heads = heads.filter { names.contains($0.key) }
+        roadmap.steps = steps.filter { $0.issues.contains { names.contains($0.workspace) } }
+        let numbers = Set(roadmap.steps.map(\.number))
+        let identifiers = Set(roadmap.steps.flatMap(\.issues).filter { names.contains($0.workspace) }.map(\.identifier))
+        roadmap.actions = actions.filter { action in
+            action.step.map(numbers.contains) ?? action.issues.contains(where: identifiers.contains)
+        }
+        roadmap.triage = triage.filter { $0.issues.contains(where: identifiers.contains) }
+        roadmap.references = references.filter { names.contains($0.workspace) || $0.targetWorkspace.map(names.contains) == true }
+        return roadmap
+    }
+
     // MARK: - Building
 
     /// The roadmap from the session's `output` and the `context` it was
@@ -273,7 +293,7 @@ struct Roadmap: Codable, Sendable, Equatable {
         var lines = ["Roadmap of \(workspaces.joined(separator: ", ")), built \(StatusTime.rendered(builtAt, now: now))"]
         if !moved.isEmpty {
             lines.append(
-                "The default branch of \(moved.joined(separator: ", ")) moved since; `superlinear roadmap --refresh` builds a new one.")
+                "The default branch of \(moved.joined(separator: ", ")) moved since; the daemon builds a new one when its next planning job ends.")
         }
         lines.append("")
         let issues = steps.flatMap(\.issues)
@@ -522,7 +542,7 @@ struct RoadmapRecord: Codable, Sendable, Equatable {
         let building = building[key].map { $0.isRunning } ?? false
         guard let roadmap = roadmaps[key] else {
             return building ? "Roadmap: being built now; see `superlinear roadmap` in a few minutes"
-                : "Roadmap: none built yet; `superlinear roadmap` builds one"
+                : "Roadmap: none built yet; the daemon builds one when it starts and when a planning job ends"
         }
         let count = roadmap.actions.count
         var line = "Roadmap: built \(StatusTime.rendered(roadmap.builtAt, now: now)), "

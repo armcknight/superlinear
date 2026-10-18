@@ -140,6 +140,32 @@ struct RoadmapTests {
         #expect(roadmap.step(of: "WOR-7", in: "workflows") == 1)
     }
 
+    @Test("--workspace shows the steps with that workspace's issues, under their own numbers, and what goes with them")
+    func filtered() {
+        let output = RoadmapOutput(
+            steps: [
+                .init(work: "WOR-7 (Title WOR-7)", issues: ["WOR-7"], who: ["agent"], why: nil),
+                .init(work: "Release workflows 4.2.0", issues: [], who: ["you"], why: nil),
+                .init(work: "TEM-51", issues: ["TEM-51"], who: ["agent"], why: nil),
+            ],
+            actions: [.init(text: "Release workflows 4.2.0", step: 2, issues: [])],
+            triage: [.init(text: "TEM-51 and TEM-60 belong together", issues: ["TEM-51", "TEM-60"])])
+        let roadmap = Roadmap.assemble(output, context: context, model: nil, usage: nil)
+
+        let workflows = roadmap.filtered(to: ["workflows"])
+        #expect(workflows.workspaces == ["workflows"])
+        #expect(workflows.heads.keys.sorted() == ["workflows"])
+        #expect(workflows.steps.map(\.number) == [1])
+        #expect(workflows.actions.isEmpty)
+        #expect(workflows.triage.isEmpty)
+        #expect(workflows.references.map(\.target) == ["WOR-7"])
+
+        let templatr = roadmap.filtered(to: ["templatr"])
+        #expect(templatr.steps.map(\.number) == [3, 4, 5, 6])
+        #expect(templatr.actions.map(\.step) == [4, 5, 6])
+        #expect(templatr.triage.count == 1)
+    }
+
     @Test("The text has the table, the waits, Now, for you, and Triage, with links when asked")
     func rendered() {
         let output = RoadmapOutput(
@@ -178,7 +204,7 @@ struct RoadmapTests {
     @Test("status points at the roadmap: when it was built and what it asks of the owner")
     func pointer() {
         var record = RoadmapRecord()
-        #expect(record.pointer(workspaces: ["a", "b"], now: updated) == "Roadmap: none built yet; `superlinear roadmap` builds one")
+        #expect(record.pointer(workspaces: ["a", "b"], now: updated) == "Roadmap: none built yet; the daemon builds one when it starts and when a planning job ends")
         let roadmap = Roadmap.assemble(RoadmapOutput(steps: []), context: context, model: nil, usage: nil)
         record.roadmaps[RoadmapRecord.key(["workflows", "templatr"])] = roadmap
         let line = record.pointer(workspaces: ["templatr", "workflows"], now: updated.addingTimeInterval(3600))
@@ -231,11 +257,12 @@ struct RoadmapTests {
         #expect(prompt.contains("#9 fix: tests — issues TEM-50 — not reviewed, CI passing — waits on the owner"))
     }
 
-    @Test("roadmap takes workspaces, --json and --refresh")
+    @Test("roadmap takes workspaces and --json")
     func arguments() {
-        #expect(Command.parse(["roadmap"]) == .roadmap(configPath: nil, workspaces: nil, json: false, refresh: false))
-        #expect(Command.parse(["roadmap", "--workspace", "a,b", "--workspace", "c", "--json", "--refresh", "--config", "/c.json"])
-            == .roadmap(configPath: "/c.json", workspaces: ["a", "b", "c"], json: true, refresh: true))
+        #expect(Command.parse(["roadmap"]) == .roadmap(configPath: nil, workspaces: nil, json: false))
+        #expect(Command.parse(["roadmap", "--workspace", "a,b", "--workspace", "c", "--json", "--config", "/c.json"])
+            == .roadmap(configPath: "/c.json", workspaces: ["a", "b", "c"], json: true))
+        #expect(Command.parse(["roadmap", "--refresh"]) == .invalid("unknown option for roadmap: --refresh"))
         #expect(Command.parse(["roadmap", "--workspace"]) == .invalid("--workspace needs a name"))
         #expect(Command.parse(["roadmap", "--all"]) == .invalid("unknown option for roadmap: --all"))
     }

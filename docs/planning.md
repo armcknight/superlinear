@@ -146,7 +146,7 @@ A session on Opus that stops at the usage limit is handled as before: a comment 
 ## The roadmap
 
 ```sh
-superlinear roadmap [--workspace <names>] [--json] [--refresh]
+superlinear roadmap [--workspace <names>] [--json]
 ```
 
 The roadmap is the order of the open work across every configured workspace, who does each step, an agent or you, and what you must do now so that agents are not waiting. It prints:
@@ -158,11 +158,11 @@ The roadmap is the order of the open work across every configured workspace, who
 
 In a terminal that shows links, each issue's identifier links to it in Linear, and each action to the pull request or issue it is done on.
 
-Without `--refresh`, the command prints the last roadmap of the same workspaces, with the time it was built, and says when a workspace's default branch moved since, as known locally. With `--refresh`, or when there is none, it builds one in the foreground, which takes a few minutes; progress goes to standard error. `--workspace` builds and shows the roadmap of only the named workspaces, comma-separated; the option may repeat. `--json` prints the roadmap as JSON, for other tools: the steps with their issues, Who and why, the actions, the notes, the references, the heads it looked at, and warnings.
+The command only reads. It prints the roadmap that the daemon last built, with the time it was built, and says when a workspace's default branch moved since, as known locally. It does not build a roadmap and does not write a file. When there is no roadmap yet, it says so and exits 1. `--workspace` shows the part of that roadmap about the named workspaces, comma-separated; the option may repeat. That part has the steps with an issue of those workspaces, under their numbers in the full roadmap, the actions for those steps or issues, the triage notes about their issues, and the waits from or to them. `--json` prints the roadmap as JSON, for other tools: the steps with their issues, Who and why, the actions, the notes, the references, the heads it looked at, and warnings.
 
-The planning job rebuilds the roadmap of every workspace at its end, so `superlinear roadmap` is usually current. In the daemon the build runs in the background; jobs that end while one is building lead to one more build after it, and none starts while Claude sessions are paused at the usage limit. `superlinear status` begins with a line that says when the roadmap was last built and how many actions it lists for you.
+The daemon builds the roadmap of every workspace when it starts and has none, and the planning job rebuilds it at its end, so `superlinear roadmap` is usually current. In the daemon the build runs in the background; jobs that end while one is building lead to one more build after it, and none starts while Claude sessions are paused at the usage limit. `superlinear status` begins with a line that says when the roadmap was last built and how many actions it lists for you.
 
-Roadmaps are kept in `~/.local/share/superlinear/roadmap.json`, one for each set of workspaces, with the time, the workspaces and the head of each default branch it looked at. The daemon and the command both build roadmaps, and only the daemon writes the state file, so the roadmap is kept apart from it, as `superlinear plan`'s jobs are. A build does not start while another session builds the same roadmap; `superlinear roadmap` then shows the last one.
+Roadmaps are kept in `~/.local/share/superlinear/roadmap.json`, one for each set of workspaces, with the time, the workspaces and the head of each default branch it looked at. The daemon and `superlinear plan` both build roadmaps, and only the daemon writes the state file, so the roadmap is kept apart from it, as `superlinear plan`'s jobs are. A build does not start while another session builds the same roadmap.
 
 <a id="roadmap-session"></a>
 ### The roadmap session

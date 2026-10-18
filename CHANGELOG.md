@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `superlinear roadmap [--workspace <names>] [--json] [--refresh]` shows the
+- `superlinear roadmap [--workspace <names>] [--json]` shows the
   ordered plan across every workspace: a table of steps, each with its
   issues and who does it, an agent or you; the waits between workspaces,
   read from identifiers of another workspace's team in descriptions; what
@@ -18,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   superlinear makes sure each open issue is in one step, and that each issue
   with a human label, in Triage, with a proposal waiting for you, or with a
   pull request waiting on you, is yours and listed under "Now, for you". The
-  planning job rebuilds it at its end, and `superlinear status` begins with
-  when it was last built and how many actions it lists.
+  command only shows the roadmap the daemon built; it builds nothing. The
+  daemon builds it when it starts and has none, and the planning job
+  rebuilds it at its end. `superlinear status` begins with when it was last
+  built and how many actions it lists.
 
 - Agents, the planning job and the sessions that answer the owner's comments
   get the workspace's Linear key in `LINCTL_API_KEY`,
