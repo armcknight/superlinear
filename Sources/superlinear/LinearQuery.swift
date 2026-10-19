@@ -449,6 +449,7 @@ enum LinearQuery: CaseIterable, Sendable {
           identifier
           title
           description
+          url
           priority
           updatedAt
           state { name type }
@@ -644,6 +645,7 @@ extension LinearQuery {
         let identifier: LinearIssue.Identifier
         let title: String
         let description: String?
+        let url: String?
         let priority: LinearIssue.Priority?
         let updatedAt: Date
         let state: State
@@ -699,7 +701,7 @@ extension LinearQuery {
                 labels: labels.nodes.map(\.name),
                 relations: relations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.relatedIssue.identifier, direction: .outgoing) }
                     + inverseRelations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.issue.identifier, direction: .incoming) },
-                updatedAt: updatedAt
+                updatedAt: updatedAt, url: url
             )
         }
     }

@@ -26,9 +26,13 @@ enum PlanCommand {
             }
         }
         var succeeded = true
+        var ran = false
         for workspace in workspaces {
-            succeeded = await runJob(workspace, say: { print($0) }) && succeeded
+            let finished = await runJob(workspace, say: { print($0) })
+            succeeded = finished && succeeded
+            ran = ran || finished
         }
+        if ran { await rebuildRoadmap(config.workspaces) }
         return succeeded ? 0 : 1
     }
 
@@ -169,6 +173,20 @@ enum PlanCommand {
         for await exit in exits { status = exit }
         withExtendedLifetime(process) {}
         return .some(status)
+    }
+
+    /// Rebuilds the roadmap of every workspace, as the daemon does at the
+    /// end of its planning jobs.
+    static func rebuildRoadmap(_ workspaces: [WorkspaceConfig]) async {
+        let state = State.loadWithPlanning(from: State.stateFileURL(), planning: PlanningRecord.load())
+        let model = PlanningModel.current(limit: state.fableLimit, now: Date())
+        let say: @Sendable (String) -> Void = { print("[roadmap] \($0)") }
+        switch await RoadmapBuilder().build(workspaces: workspaces, state: state, model: model, say: say).0 {
+        case .built(let roadmap):
+            say("Rebuilt the roadmap: \(roadmap.steps.count) steps, \(roadmap.actions.count) for you; see `superlinear roadmap`")
+        case .busy(let reason): say(reason)
+        case .failed(let reason): say("Could not rebuild the roadmap: \(reason)")
+        }
     }
 
     /// Why a job may not start now: one is running already, the daemon's or

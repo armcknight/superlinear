@@ -739,7 +739,9 @@ enum StatusCommand {
             gathered.reports = gathered.reports.map { $0.filtered(to: sections) }
         }
         let names = workspaces.map(\.name)
-        let header = gathered.header + pauseLines(state: state, workspaces: names, now: Date())
+        // The roadmap the planning job keeps current covers every workspace.
+        let roadmap = RoadmapRecord.load().pointer(workspaces: config.workspaces.map(\.name), now: Date())
+        let header = [roadmap] + gathered.header + pauseLines(state: state, workspaces: names, now: Date())
         let footer = DaemonStatus.read().footer(polls: workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })
         print((header + gathered.reports.map { $0.rendered() } + [footer]).joined(separator: "\n\n"))
         return 0

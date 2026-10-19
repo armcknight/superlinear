@@ -19,6 +19,8 @@ struct PlanningIssue: Codable, Sendable, Equatable {
     var labels: [LinearLabel.Name]
     var relations: [PlanningRelation]
     var updatedAt: Date
+    /// Its page in Linear; nil in contexts written before it was read.
+    var url: String? = nil
 
     var createdBySuperlinear: Bool { labels.contains { $0.rawValue.caseInsensitiveCompare(ProposalEngine.label) == .orderedSame } }
     var handsOff: Bool { labels.contains { $0.rawValue.caseInsensitiveCompare(ProposalEngine.handsOffLabel) == .orderedSame } }
