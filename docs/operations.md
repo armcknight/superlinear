@@ -91,6 +91,8 @@ Agents' builds fill the disk fast: a SwiftPM `.build` directory or an Xcode Deri
 | Risks | `risks` | The active [pauses](lifecycle.md#limits) with the work they hold back, CI failing on the default branch, and GitHub's rate limit when less than a fifth of it is left. |
 | Stale branches and worktrees | `stale` | Local branches no longer needed: their pull request merged, or closed without a merge, or, for a worktree under `worktrees/` with no agent running or queued, none was opened. The base branch, branches with an open pull request, and branches of your own without such a worktree are never listed. Each shows its worktree if it has one, its last commit's age, and the commits removing it would lose: for a merged or closed pull request, those made after its head, as a squash merge leaves the rest on no remote branch; otherwise those no remote branch has. `work finish <branch>` removes the branch and its worktree. |
 
+Issues taken from [GitHub](lifecycle.md#github-issues) are listed as `GH-<number>`, with their GitHub state in place of Linear's.
+
 Two options narrow the report:
 
 - `--status <names>` shows only the named sections, by the names in the table, comma-separated: `superlinear status --status running,blocked`. The option may repeat. An unknown name is an error that lists the names there are.

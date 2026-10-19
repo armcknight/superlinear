@@ -246,6 +246,12 @@ struct OwnerCommentTests {
         #expect(done.finished == ["spl-8"])
     }
 
+    @Test("A GitHub issue's pull request awaiting its merge has no comments to read in Linear")
+    func gitHubIssue() {
+        let inputs = CommentTriage.Inputs(pendingMerges: [pending("spl-8"), pending(GitHubIssue.issueId(number: 4))])
+        #expect(CommentTriage.issueIds(inputs) == ["spl-8"])
+    }
+
     @Test("A comment made while an agent runs waits, and is handled once it ends")
     func whileRunning() {
         var run = AgentRun(issueId: "spl-9", identifier: "SPL-9", branchName: "linear/spl-9", sessionId: "s", queuedAt: at(0))

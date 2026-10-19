@@ -234,10 +234,11 @@ enum CommentTriage {
     /// The issues whose comments to read: those of pending proposals in
     /// Linear, of agents awaiting a merge, and of agents that ended without a
     /// pull request. Issues with a run are left until it ends, unless a
-    /// proposal waits on them.
+    /// proposal waits on them. GitHub issues have no comments in Linear.
     static func issueIds(_ inputs: Inputs) -> [LinearIssue.ID] {
         let running = Set(inputs.runs.map(\.issueId))
-        let agents = inputs.pendingMerges.map { LinearIssue.ID(rawValue: $0.issueId) } + inputs.ended.map(\.issueId)
+        let agents = inputs.pendingMerges.filter { GitHubIssue.number(ofIssueId: $0.issueId) == nil }
+            .map { LinearIssue.ID(rawValue: $0.issueId) } + inputs.ended.map(\.issueId)
         let ids = Set(inputs.posted.compactMap { $0.post?.issueId }).union(agents.filter { !running.contains($0.rawValue) })
         return ids.sorted()
     }

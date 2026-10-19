@@ -35,6 +35,30 @@ failure to fix: do not change code for it, stop monitoring CI, and say so in the
 \(followUpInstructions)
 """
 
+/// The prompt for an agent on GitHub issue `number`, which has no Linear
+/// issue to read or move.
+func gitHubIssuePrompt(number: Int) -> String {
+    """
+    You are working autonomously on GitHub issue #\(number) of this repository. There is no Linear \
+    issue for it. Do not ask for confirmation at any step — proceed through the entire workflow \
+    without pausing.
+
+    Your task:
+    1. Run `gh issue view \(number) --comments` to read the issue and its discussion, and create a work plan.
+    2. Implement all the changes needed to resolve the issue, following your plan.
+    3. When implementation is complete, run /armcknight-claude:commit to stage and commit your changes.
+    4. Run /armcknight-claude:pr --autonomous to open a pull request without opening a browser, monitor CI until it passes, and address any review comments. There is no Linear issue to read or update: describe the pull request from the GitHub issue, and put `Closes #\(number)` in its description.
+
+    Never comment on the issue. Work autonomously. Do not pause to ask questions. If you encounter \
+    ambiguity, make a reasonable decision and document it in the PR description.
+
+    If CI jobs did not start because of GitHub's spending limit or a billing problem, that is not a \
+    failure to fix: do not change code for it, stop monitoring CI, and say so in the pull request description.
+
+    \(followUpInstructions)
+    """
+}
+
 /// The prompt for a run stacked on its blocker's open pull request: the
 /// autonomous prompt, with what the stack changes.
 func stackedPrompt(for stack: StackBase) -> String {
@@ -125,16 +149,20 @@ func commentPrompt(for context: CommentContext) -> String {
 /// The prompt for a run that answers a review on the pull request an earlier
 /// agent opened, or the owner's comments on its Linear issue. It starts a
 /// new Claude session, so it says everything itself.
-func reviewPrompt(for review: ReviewRequest, comments: CommentContext? = nil) -> String {
+/// `gitHubIssue` is the GitHub issue's number, when the run comes from GitHub.
+func reviewPrompt(for review: ReviewRequest, comments: CommentContext? = nil, gitHubIssue: Int? = nil) -> String {
+    let source = gitHubIssue.map { "GitHub issue #\($0)" } ?? "a Linear issue"
+    let readIssue = gitHubIssue.map { "Read the GitHub issue with `gh issue view \($0) --comments`" }
+        ?? "Read the Linear issue for this branch with `direnv exec . linctl issue get`"
     var prompt = """
-    You are working autonomously on a Linear issue whose pull request has been reviewed. Do not \
+    You are working autonomously on \(source) whose pull request has been reviewed. Do not \
     ask for confirmation at any step — proceed through the entire workflow without pausing.
 
     An earlier agent already implemented the issue on this branch and opened pull request \
     #\(review.number): \(review.url)
 
     The maintainer has since reviewed it or commented on it. \(feedbackList(review.feedback ?? []))Your task:
-    1. Read the Linear issue for this branch with `direnv exec . linctl issue get`, and the branch's \
+    1. \(readIssue), and the branch's \
     commits against the base branch, to learn what was done.
     2. Read every review on the pull request and every comment in them, including the inline \
     comments on lines of code and the replies in their threads, and every comment in the pull \
@@ -175,10 +203,14 @@ private func feedbackList(_ feedback: [PullRequestFeedback]) -> String {
 
 /// The prompt for a run that merges the base branch into the branch of a pull
 /// request that conflicts with it, so the pull request can merge again.
-func conflictPrompt(for conflict: ConflictRequest) -> String {
+/// `gitHubIssue` is the GitHub issue's number, when the run comes from GitHub.
+func conflictPrompt(for conflict: ConflictRequest, gitHubIssue: Int? = nil) -> String {
     let base = conflict.baseBranch
+    let source = gitHubIssue.map { "GitHub issue #\($0)" } ?? "a Linear issue"
+    let readIssue = gitHubIssue.map { "Read the GitHub issue with `gh issue view \($0) --comments`" }
+        ?? "Read the Linear issue for this branch with `direnv exec . linctl issue get`"
     return """
-    You are working autonomously on a Linear issue whose pull request no longer merges cleanly. Do \
+    You are working autonomously on \(source) whose pull request no longer merges cleanly. Do \
     not ask for confirmation at any step — proceed through the entire workflow without pausing.
 
     An earlier agent already implemented the issue on this branch and opened pull request \
@@ -186,7 +218,7 @@ func conflictPrompt(for conflict: ConflictRequest) -> String {
 
     Its base branch, `\(base)`, has since moved on, and GitHub reports that the pull request \
     conflicts with it. Your task:
-    1. Read the Linear issue for this branch with `direnv exec . linctl issue get`, and the branch's \
+    1. \(readIssue), and the branch's \
     commits against the base branch, to learn what the branch does.
     2. Run `git fetch origin \(base)`, then `git merge origin/\(base)`. Do not rebase and do not \
     force-push: the pull request's history must stay as it is.
@@ -212,7 +244,7 @@ func conflictPrompt(for conflict: ConflictRequest) -> String {
 
 private let resumePrompt = """
 You were interrupted partway through the task above. Work out where you stopped — check the \
-worktree's git status and log, the Linear issue's state, and whether a pull request exists and \
+worktree's git status and log, the issue's state in Linear or GitHub, and whether a pull request exists and \
 how its CI is doing — then carry on with the remaining steps. Do not redo finished steps. If \
 everything is already done, stop.
 """
@@ -364,8 +396,11 @@ struct AgentRunner: Sendable {
 
     /// The prompt that starts the run's session.
     static func prompt(for run: AgentRun) -> String {
-        if let review = run.review { return reviewPrompt(for: review, comments: run.comments) }
-        if let conflict = run.conflict { return conflictPrompt(for: conflict) }
+        if let review = run.review {
+            return reviewPrompt(for: review, comments: run.comments, gitHubIssue: run.gitHubIssue)
+        }
+        if let conflict = run.conflict { return conflictPrompt(for: conflict, gitHubIssue: run.gitHubIssue) }
+        if let number = run.gitHubIssue { return gitHubIssuePrompt(number: number) }
         if run.answersComments, let comments = run.comments { return commentPrompt(for: comments) }
         let prompt = run.stack.map(stackedPrompt) ?? autonomousPrompt
         guard let comments = run.comments, !comments.thread.isEmpty else { return prompt }
