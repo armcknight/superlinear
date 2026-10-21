@@ -90,6 +90,11 @@ extension LinearClient: LinearWriting {
         return CreatedComment(id: LinearComment.ID(rawValue: id), url: comment[.url]?.stringValue, response: response)
     }
 
+    func addReaction(commentId: LinearComment.ID, emoji: String) async throws -> JSONValue {
+        try await mutate(
+            .addReaction, variables: [.input: [LinearVariable.commentId: commentId.rawValue, .emoji: emoji]], field: .reactionCreate)
+    }
+
     func updateComment(id: LinearComment.ID, body: String) async throws -> JSONValue {
         try await mutate(.updateComment, variables: [.id: id.rawValue, .body: body], field: .commentUpdate)
     }
@@ -193,6 +198,15 @@ extension LinearClient {
             issues += nodes.map(\.issueComments)
         }
         return issues
+    }
+
+    /// The comments of `viewer`, on issues and elsewhere, changed after
+    /// `since`: written, edited or reacted to.
+    func ownerComments(viewer: LinearUser.ID, since: Date) async throws -> [OwnerCommentHit] {
+        let nodes: [LinearQuery.OwnerCommentNode] = try await fetchAll(
+            .ownerComments,
+            variables: [.id: viewer.rawValue, .after: [LinearVariable.gt: ISO8601DateFormatter().string(from: since)]])
+        return nodes.map(\.hit)
     }
 
     func documentComments(id: LinearDocument.ID) async throws -> DocumentComments {

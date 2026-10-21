@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The owner's comments on every issue of the watched teams are handled,
+  not only those on proposals and on issues superlinear works on. A short
+  read-only session decides whether a comment is a question, a request for
+  a change, or a note that needs nothing, and the issue's state decides
+  what happens: on an open issue, such as one labeled `Needs human`, a
+  question gets an answer and a request changes the description; while an
+  agent runs, a question gets a reply and a request waits for the next
+  agent, which is never stopped; on an issue with an open pull request, a
+  request goes to a review agent; on a done, canceled or duplicate issue, a
+  request becomes a `createIssue` proposal linked in the reply. A note gets
+  no reply. Each comment queued gets a 👀 reaction, replies on issues that
+  are not proposals add the label `superlinear: replied`, and `superlinear
+  status` lists the requests that wait for an agent. Comments from other
+  users, and on teams not watched, are logged once. The first poll after
+  the upgrade handles the comments the old rule skipped.
+
 - `superlinear roadmap [--workspace <names>] [--json]` shows the
   ordered plan across every workspace: a table of steps, each with its
   issues and who does it, an agent or you; the waits between workspaces,

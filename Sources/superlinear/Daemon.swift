@@ -1175,17 +1175,60 @@ actor Daemon {
         return CommentQuestion.spec(document, url: url, ledger: ledger, viewer: viewer)
     }
 
+    /// From when to look for the owner's comments on every issue, and
+    /// whether it is the first look after the upgrade, which goes back to
+    /// the workspace's first comment ledger.
+    func ownerCommentsSince(workspace: String, now: Date) -> (since: Date, backfill: Bool) {
+        let workspaceState = state.workspaces[workspace] ?? WorkspaceState()
+        if let checked = workspaceState.ownerCommentsCheckedAt { return (checked, false) }
+        return (CommentTriage.backfillStart(workspaceState.commentLedgers, now: now), true)
+    }
+
+    /// The issues whose comments the old rule handled: those superlinear
+    /// proposed on or queued an agent for.
+    func issuesWithOldRule(workspace: String) -> Set<LinearIssue.ID> {
+        let workspaceState = state.workspaces[workspace] ?? WorkspaceState()
+        return Set(workspaceState.processedIssueIds.map(LinearIssue.ID.init(rawValue:)))
+            .union(workspaceState.proposals.compactMap { $0.post?.issueId })
+    }
+
+    func recordOwnerCommentsChecked(_ date: Date, workspace: String) {
+        state.workspaces[workspace, default: WorkspaceState()].ownerCommentsCheckedAt = date
+        save()
+    }
+
     /// Queues the questions for read-only sessions, one at a time per
     /// workspace, in the background, so the poll does not wait for them.
-    func queueCommentAnswers(_ questions: [CommentQuestion], workspace: WorkspaceConfig) {
+    /// Each comment queued gets the 👀 reaction once, so the owner sees in
+    /// Linear that it was seen.
+    func queueCommentAnswers(_ questions: [CommentQuestion], workspace: WorkspaceConfig) async {
         let name = workspace.name
         for question in questions {
             guard queuedComments.insert(Self.commentKey(question, workspace: name)).inserted else { continue }
             commentQuestions[name, default: []].append(question)
+            await react(to: question, workspace: workspace)
         }
         guard !answeringComments.contains(name), !(commentQuestions[name] ?? []).isEmpty else { return }
         answeringComments.insert(name)
         Task { await self.answerQueuedComments(workspace) }
+    }
+
+    private func react(to question: CommentQuestion, workspace: WorkspaceConfig) async {
+        let name = workspace.name
+        do {
+            let ledger = state.workspaces[name]?.commentLedgers[question.key]
+            guard let seen = try await CommentResponder.markSeen(question, ledger: ledger, linear: LinearClient(apiKey: workspace.apiKey))
+            else { return }
+            // The ledger may have changed while the reaction was written.
+            var current = state.workspaces[name]?.commentLedgers[question.key] ?? seen
+            current.reacted.formUnion(seen.reacted)
+            state.workspaces[name, default: WorkspaceState()].commentLedgers[question.key] = current
+            save()
+        } catch {
+            if firstReport("[\(name)] reaction \(error)") {
+                log("Could not react to the owner's comment on \(question.location) (logged once): \(error)", workspace: name)
+            }
+        }
     }
 
     private static func commentKey(_ question: CommentQuestion, workspace: String) -> String {
@@ -1284,6 +1327,30 @@ actor Daemon {
         let responder = CommentResponder(linear: linear, specDocumentURL: workspace.planning.specDocumentURL)
         do {
             switch question.subject {
+            case _ where answer.kind == .note:
+                log("The owner's comment on \(question.location) is a note that needs no reply", workspace: name)
+            case .issue(let issue, let planned):
+                let situation = currentSituation(issue, planned: planned, workspace: name)
+                if answer.kind == .change, situation.requestWaitsForAgent {
+                    state.waitComments([question.comment], key: question.key, since: question.since, identifier: issue.identifier, workspace: name)
+                    log("The owner's comment on \(question.location) asks for a change; it waits for the next agent on it", workspace: name)
+                    if answer.replies {
+                        let reply = try await responder.reply(to: question, text: answer.answer)
+                        log("Replied on \(question.location)" + (reply.url.map { ": \($0)" } ?? ""), workspace: name)
+                    }
+                    answerFailures[Self.commentKey(question, workspace: name)] = nil
+                    return
+                }
+                var proposal: Proposal?
+                if answer.kind == .change, situation.requestProposesIssue {
+                    proposal = try await proposeIssue(for: answer, on: issue, question: question, workspace: workspace)
+                }
+                guard answer.replies || proposal != nil || answer.kind == .change else {
+                    log("Nothing to reply on \(question.location)", workspace: name)
+                    break
+                }
+                let reply = try await responder.answer(question, situation: situation, with: answer, proposal: proposal)
+                log("Replied on \(question.location)" + (reply.url.map { ": \($0)" } ?? ""), workspace: name)
             case .proposal(let asked, _):
                 // The owner may have answered the proposal while the session ran.
                 guard let proposal = state.proposals(workspace: name).first(where: { $0.id == asked.id }), proposal.isPosted else {
@@ -1316,13 +1383,42 @@ actor Daemon {
         if let usage = record.usage { log("  The session used \(Stats.compact(usage.tokens)) tokens", workspace: name) }
     }
 
+    /// Where the issue stands now: an agent may have started or ended on it
+    /// since the poll found the comment.
+    private func currentSituation(_ issue: IssueComments, planned: IssueSituation, workspace: String) -> IssueSituation {
+        let workspaceState = state.workspaces[workspace] ?? WorkspaceState()
+        let id = issue.id.rawValue
+        if workspaceState.inFlight[id] != nil { return .running }
+        if planned == .running {
+            if workspaceState.pendingMerges[id] != nil { return .pullRequest }
+            if workspaceState.endedAgents[issue.id] != nil { return .agentEnded }
+        }
+        return planned
+    }
+
+    /// Proposes the new issue that a request on a done or closed issue asked
+    /// for, and puts it in Linear at once, so the reply can link it. Nil when
+    /// the session gave no description, or the same issue is pending or was
+    /// rejected.
+    private func proposeIssue(
+        for answer: CommentAnswer, on issue: IssueComments, question: CommentQuestion, workspace: WorkspaceConfig
+    ) async throws -> Proposal? {
+        guard let draft = CommentQuestion.issueDraft(answer, issue: issue, comment: question.comment.comment) else { return nil }
+        return try await proposeAndPost(draft, workspace: workspace)
+    }
+
     /// Proposes the spec change a comment asked for, and puts it in Linear
     /// at once, so the reply can link it. Nil when the same change is
     /// pending or was rejected.
     private func proposeSpecChange(
         _ text: String, document: DocumentComments, question: CommentQuestion, workspace: WorkspaceConfig
     ) async throws -> Proposal? {
-        let draft = CommentQuestion.specDraft(text, document: document, comment: question.comment.comment)
+        try await proposeAndPost(CommentQuestion.specDraft(text, document: document, comment: question.comment.comment), workspace: workspace)
+    }
+
+    /// Proposes the draft, and puts it in Linear at once when it waits for
+    /// review. Nil when the same change is pending or was rejected.
+    private func proposeAndPost(_ draft: ProposalDraft, workspace: WorkspaceConfig) async throws -> Proposal? {
         guard let proposal = try await propose(draft, workspace: workspace) else { return nil }
         guard proposal.status == .pending, proposal.post == nil else { return proposal }
         let client = LinearClient(apiKey: workspace.apiKey)
