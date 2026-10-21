@@ -150,6 +150,10 @@ struct WorkspaceState: Codable, Sendable {
     var endedAgents: [LinearIssue.ID: EndedAgent]
     /// The sessions that answered the owner's comments, oldest first.
     var commentAnswers: [CommentAnswerRecord]
+    /// Until when the owner's comments were looked for on every issue.
+    /// Absent until the first poll after the upgrade, which looks back to
+    /// the first comment ledger.
+    var ownerCommentsCheckedAt: Date?
 
     init() {
         processedIssueIds = []
@@ -192,6 +196,7 @@ struct WorkspaceState: Codable, Sendable {
         commentLedgers = try container.decodeIfPresent([CommentLedger.Key: CommentLedger].self, forKey: .commentLedgers) ?? [:]
         endedAgents = try container.decodeIfPresent([LinearIssue.ID: EndedAgent].self, forKey: .endedAgents) ?? [:]
         commentAnswers = try container.decodeIfPresent([CommentAnswerRecord].self, forKey: .commentAnswers) ?? []
+        ownerCommentsCheckedAt = try container.decodeIfPresent(Date.self, forKey: .ownerCommentsCheckedAt)
     }
 
     /// Issues an agent may not start on yet.
@@ -525,10 +530,26 @@ struct State: Codable, Sendable {
     }
 
     /// Records the comments as handled, each with the text it has now.
-    mutating func handleComments(_ comments: [FreshComment], key: CommentLedger.Key, since: Date, workspace: String) {
+    mutating func handleComments(
+        _ comments: [FreshComment], key: CommentLedger.Key, since: Date, workspace: String, now: Date = Date()
+    ) {
         var ledger = workspaces[workspace, default: WorkspaceState()].commentLedgers[key] ?? CommentLedger(since: since)
-        ledger.handle(comments)
+        ledger.handle(comments, at: now)
         workspaces[workspace, default: WorkspaceState()].commentLedgers[key] = ledger
+    }
+
+    /// Records the comments as requests that wait for the next agent on
+    /// the issue `identifier`.
+    mutating func waitComments(_ comments: [FreshComment], key: CommentLedger.Key, since: Date, identifier: String, workspace: String) {
+        var ledger = workspaces[workspace, default: WorkspaceState()].commentLedgers[key] ?? CommentLedger(since: since)
+        ledger.wait(comments, issue: identifier)
+        workspaces[workspace, default: WorkspaceState()].commentLedgers[key] = ledger
+    }
+
+    /// The requests that wait for an agent, oldest issue first.
+    func waitingComments(workspace: String) -> [WaitingComment] {
+        (workspaces[workspace]?.commentLedgers.values.flatMap(\.waiting.values) ?? [])
+            .sorted { ($0.issue, $0.body) < ($1.issue, $1.body) }
     }
 
     /// How many answer sessions are kept for their token use.

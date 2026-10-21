@@ -196,6 +196,8 @@ struct WorkspaceReport: Sendable {
     var waitingOnYou: [WaitingPullRequest]? = nil
     /// The proposals waiting for the owner's answer in Linear.
     var proposalsWaiting: [Proposal] = []
+    /// The owner's requests in Linear that wait for an issue's next agent.
+    var commentsWaiting: [WaitingComment] = []
     /// What the daemon did on its own since `since`, oldest first. Nil when
     /// not gathered.
     var done: [String]? = nil
@@ -327,6 +329,7 @@ struct WorkspaceReport: Sendable {
 
     static let staleHeading = "Stale branches and worktrees"
     static let waitingHeading = "Waiting on you"
+    static let commentsWaitingHeading = "Comments waiting for an agent"
     static let doneHeading = "Done autonomously"
     static let risksHeading = "Risks"
 
@@ -362,6 +365,7 @@ struct WorkspaceReport: Sendable {
             ? reviews?.filter { sections.contains($0.pullRequest.isDraft ? .drafts : .awaitingReview) }
             : nil
         if !sections.contains(.awaitingReview) { report.proposalsWaiting = [] }
+        if !sections.contains(.task(.running)) { report.commentsWaiting = [] }
         if !sections.contains(.done) { report.done = nil }
         if !sections.contains(.risks) { report.risks = nil }
         if !sections.contains(.stale) { report.stale = [] }
@@ -377,7 +381,7 @@ struct WorkspaceReport: Sendable {
         // Open pull requests are listed for review instead, when they could be.
         let tasks = reviews == nil ? entries : entries.filter { $0.category != .openPullRequest }
         let reviews = reviews ?? []
-        if tasks.isEmpty && reviews.isEmpty && proposalsWaiting.isEmpty && stale.isEmpty && warnings.isEmpty
+        if tasks.isEmpty && reviews.isEmpty && proposalsWaiting.isEmpty && commentsWaiting.isEmpty && stale.isEmpty && warnings.isEmpty
             && done == nil && risks == nil {
             lines.append("  No tasks")
         }
@@ -448,6 +452,14 @@ struct WorkspaceReport: Sendable {
                 if let detail = entry.detail, !detail.isEmpty {
                     lines.append(indent + detail)
                 }
+            }
+        }
+
+        if !commentsWaiting.isEmpty {
+            lines.append("  \(Self.commentsWaitingHeading)")
+            for comment in commentsWaiting {
+                lines.append("    \(comment.issue)  \(comment.summary)".trimmingTrailingWhitespace())
+                if let url = comment.url { lines.append("      \(url)") }
             }
         }
 
@@ -587,6 +599,7 @@ struct WorkspaceReport: Sendable {
             reviews: reviews,
             waitingOnYou: reviews.map { StatusReview.waitingOnYou($0.map(\.pullRequest), state: workspaceState) },
             proposalsWaiting: workspaceState.proposals.filter(\.isPosted),
+            commentsWaiting: state.waitingComments(workspace: workspace.name),
             done: StatusReview.done(workspaceState, since: now.addingTimeInterval(-since), now: now),
             since: now.addingTimeInterval(-since),
             risks: StatusReview.risks(

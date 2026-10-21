@@ -136,6 +136,8 @@ protocol LinearWriting: Sendable {
     func updateComment(id: LinearComment.ID, body: String) async throws -> JSONValue
     /// A reply in the thread whose first comment is `parentId`.
     func createReply(on target: CommentTarget, parentId: LinearComment.ID, body: String) async throws -> CreatedComment
+    /// Reacts to the comment with the emoji of that name, such as `eyes`.
+    func addReaction(commentId: LinearComment.ID, emoji: String) async throws -> JSONValue
     func addLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue
     func removeLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue
     /// The issues with these IDs, with their comments and reactions. Issues
