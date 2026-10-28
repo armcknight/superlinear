@@ -15,6 +15,7 @@ Rules:
 | [`lifecycle.md#overview`](lifecycle.md#overview) | Overview: from issue to merge, step by step. |
 | [`lifecycle.md#selection`](lifecycle.md#selection) | Selection: which issues superlinear picks, in `new` and `ready` mode. |
 | [`lifecycle.md#first-poll`](lifecycle.md#first-poll) | The first poll of a new workspace. |
+| [`lifecycle.md#github-issues`](lifecycle.md#github-issues) | GitHub issues: issues you open or comment `/superlinear-do` on. |
 | [`lifecycle.md#ready-gate`](lifecycle.md#ready-gate) | The ready gate: blockers, human labels and holds. |
 | [`lifecycle.md#agent`](lifecycle.md#agent) | The agent: the queue, the worktree and the prompt. |
 | [`lifecycle.md#linear-key`](lifecycle.md#linear-key) | The workspace's Linear key in every Claude session. |
@@ -92,6 +93,7 @@ Rules:
 | [`configuration.md#repo-path`](configuration.md#repo-path) | `repoPath` |
 | [`configuration.md#team-ids`](configuration.md#team-ids) | `teamIds` |
 | [`configuration.md#poll-interval-seconds`](configuration.md#poll-interval-seconds) | `pollIntervalSeconds` |
+| [`configuration.md#github-issues`](configuration.md#github-issues) | `githubIssues` |
 | [`configuration.md#selection`](configuration.md#selection) | `selection` |
 | [`configuration.md#ready-states`](configuration.md#ready-states) | `readyStates` |
 | [`configuration.md#human-labels`](configuration.md#human-labels) | `humanLabels` |

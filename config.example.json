@@ -7,6 +7,7 @@
       "repoPath": "~/Code/my-project",
       "teamIds": [],
       "pollIntervalSeconds": 60,
+      "githubIssues": false,
       "selection": "new",
       "readyStates": ["unstarted"],
       "humanLabels": ["Needs human", "Spike"],

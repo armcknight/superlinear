@@ -21,6 +21,30 @@ struct AgentRunnerTests {
         #expect(!resume.contains("--session-id"))
     }
 
+    @Test("A GitHub issue's agent reads it from GitHub and closes it from its pull request")
+    func gitHubPrompt() {
+        var gitHub = run
+        gitHub.gitHubIssue = 12
+        let prompt = AgentRunner.prompt(for: gitHub)
+        #expect(prompt.contains("gh issue view 12"))
+        #expect(prompt.contains("Closes #12"))
+        #expect(!AgentRunner.prompt(for: run).contains("gh issue view"))
+        // The same rules as every other agent.
+        #expect(prompt.contains(followUpInstructions))
+        #expect(prompt.contains("GitHub's spending limit"))
+    }
+
+    @Test("A review run on a GitHub issue reads the issue from GitHub, not Linear")
+    func gitHubReviewPrompt() {
+        var review = run
+        review.gitHubIssue = 7
+        review.review = ReviewRequest(number: 12, url: "https://github.com/o/r/pull/12")
+        let prompt = AgentRunner.prompt(for: review)
+        #expect(prompt.contains("pulls/12/comments"))
+        #expect(prompt.contains("gh issue view 7"))
+        #expect(!prompt.contains("linctl"))
+    }
+
     @Test("A review run gets a prompt for its pull request; any other run the issue prompt")
     func prompts() {
         var review = run
