@@ -218,7 +218,7 @@ actor Daemon {
             if !fresh.isEmpty {
                 context = CommentContext(
                     thread: comments.context.thread, new: fresh.map { PromptComment($0.comment, previousBody: $0.previousBody) })
-                state.handleComments(fresh, key: .init(rawValue: pending.issueId), since: Date(), workspace: workspace.name)
+                state.handleComments(fresh, key: .init(rawValue: pending.issueId), since: Date(), workspace: workspace.name, now: Date())
             }
         }
         let run = AgentRun(
@@ -257,7 +257,7 @@ actor Daemon {
             queuedAt: Date(),
             comments: CommentContext(thread: comments.context.thread, new: fresh.map { PromptComment($0.comment, previousBody: $0.previousBody) })
         )
-        state.handleComments(fresh, key: .init(ended.issueId), since: Date(), workspace: name)
+        state.handleComments(fresh, key: .init(ended.issueId), since: Date(), workspace: name, now: Date())
         state.workspaces[name]?.endedAgents[ended.issueId] = nil
         state.recordRun(run, workspace: name)
         log("Queued \(ended.identifier) to act on \(fresh.count) comment(s) from the owner in Linear; its last agent "
@@ -1143,7 +1143,7 @@ actor Daemon {
         return CommentTriage.Inputs(
             proposals: workspaceState.proposals, pendingMerges: Array(workspaceState.pendingMerges.values),
             ended: Array(workspaceState.endedAgents.values), runs: Array(workspaceState.inFlight.values),
-            ledgers: workspaceState.commentLedgers)
+            ledgers: workspaceState.commentLedgers, found: [], foundSince: nil)
     }
 
     func recordCommentWatch(_ plan: CommentTriage.Plan, workspace: String) {
@@ -1330,7 +1330,8 @@ actor Daemon {
             case _ where answer.kind == .note:
                 log("The owner's comment on \(question.location) is a note that needs no reply", workspace: name)
             case .issue(let issue, let planned):
-                let situation = currentSituation(issue, planned: planned, workspace: name)
+                // With no state for the workspace, nothing has changed since the poll.
+                let situation = state.workspaces[name]?.situation(of: issue.id, planned: planned) ?? planned
                 if answer.kind == .change, situation.requestWaitsForAgent {
                     state.waitComments([question.comment], key: question.key, since: question.since, identifier: issue.identifier, workspace: name)
                     log("The owner's comment on \(question.location) asks for a change; it waits for the next agent on it", workspace: name)
@@ -1378,22 +1379,9 @@ actor Daemon {
             failed(question, "Could not reply in Linear: \(error)", workspace: name)
             return
         }
-        state.handleComments([question.comment], key: question.key, since: question.since, workspace: name)
+        state.handleComments([question.comment], key: question.key, since: question.since, workspace: name, now: Date())
         answerFailures[Self.commentKey(question, workspace: name)] = nil
         if let usage = record.usage { log("  The session used \(Stats.compact(usage.tokens)) tokens", workspace: name) }
-    }
-
-    /// Where the issue stands now: an agent may have started or ended on it
-    /// since the poll found the comment.
-    private func currentSituation(_ issue: IssueComments, planned: IssueSituation, workspace: String) -> IssueSituation {
-        let workspaceState = state.workspaces[workspace] ?? WorkspaceState()
-        let id = issue.id.rawValue
-        if workspaceState.inFlight[id] != nil { return .running }
-        if planned == .running {
-            if workspaceState.pendingMerges[id] != nil { return .pullRequest }
-            if workspaceState.endedAgents[issue.id] != nil { return .agentEnded }
-        }
-        return planned
     }
 
     /// Proposes the new issue that a request on a done or closed issue asked
@@ -1443,7 +1431,7 @@ actor Daemon {
         }
         log("Giving up on the comment on \(question.location) after \(failures) failed sessions: \(reason)", workspace: workspace)
         answerFailures[key] = nil
-        state.handleComments([question.comment], key: question.key, since: question.since, workspace: workspace)
+        state.handleComments([question.comment], key: question.key, since: question.since, workspace: workspace, now: Date())
         save()
     }
 

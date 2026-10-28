@@ -531,7 +531,7 @@ struct State: Codable, Sendable {
 
     /// Records the comments as handled, each with the text it has now.
     mutating func handleComments(
-        _ comments: [FreshComment], key: CommentLedger.Key, since: Date, workspace: String, now: Date = Date()
+        _ comments: [FreshComment], key: CommentLedger.Key, since: Date, workspace: String, now: Date
     ) {
         var ledger = workspaces[workspace, default: WorkspaceState()].commentLedgers[key] ?? CommentLedger(since: since)
         ledger.handle(comments, at: now)
@@ -540,7 +540,7 @@ struct State: Codable, Sendable {
 
     /// Records the comments as requests that wait for the next agent on
     /// the issue `identifier`.
-    mutating func waitComments(_ comments: [FreshComment], key: CommentLedger.Key, since: Date, identifier: String, workspace: String) {
+    mutating func waitComments(_ comments: [FreshComment], key: CommentLedger.Key, since: Date, identifier: LinearIssue.Identifier, workspace: String) {
         var ledger = workspaces[workspace, default: WorkspaceState()].commentLedgers[key] ?? CommentLedger(since: since)
         ledger.wait(comments, issue: identifier)
         workspaces[workspace, default: WorkspaceState()].commentLedgers[key] = ledger

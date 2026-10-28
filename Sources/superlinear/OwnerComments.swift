@@ -39,13 +39,13 @@ struct LinearThreadComment: Codable, Sendable, Equatable {
 /// what a session that answers a comment on it is told of it.
 struct IssueComments: Sendable, Equatable {
     var id: LinearIssue.ID
-    var identifier: String
+    var identifier: LinearIssue.Identifier
     var stateType: LinearStateType
     var comments: [LinearThreadComment]
-    var stateName: String? = nil
+    var stateName: LinearState.Name? = nil
     var title: String = ""
     var description: String = ""
-    var labels: [String] = []
+    var labels: [LinearLabel.Name] = []
     var teamId: LinearTeam.ID? = nil
     var projectId: LinearProject.ID? = nil
     var url: String? = nil
@@ -57,7 +57,7 @@ struct OwnerCommentHit: Sendable, Equatable {
     var id: LinearComment.ID
     var body: String
     var issueId: LinearIssue.ID?
-    var identifier: String?
+    var identifier: LinearIssue.Identifier?
     var teamId: LinearTeam.ID?
 }
 
@@ -121,9 +121,8 @@ struct CommentLedger: Codable, Sendable, Equatable {
     /// edits to its comments.
     var handledAt: Date?
 
-    init(since: Date, handled: [LinearComment.ID: String] = [:]) {
+    init(since: Date) {
         self.since = since
-        self.handled = handled
     }
 
     // Ledgers from before comments on every issue were handled have no
@@ -161,16 +160,16 @@ struct CommentLedger: Codable, Sendable, Equatable {
         }
     }
 
-    mutating func handle(_ comments: [FreshComment], at date: Date? = nil) {
+    mutating func handle(_ comments: [FreshComment], at date: Date) {
         for fresh in comments {
             handled[fresh.comment.id] = fresh.comment.body
             waiting[fresh.comment.id] = nil
         }
-        if let date { handledAt = max(handledAt ?? date, date) }
+        handledAt = max(handledAt ?? date, date)
     }
 
     /// Records the comments as requests that wait for the issue's next agent.
-    mutating func wait(_ comments: [FreshComment], issue: String) {
+    mutating func wait(_ comments: [FreshComment], issue: LinearIssue.Identifier) {
         for fresh in comments {
             waiting[fresh.comment.id] = WaitingComment(body: fresh.comment.body, issue: issue, url: fresh.comment.url)
         }
@@ -183,13 +182,17 @@ struct WaitingComment: Codable, Sendable, Equatable {
     /// Its text when a session read it.
     var body: String
     /// The issue's identifier, such as `SPL-4`.
-    var issue: String
+    var issue: LinearIssue.Identifier
     var url: String?
 
-    /// Its first line, short, for the status.
+    /// The most characters of `summary`.
+    static let summaryLength = 80
+
+    /// Its first line, short, for the status: cut to `summaryLength`
+    /// characters, an ellipsis last.
     var summary: String {
         let line = body.split(separator: "\n").first.map(String.init) ?? ""
-        return line.count > 80 ? String(line.prefix(79)) + "…" : line
+        return line.count > Self.summaryLength ? String(line.prefix(Self.summaryLength - 1)) + "…" : line
     }
 }
 
@@ -280,6 +283,19 @@ enum IssueSituation: String, Codable, Sendable, Equatable {
     var requestProposesIssue: Bool { [.done, .closed].contains(self) }
 }
 
+extension WorkspaceState {
+    /// Where the issue stands now, from `planned`, where it stood when the
+    /// poll found the comment: an agent may have started or ended on it since.
+    func situation(of issueId: LinearIssue.ID, planned: IssueSituation) -> IssueSituation {
+        if inFlight[issueId.rawValue] != nil { return .running }
+        if planned == .running {
+            if pendingMerges[issueId.rawValue] != nil { return .pullRequest }
+            if endedAgents[issueId] != nil { return .agentEnded }
+        }
+        return planned
+    }
+}
+
 /// What to do about the owner's comments on the issues of the watched teams,
 /// found at a poll.
 enum CommentTriage {
@@ -297,8 +313,8 @@ enum CommentTriage {
         var foundSince: Date?
 
         init(
-            proposals: [Proposal] = [], pendingMerges: [PendingMerge] = [], ended: [EndedAgent] = [], runs: [AgentRun] = [],
-            ledgers: [CommentLedger.Key: CommentLedger] = [:], found: Set<LinearIssue.ID> = [], foundSince: Date? = nil
+            proposals: [Proposal], pendingMerges: [PendingMerge], ended: [EndedAgent], runs: [AgentRun],
+            ledgers: [CommentLedger.Key: CommentLedger], found: Set<LinearIssue.ID>, foundSince: Date?
         ) {
             self.proposals = proposals
             self.pendingMerges = pendingMerges
@@ -519,6 +535,9 @@ enum CommentTriage {
         return IssueAnswer(issue: issue, situation: situation, comment: comment, thread: before(comment, in: thread))
     }
 
+    /// The comments of `thread` that a session answering `comment` is shown:
+    /// those written before it, and the comment itself, but none after it,
+    /// so the session answers the comment as it was asked, not later ones.
     private static func before(_ comment: FreshComment, in thread: [LinearThreadComment]) -> [LinearThreadComment] {
         thread.filter { $0.createdAt < comment.comment.createdAt || $0.id == comment.comment.id }
     }
@@ -537,7 +556,7 @@ enum CommentTriage {
         for hit in hits where !CommentMarker.isOwn(hit.body) {
             guard let issueId = hit.issueId else { continue }
             if !watched.isEmpty, !(hit.teamId.map(watched.contains) ?? false) {
-                skipped.append("Skipping the owner's comment \(hit.id) on \(hit.identifier ?? issueId.rawValue): its team is not watched")
+                skipped.append("Skipping the owner's comment \(hit.id) on \(hit.identifier?.rawValue ?? issueId.rawValue): its team is not watched")
                 continue
             }
             if backfill, excluded.contains(issueId) { continue }

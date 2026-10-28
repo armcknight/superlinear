@@ -881,7 +881,7 @@ extension LinearQuery {
 
     struct IssueCommentsNode: Decodable {
         let id: LinearIssue.ID
-        let identifier: String
+        let identifier: LinearIssue.Identifier
         let title: String?
         let description: String?
         let url: String?
@@ -892,12 +892,12 @@ extension LinearQuery {
         let comments: Nodes<CommentNode>
 
         struct State: Decodable {
-            let name: String?
+            let name: LinearState.Name?
             let type: LinearStateType
         }
 
         struct Label: Decodable {
-            let name: String
+            let name: LinearLabel.Name
         }
 
         struct Team: Decodable {
@@ -924,7 +924,7 @@ extension LinearQuery {
 
         struct Issue: Decodable {
             let id: LinearIssue.ID
-            let identifier: String
+            let identifier: LinearIssue.Identifier
             let team: Team
 
             struct Team: Decodable {

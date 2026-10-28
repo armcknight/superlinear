@@ -327,11 +327,17 @@ struct WorkspaceReport: Sendable {
         }
     }
 
-    static let staleHeading = "Stale branches and worktrees"
-    static let waitingHeading = "Waiting on you"
-    static let commentsWaitingHeading = "Comments waiting for an agent"
-    static let doneHeading = "Done autonomously"
-    static let risksHeading = "Risks"
+    /// The headings of the report's sections, but for the tasks', which
+    /// are `TaskCategory.heading`, and of the counts of `superlinear stats`.
+    enum Heading {
+        static let waiting = "Waiting on you"
+        static let proposals = "Proposals in Linear"
+        static let drafts = "Draft pull requests"
+        static let commentsWaiting = "Comments waiting for an agent"
+        static let done = "Done autonomously"
+        static let risks = "Risks"
+        static let stale = "Stale branches and worktrees"
+    }
 
     /// The non-draft `reviews` in the order they wait on the owner: as
     /// `waitingOnYou` orders them, then those it leaves out, such as pull
@@ -428,7 +434,7 @@ struct WorkspaceReport: Sendable {
 
         let waiting = orderedReviews()
         if !waiting.isEmpty || !proposalsWaiting.isEmpty {
-            lines.append("  \(Self.waitingHeading)")
+            lines.append("  \(Heading.waiting)")
             for (review, item, stackedOn, level) in waiting {
                 describe(review, waiting: item, stackedOn: stackedOn, level: level, drafts: false)
             }
@@ -436,7 +442,7 @@ struct WorkspaceReport: Sendable {
         }
         let drafts = Self.byStack(reviews.filter(\.pullRequest.isDraft))
         if !drafts.isEmpty {
-            lines.append("  Draft pull requests")
+            lines.append("  \(Heading.drafts)")
             for (review, stackedOn, level) in drafts {
                 describe(review, waiting: nil, stackedOn: stackedOn, level: level, drafts: true)
             }
@@ -456,7 +462,7 @@ struct WorkspaceReport: Sendable {
         }
 
         if !commentsWaiting.isEmpty {
-            lines.append("  \(Self.commentsWaitingHeading)")
+            lines.append("  \(Heading.commentsWaiting)")
             for comment in commentsWaiting {
                 lines.append("    \(comment.issue)  \(comment.summary)".trimmingTrailingWhitespace())
                 if let url = comment.url { lines.append("      \(url)") }
@@ -465,16 +471,16 @@ struct WorkspaceReport: Sendable {
 
         if let done {
             let since = since.map { " since \(StatusTime.rendered($0, now: now))" } ?? ""
-            lines.append("  \(Self.doneHeading)\(since)")
+            lines.append("  \(Heading.done)\(since)")
             lines += done.isEmpty ? ["    Nothing"] : done.map { "    " + $0 }
         }
         if let risks {
-            lines.append("  \(Self.risksHeading)")
+            lines.append("  \(Heading.risks)")
             lines += risks.isEmpty ? ["    None found"] : risks.map { "    " + $0 }
         }
 
         if !stale.isEmpty {
-            lines.append("  \(Self.staleHeading)")
+            lines.append("  \(Heading.stale)")
             for branch in stale {
                 lines.append("    \(branch.branch)")
                 lines.append("      \(branch.detail(now: now))")

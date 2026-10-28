@@ -77,7 +77,7 @@ struct CommentQuestion: Sendable, Equatable {
             payload: .createIssue(teamId: teamId, projectId: issue.projectId, title: title, description: description, relatedIssueId: issue.id),
             target: .team(teamId),
             reason: "Asked for in a comment on \(issue.identifier), which is \(issue.stateType == .completed ? "done" : "closed"): \"\(firstLine.prefix(200))\"",
-            source: ProposalSource(kind: .comment, value: comment.url ?? comment.id.rawValue, issue: LinearIssue.Identifier(rawValue: issue.identifier)))
+            source: ProposalSource(kind: .comment, value: comment.url ?? comment.id.rawValue, issue: issue.identifier))
     }
 
     /// Where the comment is, for the log.
@@ -86,7 +86,7 @@ struct CommentQuestion: Sendable, Equatable {
         case .proposal(let proposal, _):
             "\(proposal.kind.rawValue) \(proposal.id) on \(proposal.post?.issueIdentifier ?? proposal.post?.issueId.rawValue ?? "?")"
         case .spec: "the spec document"
-        case .issue(let issue, _): issue.identifier
+        case .issue(let issue, _): issue.identifier.rawValue
         }
     }
 
@@ -118,7 +118,7 @@ struct CommentAnswer: Codable, Sendable, Equatable {
     var revision: String?
     var title: String?
 
-    init(kind: Kind? = nil, answer: String, revision: String? = nil, title: String? = nil) {
+    init(kind: Kind?, answer: String, revision: String?, title: String?) {
         self.kind = kind
         self.answer = answer
         self.revision = revision
@@ -153,14 +153,19 @@ struct CommentAnswer: Codable, Sendable, Equatable {
             guard let data = candidate.data(using: .utf8), var answer = try? JSONDecoder().decode(CommentAnswer.self, from: data) else {
                 continue
             }
-            if answer.revision?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true { answer.revision = nil }
-            if answer.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true { answer.title = nil }
+            answer.revision = answer.revision.flatMap(nonBlank)
+            answer.title = answer.title.flatMap(nonBlank)
             answer.answer = CommentResponder.bare(answer.answer)
             // A note needs no reply, and a request may go to an agent without one.
             guard !answer.answer.isEmpty || [.note, .change].contains(answer.kind) else { throw CommentAnswerError.emptyAnswer }
             return answer
         }
         throw CommentAnswerError.noAnswer(String(text.suffix(500)))
+    }
+
+    /// The text, or nil when it is only whitespace.
+    private static func nonBlank(_ text: String) -> String? {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
     }
 }
 
@@ -243,7 +248,7 @@ enum CommentAnswerPrompt {
             text += "\n" + describe(proposal)
             own = proposal.post?.issueIdentifier.map { LinearIssue.Identifier(rawValue: $0) }
         }
-        if case .issue(let issue, _) = question.subject { own = LinearIssue.Identifier(rawValue: issue.identifier) }
+        if case .issue(let issue, _) = question.subject { own = issue.identifier }
         var seen: Set<LinearIssue.Identifier> = []
         var identifiers: [LinearIssue.Identifier] = []
         for match in text.matches(of: /\b([A-Z][A-Z0-9]*)-[0-9]+\b/) {
@@ -336,9 +341,9 @@ enum CommentAnswerPrompt {
 
     /// The issue a comment is on, as the owner sees it in Linear.
     static func describe(_ issue: IssueComments) -> String {
-        var lines = ["- \(issue.identifier): \(issue.title)", "  - State: \(issue.stateName ?? issue.stateType.rawValue)"]
+        var lines = ["- \(issue.identifier): \(issue.title)", "  - State: \(issue.stateName?.rawValue ?? issue.stateType.rawValue)"]
         if let url = issue.url { lines.append("  - Link: \(url)") }
-        if !issue.labels.isEmpty { lines.append("  - Labels: " + issue.labels.joined(separator: ", ")) }
+        if !issue.labels.isEmpty { lines.append("  - Labels: " + issue.labels.map(\.rawValue).joined(separator: ", ")) }
         let description = issue.description.trimmingCharacters(in: .whitespacesAndNewlines)
         lines.append(description.isEmpty ? "  - No description" : "  - Description:\n\n" + fenced(description))
         return lines.joined(separator: "\n")
