@@ -67,30 +67,50 @@ struct WorkspaceProcessor: Sendable {
         }
     }
 
-    /// Reads the owner's comments on the issues superlinear proposed or works
-    /// on, queues a session for each question on a pending proposal and an
-    /// agent for each issue whose last agent ended without a pull request,
-    /// and returns what is left for the pull request check: the comments for
-    /// review agents.
+    /// Reads the owner's comments on the issues of the watched teams: those
+    /// new or changed since the last poll, and those on the issues
+    /// superlinear proposed or works on. Queues a session for each fresh
+    /// one, and an agent for each issue whose last agent ended without a
+    /// pull request and has requests waiting, and returns what is left for
+    /// the pull request check: the requests for review agents.
     private func readOwnerComments(client: LinearClient) async -> CommentTriage.Plan? {
-        let inputs = await daemon.commentInputs(workspace: workspace.name)
-        let ids = CommentTriage.issueIds(inputs)
-        guard !ids.isEmpty else { return nil }
+        var inputs = await daemon.commentInputs(workspace: workspace.name)
+        let checkedAt = Date()
+        let (since, backfill) = await daemon.ownerCommentsSince(workspace: workspace.name, now: checkedAt)
         let plan: CommentTriage.Plan
         do {
             let viewer = try await daemon.viewerId(workspace: workspace, client: client)
-            plan = CommentTriage.plan(inputs, issues: try await client.issueComments(ids: ids), viewer: viewer, now: Date())
+            let hits = try await client.ownerComments(viewer: viewer, since: since)
+            let found = CommentTriage.found(
+                hits, teamIds: workspace.watchedTeams, backfill: backfill,
+                excluded: backfill ? await daemon.issuesWithOldRule(workspace: workspace.name) : [])
+            for line in found.skipped { await logOnce(line) }
+            inputs.found = found.issueIds
+            inputs.foundSince = since
+            let ids = CommentTriage.issueIds(inputs, now: checkedAt)
+            guard !ids.isEmpty else {
+                await daemon.recordOwnerCommentsChecked(checkedAt, workspace: workspace.name)
+                return nil
+            }
+            plan = CommentTriage.plan(inputs, issues: try await client.issueComments(ids: ids), viewer: viewer, now: checkedAt)
         } catch {
-            await logOnce("Could not read the comments on the issues superlinear proposed or works on, trying again each poll: \(error)")
+            await logOnce("Could not read the owner's comments, trying again each poll: \(error)")
             return nil
         }
+        if backfill { log("Looked for the owner's comments on every issue since \(ISO8601DateFormatter().string(from: since))") }
         await daemon.recordCommentWatch(plan, workspace: workspace.name)
+        await daemon.recordOwnerCommentsChecked(checkedAt, workspace: workspace.name)
+        for line in plan.skipped { await logOnce(line) }
         for agent in plan.newAgents {
             await daemon.enqueueCommentAgent(agent, workspace: workspace)
         }
         if !plan.answers.isEmpty {
             log("Found \(plan.answers.count) comment(s) from the owner on pending proposals")
-            await daemon.queueCommentAnswers(plan.answers.map { CommentQuestion($0, since: Date()) }, workspace: workspace)
+            await daemon.queueCommentAnswers(plan.answers.map { CommentQuestion($0, since: checkedAt) }, workspace: workspace)
+        }
+        if !plan.issueAnswers.isEmpty {
+            log("Found \(plan.issueAnswers.count) comment(s) from the owner on issues")
+            await daemon.queueCommentAnswers(plan.issueAnswers.map { CommentQuestion($0, since: checkedAt) }, workspace: workspace)
         }
         return plan
     }

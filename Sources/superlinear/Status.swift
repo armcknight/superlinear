@@ -196,6 +196,8 @@ struct WorkspaceReport: Sendable {
     var waitingOnYou: [WaitingPullRequest]? = nil
     /// The proposals waiting for the owner's answer in Linear.
     var proposalsWaiting: [Proposal] = []
+    /// The owner's requests in Linear that wait for an issue's next agent.
+    var commentsWaiting: [WaitingComment] = []
     /// What the daemon did on its own since `since`, oldest first. Nil when
     /// not gathered.
     var done: [String]? = nil
@@ -327,10 +329,17 @@ struct WorkspaceReport: Sendable {
         }
     }
 
-    static let staleHeading = "Stale branches and worktrees"
-    static let waitingHeading = "Waiting on you"
-    static let doneHeading = "Done autonomously"
-    static let risksHeading = "Risks"
+    /// The headings of the report's sections, but for the tasks', which
+    /// are `TaskCategory.heading`, and of the counts of `superlinear stats`.
+    enum Heading {
+        static let waiting = "Waiting on you"
+        static let proposals = "Proposals in Linear"
+        static let drafts = "Draft pull requests"
+        static let commentsWaiting = "Comments waiting for an agent"
+        static let done = "Done autonomously"
+        static let risks = "Risks"
+        static let stale = "Stale branches and worktrees"
+    }
 
     /// The non-draft `reviews` in the order they wait on the owner: as
     /// `waitingOnYou` orders them, then those it leaves out, such as pull
@@ -364,6 +373,7 @@ struct WorkspaceReport: Sendable {
             ? reviews?.filter { sections.contains($0.pullRequest.isDraft ? .drafts : .awaitingReview) }
             : nil
         if !sections.contains(.awaitingReview) { report.proposalsWaiting = [] }
+        if !sections.contains(.task(.running)) { report.commentsWaiting = [] }
         if !sections.contains(.done) { report.done = nil }
         if !sections.contains(.risks) { report.risks = nil }
         if !sections.contains(.stale) { report.stale = [] }
@@ -379,7 +389,7 @@ struct WorkspaceReport: Sendable {
         // Open pull requests are listed for review instead, when they could be.
         let tasks = reviews == nil ? entries : entries.filter { $0.category != .openPullRequest }
         let reviews = reviews ?? []
-        if tasks.isEmpty && reviews.isEmpty && proposalsWaiting.isEmpty && stale.isEmpty && warnings.isEmpty
+        if tasks.isEmpty && reviews.isEmpty && proposalsWaiting.isEmpty && commentsWaiting.isEmpty && stale.isEmpty && warnings.isEmpty
             && done == nil && risks == nil {
             lines.append("  No tasks")
         }
@@ -426,7 +436,7 @@ struct WorkspaceReport: Sendable {
 
         let waiting = orderedReviews()
         if !waiting.isEmpty || !proposalsWaiting.isEmpty {
-            lines.append("  \(Self.waitingHeading)")
+            lines.append("  \(Heading.waiting)")
             for (review, item, stackedOn, level) in waiting {
                 describe(review, waiting: item, stackedOn: stackedOn, level: level, drafts: false)
             }
@@ -434,7 +444,7 @@ struct WorkspaceReport: Sendable {
         }
         let drafts = Self.byStack(reviews.filter(\.pullRequest.isDraft))
         if !drafts.isEmpty {
-            lines.append("  Draft pull requests")
+            lines.append("  \(Heading.drafts)")
             for (review, stackedOn, level) in drafts {
                 describe(review, waiting: nil, stackedOn: stackedOn, level: level, drafts: true)
             }
@@ -453,18 +463,26 @@ struct WorkspaceReport: Sendable {
             }
         }
 
+        if !commentsWaiting.isEmpty {
+            lines.append("  \(Heading.commentsWaiting)")
+            for comment in commentsWaiting {
+                lines.append("    \(comment.issue)  \(comment.summary)".trimmingTrailingWhitespace())
+                if let url = comment.url { lines.append("      \(url)") }
+            }
+        }
+
         if let done {
             let since = since.map { " since \(StatusTime.rendered($0, now: now))" } ?? ""
-            lines.append("  \(Self.doneHeading)\(since)")
+            lines.append("  \(Heading.done)\(since)")
             lines += done.isEmpty ? ["    Nothing"] : done.map { "    " + $0 }
         }
         if let risks {
-            lines.append("  \(Self.risksHeading)")
+            lines.append("  \(Heading.risks)")
             lines += risks.isEmpty ? ["    None found"] : risks.map { "    " + $0 }
         }
 
         if !stale.isEmpty {
-            lines.append("  \(Self.staleHeading)")
+            lines.append("  \(Heading.stale)")
             for branch in stale {
                 lines.append("    \(branch.branch)")
                 lines.append("      \(branch.detail(now: now))")
@@ -603,6 +621,7 @@ struct WorkspaceReport: Sendable {
             reviews: reviews,
             waitingOnYou: reviews.map { StatusReview.waitingOnYou($0.map(\.pullRequest), state: workspaceState) },
             proposalsWaiting: workspaceState.proposals.filter(\.isPosted),
+            commentsWaiting: state.waitingComments(workspace: workspace.name),
             done: StatusReview.done(workspaceState, since: now.addingTimeInterval(-since), now: now),
             since: now.addingTimeInterval(-since),
             risks: StatusReview.risks(
@@ -755,7 +774,9 @@ enum StatusCommand {
             gathered.reports = gathered.reports.map { $0.filtered(to: sections) }
         }
         let names = workspaces.map(\.name)
-        let header = gathered.header + pauseLines(state: state, workspaces: names, now: Date())
+        // The roadmap the planning job keeps current covers every workspace.
+        let roadmap = RoadmapRecord.load().pointer(workspaces: config.workspaces.map(\.name), now: Date())
+        let header = [roadmap] + gathered.header + pauseLines(state: state, workspaces: names, now: Date())
         let footer = DaemonStatus.read().footer(polls: workspaces.map { ($0.name, state.workspaces[$0.name]?.poll) })
         print((header + gathered.reports.map { $0.rendered() } + [footer]).joined(separator: "\n\n"))
         return 0

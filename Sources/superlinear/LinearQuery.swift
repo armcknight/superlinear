@@ -74,6 +74,9 @@ enum LinearQuery: CaseIterable, Sendable {
     case documentComments
     /// A comment in a thread, on an issue or a document.
     case createReply
+    /// The comments of a user changed after a time, with their issues' teams.
+    case ownerComments
+    case addReaction
 
     var text: String {
         switch self {
@@ -401,7 +404,13 @@ enum LinearQuery: CaseIterable, Sendable {
                 nodes {
                   id
                   identifier
-                  state { type }
+                  title
+                  description
+                  url
+                  state { name type }
+                  labels(first: 50) { nodes { name } }
+                  team { id }
+                  project { id }
                   comments(first: 100) { nodes { \(Self.commentFields) } }
                 }
                 pageInfo { hasNextPage endCursor }
@@ -422,6 +431,20 @@ enum LinearQuery: CaseIterable, Sendable {
         case .createReply: """
             mutation CreateReply($input: CommentCreateInput!) {
               commentCreate(input: $input) { success comment { id url } }
+            }
+            """
+        // Named `issues`, as the paging reads them.
+        case .ownerComments: """
+            query OwnerComments($id: ID, $after: DateComparator, $cursor: String) {
+              issues: comments(filter: { user: { id: { eq: $id } }, updatedAt: $after }, first: 50, after: $cursor) {
+                nodes { id body issue { id identifier team { id } } }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+            """
+        case .addReaction: """
+            mutation AddReaction($input: ReactionCreateInput!) {
+              reactionCreate(input: $input) { success }
             }
             """
         }
@@ -449,6 +472,7 @@ enum LinearQuery: CaseIterable, Sendable {
           identifier
           title
           description
+          url
           priority
           updatedAt
           state { name type }
@@ -644,6 +668,7 @@ extension LinearQuery {
         let identifier: LinearIssue.Identifier
         let title: String
         let description: String?
+        let url: String?
         let priority: LinearIssue.Priority?
         let updatedAt: Date
         let state: State
@@ -699,7 +724,7 @@ extension LinearQuery {
                 labels: labels.nodes.map(\.name),
                 relations: relations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.relatedIssue.identifier, direction: .outgoing) }
                     + inverseRelations.nodes.map { PlanningRelation(type: $0.type, identifier: $0.issue.identifier, direction: .incoming) },
-                updatedAt: updatedAt
+                updatedAt: updatedAt, url: url
             )
         }
     }
@@ -856,14 +881,59 @@ extension LinearQuery {
 
     struct IssueCommentsNode: Decodable {
         let id: LinearIssue.ID
-        let identifier: String
-        let state: ProposalIssueNode.State
+        let identifier: LinearIssue.Identifier
+        let title: String?
+        let description: String?
+        let url: String?
+        let state: State
+        let labels: Nodes<Label>?
+        let team: Team?
+        let project: Project?
         let comments: Nodes<CommentNode>
+
+        struct State: Decodable {
+            let name: LinearState.Name?
+            let type: LinearStateType
+        }
+
+        struct Label: Decodable {
+            let name: LinearLabel.Name
+        }
+
+        struct Team: Decodable {
+            let id: LinearTeam.ID
+        }
+
+        struct Project: Decodable {
+            let id: LinearProject.ID
+        }
 
         var issueComments: IssueComments {
             IssueComments(
                 id: id, identifier: identifier, stateType: state.type,
-                comments: comments.nodes.map(\.comment).sorted { $0.createdAt < $1.createdAt })
+                comments: comments.nodes.map(\.comment).sorted { $0.createdAt < $1.createdAt }, stateName: state.name,
+                title: title ?? "", description: description ?? "", labels: labels?.nodes.map(\.name) ?? [], teamId: team?.id,
+                projectId: project?.id, url: url)
+        }
+    }
+
+    struct OwnerCommentNode: Decodable {
+        let id: LinearComment.ID
+        let body: String
+        let issue: Issue?
+
+        struct Issue: Decodable {
+            let id: LinearIssue.ID
+            let identifier: LinearIssue.Identifier
+            let team: Team
+
+            struct Team: Decodable {
+                let id: LinearTeam.ID
+            }
+        }
+
+        var hit: OwnerCommentHit {
+            OwnerCommentHit(id: id, body: body, issueId: issue?.id, identifier: issue?.identifier, teamId: issue?.team.id)
         }
     }
 
@@ -894,7 +964,7 @@ extension LinearQuery {
 /// The names of the variables the queries take, and of the fields of the
 /// inputs and filters given in them.
 enum LinearVariable: String, Sendable {
-    case after, body, content, cursor, description, documentContentId, gt, id, ids, input, issueId, keys, labelId, labelIds
+    case after, body, commentId, content, cursor, description, documentContentId, emoji, gt, id, ids, input, issueId, keys, labelId, labelIds
     case name, numbers, parentId, projectId, relatedIssueId, stateId, states, teamId, teamIds, term, title, type, url
 }
 
@@ -902,7 +972,7 @@ enum LinearVariable: String, Sendable {
 /// each mutation answers in, and the fields of the objects it returns.
 enum LinearField: String, Sendable {
     case attachmentLinkURL, commentCreate, commentUpdate, documentUpdate, issueAddLabel, issueCreate, issueLabelCreate
-    case issueRelationCreate, issueRemoveLabel, issueUpdate, projectUpdate, projectUpdateCreate, teamUpdate
+    case issueRelationCreate, issueRemoveLabel, issueUpdate, projectUpdate, projectUpdateCreate, reactionCreate, teamUpdate
     case comment, id, identifier, issue, issueLabel, url
 }
 

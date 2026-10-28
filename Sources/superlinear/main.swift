@@ -12,6 +12,7 @@ Usage: superlinear [--config <path>]
        superlinear stats [--config <path>]
        superlinear proposals [--workspace <name>] [--config <path>]
        superlinear plan [--workspace <name>] [--config <path>]
+       superlinear roadmap [--workspace <names>] [--json] [--config <path>]
        superlinear resume
 
 Watches Linear for new issues and starts an autonomous Claude Code agent
@@ -55,6 +56,14 @@ Subcommands:
               the daemon puts in Linear for you to accept or reject.
               Without --workspace, runs it for each workspace with
               planning on.
+  roadmap     Show the ordered plan across every workspace: a table of
+              steps, each with its issues and who does it, an agent or you;
+              the waits between workspaces; what you must do now, with the
+              step it unblocks; and notes for triage. Prints the roadmap
+              the daemon last built, when it started or at the end of a
+              planning job; it builds nothing. --workspace shows only the
+              part about the named workspaces, comma-separated. --json
+              prints it as JSON.
   resume      End the pause of Claude sessions that the Claude usage limit
               started, at once, as when you bought more usage. The daemon
               also checks every 15 minutes, and resumes at the reset time.
@@ -115,6 +124,11 @@ case .proposals(let path, let workspace):
 case .plan(let path, let workspace):
     Task { exit(await PlanCommand.run(configPath: path, workspace: workspace)) }
     dispatchMain()
+
+case .roadmap(let path, let workspaces, let json):
+    Task { exit(await RoadmapCommand.run(configPath: path, workspaces: workspaces, json: json)) }
+    dispatchMain()
+
 case .resume:
     exit(ResumeCommand.run())
 

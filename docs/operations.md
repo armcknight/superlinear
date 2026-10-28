@@ -37,10 +37,13 @@ superlinear status [--since <duration>] [--status <names>] [--workspace <names>]
 superlinear stats [--config <path>]
 superlinear proposals [--workspace <name>] [--config <path>]
 superlinear plan [--workspace <name>] [--config <path>]
+superlinear roadmap [--workspace <names>] [--json] [--config <path>]
 superlinear resume
 ```
 
 With no subcommand it runs the daemon in the foreground, which is how to test a configuration without registering a launch agent. `--config` overrides the default path, `--version` prints the version, and `--help` prints this.
+
+`superlinear roadmap` prints the ordered plan across every workspace, who does each step, and what you must do now: see [The roadmap](planning.md#roadmap).
 
 `superlinear resume` ends a pause of Claude sessions at the usage limit at once, as after you buy more usage or change plans before the reset time. It signals a running daemon, which starts the waiting sessions at once; with no daemon running, it lifts the pause in the state file. See [Usage and spending limits](lifecycle.md#limits).
 
@@ -72,7 +75,7 @@ Agents' builds fill the disk fast: a SwiftPM `.build` directory or an Xcode Deri
 | --- | --- | --- |
 | Waiting on you | `awaiting-review` | Every open, non-draft pull request whose branch or title names an issue in the workspace's Linear, tracked by the daemon or not, those holding back the most work first: the open issues their issues block, directly and indirectly, and the pull requests stacked on them, each stack bottom first. A pull request that targets another listed one's branch is listed after it, indented, with "stacked on #n": see [Stacks](lifecycle.md#stacks). Shows the review state — not reviewed, changes requested, approved, new feedback (a review or conversation comment from you that an agent has yet to address), agent addressing review, or agent resolving conflicts — whether it conflicts with its base branch, the CI state, how many issues it blocks, and the URL. Pull requests an agent is working on come last. Then the number of [proposals waiting in Linear](planning.md#standup), labeled `superlinear: proposed`, with a link to each. |
 | Draft pull requests | `drafts` | The same, for drafts, with the CI state, each stack bottom first. A draft the daemon made because the pull request below it was closed without a merge says so, and asks for a decision. |
-| Running | `running` | An agent works on the issue now. Shows its pid and log. |
+| Running | `running` | An agent works on the issue now. Shows its pid and log. After the tasks, "Comments waiting for an agent" lists your [requests in Linear](planning.md#issue-comments) that wait for an issue's next agent, each with its issue, its first line and a link; this section's name shows them too. |
 | Addressing review | `addressing-review` | An agent addresses your review of the issue's pull request, or your comment on it, or is queued to. Shows the pull request, and the pid and log once it runs. An interrupted one is listed as interrupted, and resumes like any other. |
 | Resolving conflicts | `resolving-conflicts` | An agent merges the base branch into the branch of the issue's pull request, which conflicts with it, or is queued to. Shows the pull request, and the pid and log once it runs. |
 | Interrupted | `interrupted` | The agent stopped without finishing, as at a reboot. The daemon resumes it when it next starts. |
@@ -95,7 +98,7 @@ Two options narrow the report:
 - `--status <names>` shows only the named sections, by the names in the table, comma-separated: `superlinear status --status running,blocked`. The option may repeat. An unknown name is an error that lists the names there are.
 - `--workspace <names>` shows only the named workspaces, comma-separated, in config order: `superlinear status --workspace app,web`. The option may repeat. The pause lines and the polls follow the selection. A name no workspace has is an error that lists the configured ones.
 
-When a [pause](lifecycle.md#limits) is active, the report begins with one line for it. So does [Fable's usage limit](planning.md#planning-model), while it holds.
+The report begins with a line about the [roadmap](planning.md#roadmap) of every workspace: when it was last built and how many actions it lists for you, or that none is built yet. When a [pause](lifecycle.md#limits) is active, a line for it follows. So does [Fable's usage limit](planning.md#planning-model), while it holds.
 
 The report ends with this command's version and binary, then the daemon's: its pid, version, binary and start time, or that it is not running. It warns when the daemon's binary has been replaced since the daemon started. Last, under **Polls**, each workspace shows when its last poll ended, whether it failed, and when the next one is due, or, once that time has passed, that it is polling now. Each workspace polls on its own loop, which waits its `pollIntervalSeconds` after each poll ends, so each has its own times.
 

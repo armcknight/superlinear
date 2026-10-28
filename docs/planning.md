@@ -125,10 +125,12 @@ When the session ends, superlinear checks each proposal against what the job was
 
 `superlinear plan` keeps its jobs and proposals in `~/.local/share/superlinear/planning.json`, because only the daemon writes the state file. The daemon takes them in, and puts the proposals in Linear, at its next poll.
 
+At the end of each job, the daemon's or `superlinear plan`'s, superlinear rebuilds the [roadmap](#roadmap) of every workspace.
+
 <a id="planning-model"></a>
 ## The model for planning and answers
 
-The planning job and the sessions that [answer your comments](#proposal-comments) run on Fable: the daemon passes `--model fable` to `claude`. Agents that work on issues run on Opus: see [The agent](lifecycle.md#agent).
+The planning job, the [roadmap session](#roadmap-session) and the sessions that [answer your comments](#proposal-comments) run on Fable: the daemon passes `--model fable` to `claude`. Agents that work on issues run on Opus: see [The agent](lifecycle.md#agent).
 
 Fable has a usage limit of its own. When one of these sessions ends with a usage limit message while it runs on Fable, such as `Fable weekly limit reached ∙ resets Mon 9am`, the daemon:
 
@@ -139,6 +141,58 @@ Fable has a usage limit of its own. When one of these sessions ends with a usage
 `superlinear status` shows the limit while it holds, as `Fable usage limit: planning and comment answers run on opus until …`. `superlinear plan` reads the limit from the state file and starts on Opus while it holds. When its job stops at Fable's limit, it resumes the job on Opus, but does not write the limit, as only the daemon writes the state file.
 
 A session on Opus that stops at the usage limit is handled as before: a comment answer pauses every session at the [Claude usage limit](lifecycle.md#claude-usage-limit), and a planning job ends as failed.
+
+<a id="roadmap"></a>
+## The roadmap
+
+```sh
+superlinear roadmap [--workspace <names>] [--json]
+```
+
+The roadmap is the order of the open work across every configured workspace, who does each step, an agent or you, and what you must do now so that agents are not waiting. It prints:
+
+- A table, one row per step: the step's number, its work, with the identifiers and titles of its issues, and who does it, as `agent`, `you` or `agent, then you`. Every open issue of the watched teams, in Triage, Backlog, Todo, In Progress or In Review, is in one step. A step may also be an action outside Linear that the issues name, such as a release.
+- **Waits across workspaces**: the [references between workspaces](#roadmap-cross-workspace), with the step that holds each issue named.
+- **Now, for you**: each thing you must do now, with the step it unblocks.
+- **Triage**: duplicates, issues that belong together, and issues to split or close.
+
+In a terminal that shows links, each issue's identifier links to it in Linear, and each action to the pull request or issue it is done on.
+
+The command only reads. It prints the roadmap that the daemon last built, with the time it was built, and says when a workspace's default branch moved since, as known locally. It does not build a roadmap and does not write a file. When there is no roadmap yet, it says so and exits 1. `--workspace` shows the part of that roadmap about the named workspaces, comma-separated; the option may repeat. That part has the steps with an issue of those workspaces, under their numbers in the full roadmap, the actions for those steps or issues, the triage notes about their issues, and the waits from or to them. `--json` prints the roadmap as JSON, for other tools: the steps with their issues, Who and why, the actions, the notes, the references, the heads it looked at, and warnings.
+
+The daemon builds the roadmap of every workspace when it starts and has none, and the planning job rebuilds it at its end, so `superlinear roadmap` is usually current. In the daemon the build runs in the background; jobs that end while one is building lead to one more build after it, and none starts while Claude sessions are paused at the usage limit. `superlinear status` begins with a line that says when the roadmap was last built and how many actions it lists for you.
+
+Roadmaps are kept in `~/.local/share/superlinear/roadmap.json`, one for each set of workspaces, with the time, the workspaces and the head of each default branch it looked at. The daemon and `superlinear plan` both build roadmaps, and only the daemon writes the state file, so the roadmap is kept apart from it, as `superlinear plan`'s jobs are. A build does not start while another session builds the same roadmap.
+
+<a id="roadmap-session"></a>
+### The roadmap session
+
+For each workspace, superlinear reads what `status` and the planning job read: the open issues of the watched teams with their state, priority, labels, project, milestone, relations and description; the proposals waiting in Linear; the open pull requests of those issues, with their review and CI state and whether they wait on you; the issues blocked, and by what, as of the daemon's last poll; the human labels; and the default branch's commits of the last 7 days, at most 30. It fetches the default branch first.
+
+A headless Claude session on the [planning model](#planning-model) then orders the work. It is read only, like the planning job's: it may read each workspace's repository, which is added to it, and run `git log`, `git show`, `git diff`, `gh pr view`, `gh pr list` and the read-only `linctl` commands for each workspace. It runs them through small scripts, one set per workspace, that run them in that workspace's repository and give `linctl` that workspace's [Linear key](lifecycle.md#linear-key) from the environment, so no key is in the prompt or in the allowed commands. Its one output is a JSON file: the ordered steps, each with its issues, who does it and why it is in its place; your actions, each tied to the step it unblocks; and the notes for triage. When Fable's limit stops it, it resumes on Opus.
+
+The session orders and explains. superlinear does the rest: the reads, the references between workspaces, the Who rules below, and the rendering. It puts each open issue in the first step that names it, and gives each open issue the session left out a step of its own at the end, "Not placed by the roadmap session". It drops identifiers that are not open issues, with a warning.
+
+<a id="roadmap-who"></a>
+### Who does a step
+
+The data settles that a step is yours when one of its issues:
+
+- has a [human label](configuration.md#human-labels);
+- waits in Triage: an issue superlinear proposed, in Triage or, for a team with Triage off, in Backlog, or an issue a person filed in Triage;
+- has a [proposal](#standup) on it that waits for your answer in a comment;
+- has an open pull request that [waits on you](operations.md#status), for review, or, once approved, for the merge.
+
+superlinear puts `you` first among such a step's Who when the session left you out, and lists each such issue under **Now, for you**, with what to do and the step it is in, when the session did not. The session also gives you a step that is an action outside Linear that the issues name: a release, a tag, a key, a purchase, an account. Otherwise, a step is an agent's.
+
+<a id="roadmap-cross-workspace"></a>
+### Waits across workspaces
+
+Linear cannot relate issues in different workspaces. The roadmap treats an identifier of another configured workspace's team in an issue's description, such as "waits for WOR-7" in a TEM issue, as a dependency on that issue: it lists it under **Waits across workspaces**, and the session puts the named issue first. Only identifiers in upper case count, as people write them in prose, and not words such as `UTF-8` or `SHA-256`. A named issue that is not open is shown as such. An identifier of a team no workspace watches is shown as unknown. Mentions of a team of the issue's own workspace are left to Linear's relations.
+
+Two workspaces may each have a team with the same key, such as `WOR`. A reference to such a key is to the workspace that has the issue open, when only one does, and is shown as ambiguous otherwise. In the roadmap, an identifier that two workspaces have is written with its workspace, as `workflows:WOR-7`, and links to neither issue.
+
+Not built yet: writing the roadmap to Linear, as a document or a project update. Acting on your actions is not planned: a release or a key is always yours.
 
 <a id="follow-ups"></a>
 ## Follow-ups from agents
@@ -183,17 +237,45 @@ A team with Triage off: superlinear turns Triage on when the API key may, and lo
 Once answered, superlinear edits the comment's first line to say so, with the time: `**Applied 2026-10-17T20:31:00Z.** superlinear proposed to cancel this issue.` The `superlinear: proposed` label comes off the issue once nothing waits on it, so the issues with that label are the proposals still open: the number waiting in each workspace is in [`superlinear status`](operations.md#status), with a link to each. A rejection is recorded, so the same change is not proposed again. Each approval goes through the [rules above](#proposal-rules): one whose issue changed since it was proposed is not applied, but asked again in a new comment with a note, the old one marked superseded; a spec change goes back to Triage with a note. An issue labeled `superlinear: hands off` gets no comment: the proposal is rejected.
 
 <a id="proposal-comments"></a>
-### Questions and requests on proposals
+### Questions and requests in comments
 
-Ask about a proposal in a comment, and superlinear answers in the comment's thread. A comment counts when you write it on a proposed issue that waits in Triage or Backlog, or as a reply in the thread of a proposal's comment. Only comments from the API key's user count. superlinear's own comments do not count: each reply it writes starts with the line `*Written by superlinear.*`, and its proposal comments start with what they propose.
+Comment on any issue of the watched teams, and superlinear handles the comment. Ask about a proposal, and it answers in the comment's thread; ask about any other issue, or ask for a change to it, and what it does depends on where the issue stands: see [Comments on every issue](#issue-comments). A comment is about a proposal when you write it on a proposed issue that waits in Triage or Backlog, or as a reply in the thread of a proposal's comment.
 
-For each comment, the daemon runs a short headless Claude session on [Fable](#planning-model) that only reads. It can read the code and its history in the repository's default-branch worktree, look at pull requests and CI runs with `gh`, and read the workspace's Linear issues with `linctl issue get`, `linctl issue list` and `linctl issue search`, with the [workspace's key](lifecycle.md#linear-key) in its environment. It cannot edit files, commit, push, open pull requests, or write to Linear or GitHub: no other `linctl` command is allowed. Its prompt has the proposal (its kind, reason, source, and the text or the diff), the comments before yours, and your comment. It also has the issues of the workspace's teams that your comment or the proposal names, up to 10, each with its title, state, labels, relations and description, so "is this a duplicate of TEM-22?" needs no tool call. Identifiers of teams outside the workspace, and the proposed issue itself, are not fetched. The answer is posted as a reply under your comment. superlinear adds the marker line at the start of the reply, and its notes, such as the one that says it changed the proposal, at the end; the prompt tells the session not to write them, and superlinear removes them from the start and end of the answer should the session copy them from its earlier replies. Ask "What would this cost in CI?" on a proposed CI change, and the reply estimates the minutes it adds to each run, and says on which runners.
+These rules hold for every comment:
+
+- Only comments from the API key's user count. A comment from another user is left alone, and logged once with why.
+- superlinear's own comments do not count: each reply it writes starts with the line `*Written by superlinear.*`, and its proposal comments start with what they propose.
+- Only issues of the watched teams ([`teamIds`](configuration.md#team-ids)) count. A comment on another team's issue is logged once with why.
+- Each comment is handled once for each version of its text.
+
+Each poll asks Linear for the API key's user's comments changed since the last poll, and reads the comments of the issues they are on, with those of the issues superlinear proposed or works on. An issue it read comments on in the last day is read again at each poll, so a comment still on the queue when the daemon restarts is found again. When a comment goes on the queue, superlinear adds a 👀 reaction to it, once, so you see in Linear that it was seen, even when the answer waits for an agent.
+
+For each comment, the daemon runs a short headless Claude session on [Fable](#planning-model) that only reads. The session first decides what the comment is: a question, a request for a change, or a note that needs nothing, such as "thanks" or "FYI". A note gets no reply. It can read the code and its history in the repository's default-branch worktree, look at pull requests and CI runs with `gh`, and read the workspace's Linear issues with `linctl issue get`, `linctl issue list` and `linctl issue search`, with the [workspace's key](lifecycle.md#linear-key) in its environment. It cannot edit files, commit, push, open pull requests, or write to Linear or GitHub: no other `linctl` command is allowed. Its prompt has the proposal (its kind, reason, source, and the text or the diff), the comments before yours, and your comment. It also has the issues of the workspace's teams that your comment or the proposal names, up to 10, each with its title, state, labels, relations and description, so "is this a duplicate of TEM-22?" needs no tool call. Identifiers of teams outside the workspace, and the proposed issue itself, are not fetched. The answer is posted as a reply under your comment. superlinear adds the marker line at the start of the reply, and its notes, such as the one that says it changed the proposal, at the end; the prompt tells the session not to write them, and superlinear removes them from the start and end of the answer should the session copy them from its earlier replies. Ask "What would this cost in CI?" on a proposed CI change, and the reply estimates the minutes it adds to each run, and says on which runners.
 
 When the comment asks for a change to the proposal, such as "make it optional" or "only for main", the session may also return new text. superlinear then edits the proposed issue's description, or the proposal's comment, and says in the reply that it did. The proposal still waits for your answer. This applies to the kinds that have text: a new issue's description, an edit's new text, a spec change, and a project update. For a closure, a relation or a promotion, the reply tells you to reject the proposal and say what you want instead.
 
 A reply that superlinear writes with your API key does not reach your Linear inbox. So the reply also keeps the label `superlinear: proposed` on the issue, or puts it back, and the issue stays in the proposals view until you answer the proposal.
 
-Each comment is answered once for each version of its text. The daemon records, in the state file, each comment it handled and the text the comment had then. If you edit a comment after it was answered, it is answered again, and the prompt has the old text and the new text. A change only to the comment's reactions does not count. At the first poll after an upgrade, only comments made after the proposal was put in Linear count, so old comments are not all answered at once.
+Each comment is answered once for each version of its text. The daemon records, in the state file, each comment it handled and the text the comment had then. If you edit a comment after it was answered, it is answered again, and the prompt has the old text and the new text. A change only to the comment's reactions does not count. On an issue superlinear neither proposed nor works on, the record is kept for 30 days after its last comment was handled, so an edit within that time is answered again. At the first poll after an upgrade to a version that answered comments, only comments made after the proposal was put in Linear count, so old comments are not all answered at once.
+
+<a id="issue-comments"></a>
+#### Comments on every issue
+
+A comment outside any proposal is handled by the issue's state. The session's prompt has the issue (its title, state, labels, link and description), where it stands, the comments before yours in its thread, your comment, and the issues it names.
+
+| The issue | A question | A request for a change |
+| --- | --- | --- |
+| Open, and no agent works on it: in Triage, Backlog or Todo, with a [`humanLabels`](configuration.md#human-labels) label, or started by hand | A reply with the answer. | superlinear changes the issue's description to the one the session wrote, and the reply says what changed. An issue labeled `superlinear: hands off` is not changed; the reply says so. |
+| An agent is running | A reply with what is known now. | It waits. When the agent ends, the next agent on the issue gets it: the review agent of its pull request, or a new agent when it opened none. See [Comments in Linear](lifecycle.md#linear-comments). A running agent is never stopped. |
+| Its agent ended, with an open pull request or with none | A reply. | The review agent of its pull request, or a new agent, as above. |
+| Done | A reply, such as "done in #12", with the link. | A `createIssue` proposal for the change, in the issue's team and project and related to it, linked in the reply. Its [trust level](#trust-levels) applies. |
+| Canceled, or a duplicate | A reply with why it was closed, or the issue it duplicates. | A `createIssue` proposal, as for a done issue. |
+
+A request that waits for an agent gets no reply. `superlinear status` lists it under "Comments waiting for an agent", with its issue and a link: see [Status](operations.md#status). Should the issue be done or closed before an agent takes it, a session reads the comment again by the new state.
+
+A reply on an issue that is not a proposal puts the label `superlinear: replied` on it, as a reply written with the API key does not reach your Linear inbox; filter on the label to find them. superlinear does not take the label off. An issue labeled `superlinear: hands off` gets no label.
+
+**Comments that waited:** at the first poll after the upgrade to this rule, superlinear also handles your comments that the old rule skipped: those made after it first kept a record of comments in the workspace, on issues that were neither proposals nor worked on. A comment superlinear replied to already is not answered again.
 
 The sessions run one at a time in each workspace, in the background, so a poll does not wait for them. They wait while the [Claude usage limit](lifecycle.md#claude-usage-limit) pauses sessions. A session that stops at the limit pauses Claude like any other session, and its comment is answered after the pause. Each session's token use is recorded in the state file and logged. Claude's output goes to `~/.local/share/superlinear/logs/comments-<workspace>.log`. If a comment's session fails three times, the comment is logged and left unanswered.
 

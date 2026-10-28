@@ -115,7 +115,12 @@ enum LinearMilestone {
     typealias Name = Tagged<LinearMilestone, String>
 }
 enum LinearDocument { typealias ID = Tagged<LinearDocument, String> }
-enum LinearState { typealias ID = Tagged<LinearState, String> }
+enum LinearState {
+    typealias ID = Tagged<LinearState, String>
+    /// The name a person reads, as `In Progress`.
+    typealias Name = Tagged<NameTag, String>
+    enum NameTag {}
+}
 enum LinearComment { typealias ID = Tagged<LinearComment, String> }
 enum LinearUser { typealias ID = Tagged<LinearUser, String> }
 enum LinearLabel {
