@@ -27,6 +27,7 @@ extension LinearWriting {
     func createReply(on target: CommentTarget, parentId: LinearComment.ID, body: String) async throws -> CreatedComment {
         CreatedComment(id: "reply", url: nil, response: .null)
     }
+    func addReaction(commentId: LinearComment.ID, emoji: String) async throws -> JSONValue { .null }
     func addLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue { .null }
     func removeLabel(issueId: LinearIssue.ID, labelId: LinearLabel.ID) async throws -> JSONValue { .null }
     func proposalIssues(ids: [LinearIssue.ID]) async throws -> [ProposalIssueSnapshot] { [] }

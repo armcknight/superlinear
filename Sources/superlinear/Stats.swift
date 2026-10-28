@@ -18,14 +18,14 @@ struct Stats: Sendable {
         }
         let proposals = reports.reduce(0) { $0 + $1.proposalsWaiting.count }
         var counts: [(String, Int)] = [
-            (WorkspaceReport.waitingHeading, reviews.filter { !$0.pullRequest.isDraft }.count),
-            ("Proposals in Linear", proposals),
-            ("Draft pull requests", reviews.filter(\.pullRequest.isDraft).count),
+            (WorkspaceReport.Heading.waiting, reviews.filter { !$0.pullRequest.isDraft }.count),
+            (WorkspaceReport.Heading.proposals, proposals),
+            (WorkspaceReport.Heading.drafts, reviews.filter(\.pullRequest.isDraft).count),
         ]
         for category in TaskCategory.allCases {
             counts.append((category.heading, tasks.filter { $0.category == category }.count))
         }
-        counts.append((WorkspaceReport.staleHeading, reports.reduce(0) { $0 + $1.stale.count }))
+        counts.append((WorkspaceReport.Heading.stale, reports.reduce(0) { $0 + $1.stale.count }))
         return counts.filter { $0.1 > 0 }
     }
 

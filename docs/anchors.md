@@ -52,7 +52,8 @@ Rules:
 | [`planning.md#roadmap-cross-workspace`](planning.md#roadmap-cross-workspace) | Waits across workspaces: identifiers of another workspace's team. |
 | [`planning.md#follow-ups`](planning.md#follow-ups) | Follow-ups from agents. |
 | [`planning.md#standup`](planning.md#standup) | Reviewing proposals in Linear. The anchor keeps the name of the command this replaced. |
-| [`planning.md#proposal-comments`](planning.md#proposal-comments) | Questions and requests on proposals, answered in Linear. |
+| [`planning.md#proposal-comments`](planning.md#proposal-comments) | Questions and requests in comments, answered in Linear. |
+| [`planning.md#issue-comments`](planning.md#issue-comments) | Comments on every issue of the watched teams, handled by the issue's state. |
 | [`planning.md#spec-comments`](planning.md#spec-comments) | Comments on the spec document. |
 | [`planning.md#standup-needs-human`](planning.md#standup-needs-human) | Signing off Needs human issues in Linear. |
 | [`planning.md#project-updates`](planning.md#project-updates) | Project updates. |

@@ -1,13 +1,16 @@
 import Foundation
 
 /// A question or request from the owner that a read-only Claude session
-/// answers: on a pending proposal, or on the spec document.
+/// answers: on a pending proposal, on the spec document, or on any other
+/// issue of the watched teams.
 struct CommentQuestion: Sendable, Equatable {
     enum Subject: Sendable, Equatable {
         /// A proposal waiting in Linear, and the issue the comment is on.
         case proposal(Proposal, issueId: LinearIssue.ID)
         /// The spec document, and its URL when known.
         case spec(DocumentComments, url: String?)
+        /// An issue, and where it stood when the poll found the comment.
+        case issue(IssueComments, situation: IssueSituation)
     }
 
     var subject: Subject
@@ -31,6 +34,12 @@ struct CommentQuestion: Sendable, Equatable {
         self.init(
             subject: .proposal(answer.proposal, issueId: answer.issueId), comment: answer.comment, thread: answer.thread,
             key: .init(answer.issueId), since: since)
+    }
+
+    init(_ answer: CommentTriage.IssueAnswer, since: Date) {
+        self.init(
+            subject: .issue(answer.issue, situation: answer.situation), comment: answer.comment, thread: answer.thread,
+            key: .init(answer.issue.id), since: since)
     }
 
     /// The questions in the owner's fresh comments on the spec document,
@@ -57,12 +66,27 @@ struct CommentQuestion: Sendable, Equatable {
             targetUpdatedAt: document.updatedAt)
     }
 
+    /// The `createIssue` proposal for the change that a comment on a done or
+    /// closed issue asked for, in the issue's team and project, related to
+    /// it. Nil when the answer has no description for it.
+    static func issueDraft(_ answer: CommentAnswer, issue: IssueComments, comment: LinearThreadComment) -> ProposalDraft? {
+        guard let description = answer.revision, let teamId = issue.teamId else { return nil }
+        let firstLine = comment.body.split(separator: "\n").first.map(String.init) ?? ""
+        let title = answer.title ?? "Follow-up to \(issue.identifier): \(firstLine.prefix(80))"
+        return ProposalDraft(
+            payload: .createIssue(teamId: teamId, projectId: issue.projectId, title: title, description: description, relatedIssueId: issue.id),
+            target: .team(teamId),
+            reason: "Asked for in a comment on \(issue.identifier), which is \(issue.stateType == .completed ? "done" : "closed"): \"\(firstLine.prefix(200))\"",
+            source: ProposalSource(kind: .comment, value: comment.url ?? comment.id.rawValue, issue: issue.identifier))
+    }
+
     /// Where the comment is, for the log.
     var location: String {
         switch subject {
         case .proposal(let proposal, _):
             "\(proposal.kind.rawValue) \(proposal.id) on \(proposal.post?.issueIdentifier ?? proposal.post?.issueId.rawValue ?? "?")"
         case .spec: "the spec document"
+        case .issue(let issue, _): issue.identifier.rawValue
         }
     }
 
@@ -71,15 +95,50 @@ struct CommentQuestion: Sendable, Equatable {
         switch subject {
         case .proposal(_, let issueId): .issue(issueId)
         case .spec(let document, _): document.documentContentId.map { .document(contentId: $0) }
+        case .issue(let issue, _): .issue(issue.id)
         }
     }
 }
 
-/// What a session answers: the reply, and the new text of the proposal or
-/// the spec when the comment asks for a change.
+/// What a session answers: what the comment is, the reply, and the new text
+/// of the proposal, the spec or the issue's description when the comment
+/// asks for a change, or the description of a new issue with its title.
 struct CommentAnswer: Codable, Sendable, Equatable {
+    /// What a comment is.
+    enum Kind: String, Codable, Sendable {
+        case question
+        /// A request for a change.
+        case change
+        /// A note that needs nothing, such as "thanks".
+        case note
+    }
+
+    var kind: Kind?
     var answer: String
     var revision: String?
+    var title: String?
+
+    init(kind: Kind?, answer: String, revision: String?, title: String?) {
+        self.kind = kind
+        self.answer = answer
+        self.revision = revision
+        self.title = title
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decodeIfPresent(Kind.self, forKey: .kind)
+        // Only a comment of a known kind may have no answer.
+        answer = kind == nil
+            ? try container.decode(String.self, forKey: .answer)
+            : try container.decodeIfPresent(String.self, forKey: .answer) ?? ""
+        revision = try container.decodeIfPresent(String.self, forKey: .revision)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+    }
+
+    /// Whether superlinear replies: not to a note, nor to a request that
+    /// has no answer, as one handed to an agent.
+    var replies: Bool { kind != .note && !answer.isEmpty }
 
     /// The answer in a session's output: a JSON object, alone, in a code
     /// block, or after other text.
@@ -94,12 +153,19 @@ struct CommentAnswer: Codable, Sendable, Equatable {
             guard let data = candidate.data(using: .utf8), var answer = try? JSONDecoder().decode(CommentAnswer.self, from: data) else {
                 continue
             }
-            if answer.revision?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true { answer.revision = nil }
+            answer.revision = answer.revision.flatMap(nonBlank)
+            answer.title = answer.title.flatMap(nonBlank)
             answer.answer = CommentResponder.bare(answer.answer)
-            guard !answer.answer.isEmpty else { throw CommentAnswerError.emptyAnswer }
+            // A note needs no reply, and a request may go to an agent without one.
+            guard !answer.answer.isEmpty || [.note, .change].contains(answer.kind) else { throw CommentAnswerError.emptyAnswer }
             return answer
         }
         throw CommentAnswerError.noAnswer(String(text.suffix(500)))
+    }
+
+    /// The text, or nil when it is only whitespace.
+    private static func nonBlank(_ text: String) -> String? {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
     }
 }
 
@@ -182,6 +248,7 @@ enum CommentAnswerPrompt {
             text += "\n" + describe(proposal)
             own = proposal.post?.issueIdentifier.map { LinearIssue.Identifier(rawValue: $0) }
         }
+        if case .issue(let issue, _) = question.subject { own = issue.identifier }
         var seen: Set<LinearIssue.Identifier> = []
         var identifiers: [LinearIssue.Identifier] = []
         for match in text.matches(of: /\b([A-Z][A-Z0-9]*)-[0-9]+\b/) {
@@ -210,6 +277,9 @@ enum CommentAnswerPrompt {
                 sections.append("The open issues of the watched teams:\n\n" + openIssues.map { "- \($0)" }.joined(separator: "\n"))
             }
             revision = "the whole new text of the spec document"
+        case .issue(let issue, let situation):
+            sections.append("The comment is on this issue. " + describe(situation) + "\n\n" + describe(issue))
+            revision = nil
         }
         if !namedIssues.isEmpty {
             sections.append("The Linear issues that the comment names, as they stand now:\n\n"
@@ -223,13 +293,17 @@ enum CommentAnswerPrompt {
         sections.append("The owner's comment to answer:\n\n"
             + renderedComments([PromptComment(question.comment.comment, previousBody: question.comment.previousBody)]))
         var reply = """
-            Answer in Markdown, plainly and briefly, to the owner. When the answer is an estimate, say what it \
-            rests on. superlinear adds the line "\(CommentMarker.line)" at the start of the reply, and its own \
-            note on what became of a change at the end: write neither. Reply with only a JSON object, and nothing after it:
+            First decide what the comment is: "question", a question; "change", a request for a change; or \
+            "note", a note that needs nothing, such as "thanks" or "FYI", which gets no reply. Answer in \
+            Markdown, plainly and briefly, to the owner. When the answer is an estimate, say what it rests on. \
+            superlinear adds the line "\(CommentMarker.line)" at the start of the reply, and its own note on what \
+            became of a change at the end: write neither. Reply with only a JSON object, and nothing after it:
 
-            {"answer": "<your answer>", "revision": null}
+            {"kind": "question", "answer": "<your answer>", "revision": null}
             """
         switch question.subject {
+        case .issue(_, let situation):
+            reply += "\n\n" + instructions(situation)
         case .proposal where revision == nil:
             reply += "\n\nThis kind of proposal has no text to change: keep \"revision\" null. When the comment asks for a different change, say that the owner can reject this proposal with 👎."
         case .proposal:
@@ -239,6 +313,40 @@ enum CommentAnswerPrompt {
         }
         sections.append(reply)
         return sections.joined(separator: "\n\n")
+    }
+
+    /// Where the issue stands, for the prompt.
+    static func describe(_ situation: IssueSituation) -> String {
+        switch situation {
+        case .open: "No agent of superlinear's works on it."
+        case .running: "An agent of superlinear's works on it now."
+        case .pullRequest: "superlinear's agent opened a pull request for it, which waits for review."
+        case .agentEnded: "superlinear's agent worked on it, and ended without a pull request."
+        case .done: "It is done."
+        case .closed: "It was canceled, or closed as a duplicate."
+        }
+    }
+
+    /// What to do with a request for a change, by where the issue stands.
+    static func instructions(_ situation: IssueSituation) -> String {
+        switch situation {
+        case .open:
+            "When the comment asks for a change to the issue, set \"kind\" to \"change\" and \"revision\" to the whole new description of the issue, with the change made, and say in your answer what you changed. Otherwise keep \"revision\" null."
+        case .running, .pullRequest, .agentEnded:
+            "For a question, answer with what is known now: read the issue's branch, its pull request and its comments. A request for a change is not yours to make: superlinear gives it to the next agent on the issue, so set \"kind\" to \"change\", leave \"answer\" empty, and keep \"revision\" null."
+        case .done, .closed:
+            "For a question, answer it; when the issue is done, say where it was done, such as its pull request, with the link; when it was closed, say why, or the issue it duplicates. When the comment asks for a change, set \"kind\" to \"change\", \"title\" to the title of a new issue for it, and \"revision\" to that issue's description; superlinear proposes the new issue, and the owner decides. Say in your answer what the new issue is for."
+        }
+    }
+
+    /// The issue a comment is on, as the owner sees it in Linear.
+    static func describe(_ issue: IssueComments) -> String {
+        var lines = ["- \(issue.identifier): \(issue.title)", "  - State: \(issue.stateName?.rawValue ?? issue.stateType.rawValue)"]
+        if let url = issue.url { lines.append("  - Link: \(url)") }
+        if !issue.labels.isEmpty { lines.append("  - Labels: " + issue.labels.map(\.rawValue).joined(separator: ", ")) }
+        let description = issue.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.append(description.isEmpty ? "  - No description" : "  - Description:\n\n" + fenced(description))
+        return lines.joined(separator: "\n")
     }
 
     /// The proposal as the owner sees it in Linear, and where it came from.
@@ -428,6 +536,81 @@ struct CommentResponder: Sendable {
         return Answered(revised: revised, reply: reply)
     }
 
+    /// Answers a comment on an issue outside any proposal, as it stands now.
+    /// A request on an open issue changes its description, unless the issue
+    /// is hands off; one on a done or closed issue was proposed as a new
+    /// issue, `proposal`, which the reply links. Replies, and puts the label
+    /// `superlinear: replied` on the issue, as a reply written with the
+    /// owner's key reaches no inbox.
+    func answer(
+        _ question: CommentQuestion, situation: IssueSituation, with answer: CommentAnswer, proposal: Proposal?
+    ) async throws -> CreatedComment {
+        guard case .issue(let asked, _) = question.subject else { throw CommentAnswerError.noTarget }
+        let issue = try await linear.editableIssue(id: asked.id)
+        let handsOff = Self.has(ProposalEngine.handsOffLabel, issue.labels)
+        var notes: [String] = []
+        if answer.kind == .change, situation == .open, let revision = answer.revision, revision != issue.description {
+            if handsOff {
+                notes.append(Self.handsOffNote)
+            } else {
+                _ = try await linear.updateIssueDescription(id: issue.id, description: revision)
+                notes.append(Self.describedNote)
+            }
+        }
+        if answer.kind == .change, situation.requestProposesIssue {
+            notes.append(Self.issueProposalNote(proposal))
+        }
+        let text = ([answer.answer] + notes).filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let reply = try await linear.createReply(
+            on: .issue(issue.id), parentId: question.comment.comment.rootId, body: CommentMarker.reply(text))
+        if !handsOff, !Self.has(ProposalEngine.proposedLabel, issue.labels), !Self.has(Self.repliedLabel, issue.labels) {
+            let labelId = try await linear.labelId(named: Self.repliedLabel, teamId: issue.teamId)
+            _ = try await linear.addLabel(issueId: issue.id, labelId: labelId)
+        }
+        return reply
+    }
+
+    private static func has(_ label: String, _ labels: [String]) -> Bool {
+        labels.contains { $0.caseInsensitiveCompare(label) == .orderedSame }
+    }
+
+    /// The label on an issue that superlinear replied on, outside any
+    /// proposal, so that it shows in the proposals view.
+    static let repliedLabel = "superlinear: replied"
+
+    /// The note on a reply whose request changed the issue's description.
+    static let describedNote = "superlinear changed the issue's description as asked."
+    /// The note on a reply whose request was not made, as the issue is hands off.
+    static let handsOffNote = "superlinear did not change the issue: it has the label \"\(ProposalEngine.handsOffLabel)\"."
+    /// The start of the note on a reply whose request became a new issue.
+    static let issueProposalNotePrefix = "superlinear proposed a new issue for this: "
+
+    /// The note on a reply to a request on a done or closed issue.
+    static func issueProposalNote(_ proposal: Proposal?) -> String {
+        guard let proposal else { return noChangeNote }
+        if let post = proposal.post {
+            let link = post.url.map { "[\(post.issueIdentifier ?? "the proposal")](\($0))" } ?? (post.issueIdentifier ?? "an issue")
+            return issueProposalNotePrefix + link + "."
+        }
+        return issueProposalNotePrefix + (proposal.status == .applied ? "created at once, as its trust level is auto." : "it waits for review.")
+    }
+
+    /// The emoji of the reaction on each comment queued, which tells the
+    /// owner that superlinear saw it.
+    static let seenEmoji = "eyes"
+
+    /// Adds the 👀 reaction to the comment, unless `ledger` has it as given
+    /// one already. Returns the ledger with the reaction recorded, or nil
+    /// when there was nothing to do.
+    static func markSeen(_ question: CommentQuestion, ledger: CommentLedger?, linear: any LinearWriting) async throws -> CommentLedger? {
+        let id = question.comment.comment.id
+        guard ledger?.reacted.contains(id) != true else { return nil }
+        _ = try await linear.addReaction(commentId: id, emoji: seenEmoji)
+        var seen = ledger ?? CommentLedger(since: question.since)
+        seen.reacted.insert(id)
+        return seen
+    }
+
     /// Replies in the comment's thread with `text`.
     func reply(to question: CommentQuestion, text: String) async throws -> CreatedComment {
         guard let target = question.target else { throw CommentAnswerError.noTarget }
@@ -480,7 +663,8 @@ struct CommentResponder: Sendable {
     /// Whether the line is, in full, a note that superlinear adds to a reply.
     private static func isNote(_ line: String) -> Bool {
         let line = line.trimmingCharacters(in: .whitespaces)
-        return line == revisedNote || line == noChangeNote
+        return line == revisedNote || line == noChangeNote || line == describedNote || line == handsOffNote
+            || line.hasPrefix(issueProposalNotePrefix)
             || (line.hasPrefix(proposedNotePrefix) && line.hasSuffix(proposedNoteSuffix))
     }
 }

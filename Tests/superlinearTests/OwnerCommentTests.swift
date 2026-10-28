@@ -52,6 +52,11 @@ private actor CommentLinear: LinearWriting {
         return CreatedComment(id: LinearComment.ID(rawValue: "reply-\(replies.count)"), url: nil, response: .null)
     }
 
+    func addReaction(commentId: LinearComment.ID, emoji: String) async throws -> JSONValue {
+        writes.append("react \(commentId) \(emoji)")
+        return .null
+    }
+
     func closeIssue(id: LinearIssue.ID) async throws -> JSONValue { .null }
     func promoteIssue(id: LinearIssue.ID) async throws -> JSONValue { .null }
     func createRelation(issueId: LinearIssue.ID, relatedIssueId: LinearIssue.ID, type: String) async throws -> JSONValue { .null }
@@ -98,7 +103,7 @@ private func commentProposal(issueId: LinearIssue.ID = "spl-4", commentId: Linea
 }
 
 private func issue(_ id: LinearIssue.ID, _ state: LinearStateType = .started, _ comments: [LinearThreadComment]) -> IssueComments {
-    IssueComments(id: id, identifier: id.rawValue.uppercased(), stateType: state, comments: comments)
+    IssueComments(id: id, identifier: .init(rawValue: id.rawValue.uppercased()), stateType: state, comments: comments)
 }
 
 private func pending(_ id: String, startedAt: Date = at(0)) -> PendingMerge {
@@ -116,7 +121,8 @@ struct OwnerCommentTests {
         let proposal = triageProposal()
         let question = comment("q", "What would be the cost hit to CI to do this?", at: at(347))
         let plan = CommentTriage.plan(
-            .init(proposals: [proposal]), issues: [issue("tem-15", .triage, [question])], viewer: owner, now: at(400))
+            .init(proposals: [proposal], pendingMerges: [], ended: [], runs: [], ledgers: [:], found: [], foundSince: nil),
+            issues: [issue("tem-15", .triage, [question])], viewer: owner, now: at(400))
         #expect(plan.answers.count == 1)
         #expect(plan.answers.first?.comment == FreshComment(comment: question))
         #expect(plan.reviews.isEmpty && plan.newAgents.isEmpty)
@@ -131,7 +137,7 @@ struct OwnerCommentTests {
             sessions += 1
             let asked = CommentQuestion(answer, since: at(0))
             _ = try await CommentResponder(linear: linear, specDocumentURL: nil)
-                .answer(asked, about: proposal, with: CommentAnswer(answer: "About 1 minute per run; free on public repositories."), now: at(500))
+                .answer(asked, about: proposal, with: CommentAnswer(kind: nil, answer: "About 1 minute per run; free on public repositories.", revision: nil, title: nil), now: at(500))
         }
         #expect(sessions == 1)
         let replies = await linear.replies
@@ -150,7 +156,8 @@ struct OwnerCommentTests {
         let older = comment("older", "An older note", at: posted.addingTimeInterval(-3600))
         let question = comment("q", "What would be the cost hit to CI to do this? I assume it would be pretty expensive.", at: asked)
         let plan = CommentTriage.plan(
-            .init(proposals: [triageProposal(postedAt: posted)]), issues: [issue("tem-15", .triage, [older, question])],
+            .init(proposals: [triageProposal(postedAt: posted)], pendingMerges: [], ended: [], runs: [], ledgers: [:], found: [], foundSince: nil),
+            issues: [issue("tem-15", .triage, [older, question])],
             viewer: owner, now: asked.addingTimeInterval(600))
         #expect(plan.answers.map(\.comment.comment.id) == ["q"])
         #expect(plan.baselines["tem-15"] == CommentLedger(since: posted))
@@ -162,7 +169,7 @@ struct OwnerCommentTests {
         let reply = comment("r", "Why this wording?", at: at(10), parent: "proposal-comment")
         let elsewhere = comment("e", "Unrelated note", at: at(20))
         let plan = CommentTriage.plan(
-            .init(proposals: [proposal]),
+            .init(proposals: [proposal], pendingMerges: [], ended: [], runs: [], ledgers: [:], found: [], foundSince: nil),
             issues: [issue("spl-4", .unstarted, [comment("proposal-comment", "**superlinear proposes** to update", at: at(0)), reply, elsewhere])],
             viewer: owner, now: at(30))
         #expect(plan.answers.map(\.comment.comment.id) == ["r"])
@@ -181,7 +188,7 @@ struct OwnerCommentTests {
             subject: .proposal(proposal, issueId: "tem-15"), comment: FreshComment(comment: comment("q", "Make it optional", at: at(10))),
             thread: [], key: "tem-15", since: at(0))
         let answered = try await CommentResponder(linear: linear, specDocumentURL: nil).answer(
-            question, about: proposal, with: CommentAnswer(answer: "Made it optional.", revision: "Add an optional Postgres service."),
+            question, about: proposal, with: CommentAnswer(kind: nil, answer: "Made it optional.", revision: "Add an optional Postgres service.", title: nil),
             now: at(20))
         let revised = try #require(answered.revised)
         #expect(revised.status == .pending)
@@ -207,7 +214,7 @@ struct OwnerCommentTests {
             comment: FreshComment(comment: comment("r", "Say newer", at: at(10), parent: "proposal-comment")),
             thread: [], key: "spl-4", since: at(0))
         let answered = try await CommentResponder(linear: linear, specDocumentURL: nil).answer(
-            question, about: proposal, with: CommentAnswer(answer: "Done.", revision: "newer"), now: at(20))
+            question, about: proposal, with: CommentAnswer(kind: nil, answer: "Done.", revision: "newer", title: nil), now: at(20))
         #expect(answered.revised?.payload == .editIssue(oldText: "old", newText: "newer"))
         #expect(await linear.writes == ["update comment proposal-comment: **superlinear proposes** to update this issue's description.", "reply proposal-comment"])
     }
@@ -223,52 +230,372 @@ struct OwnerCommentTests {
 
     // MARK: Agents
 
-    @Test("A comment on an issue with an open pull request queues a review agent with the comment")
+    @Test("A comment on an issue with an open pull request goes to a session; a request it finds goes to a review agent")
     func reviewAgent() {
         let note = comment("c", "Please also handle the empty case", at: at(100))
-        let plan = CommentTriage.plan(.init(pendingMerges: [pending("spl-7")]), issues: [issue("spl-7", .started, [note])], viewer: owner, now: at(200))
-        let review = plan.reviews["spl-7"]
+        let plan = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [pending("spl-7")], ended: [], runs: [], ledgers: [:], found: [], foundSince: nil),
+            issues: [issue("spl-7", .started, [note])], viewer: owner, now: at(200))
+        #expect(plan.issueAnswers.map(\.situation) == [.pullRequest])
+        #expect(plan.reviews.isEmpty && plan.answers.isEmpty && plan.newAgents.isEmpty)
+
+        var ledger = CommentLedger(since: at(0))
+        ledger.wait([FreshComment(comment: note)], issue: "SPL-7")
+        let waited = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [pending("spl-7")], ended: [], runs: [], ledgers: ["spl-7": ledger], found: [], foundSince: nil),
+            issues: [issue("spl-7", .started, [note])],
+            viewer: owner, now: at(300))
+        let review = waited.reviews["spl-7"]
         #expect(review?.fresh == [FreshComment(comment: note)])
         #expect(review?.context.new.map(\.body) == ["Please also handle the empty case"])
-        #expect(plan.answers.isEmpty && plan.newAgents.isEmpty)
+        #expect(waited.issueAnswers.isEmpty)
     }
 
-    @Test("A comment on a started issue whose agent ended without a pull request queues a new agent")
+    @Test("A request on a started issue whose agent ended without a pull request queues a new agent")
     func newAgent() {
         let ended = EndedAgent(issueId: "spl-8", identifier: "SPL-8", branchName: "linear/spl-8", startedAt: at(0))
         let note = comment("c", "Keep going, and open the pull request", at: at(100))
-        let plan = CommentTriage.plan(.init(ended: [ended]), issues: [issue("spl-8", .started, [note])], viewer: owner, now: at(200))
-        #expect(plan.newAgents.map(\.issueId) == ["spl-8"])
-        #expect(plan.newAgents.first?.context.new.map(\.body) == ["Keep going, and open the pull request"])
+        let plan = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [ended], runs: [], ledgers: [:], found: [], foundSince: nil),
+            issues: [issue("spl-8", .started, [note])], viewer: owner, now: at(200))
+        #expect(plan.issueAnswers.map(\.situation) == [.agentEnded])
+        #expect(plan.newAgents.isEmpty)
 
-        let done = CommentTriage.plan(.init(ended: [ended]), issues: [issue("spl-8", .completed, [note])], viewer: owner, now: at(200))
+        var ledger = CommentLedger(since: at(0))
+        ledger.wait([FreshComment(comment: note)], issue: "SPL-8")
+        let waited = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [ended], runs: [], ledgers: ["spl-8": ledger], found: [], foundSince: nil),
+            issues: [issue("spl-8", .started, [note])], viewer: owner, now: at(300))
+        #expect(waited.newAgents.map(\.issueId) == ["spl-8"])
+        #expect(waited.newAgents.first?.context.new.map(\.body) == ["Keep going, and open the pull request"])
+
+        let done = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [ended], runs: [], ledgers: [:], found: [], foundSince: nil),
+            issues: [issue("spl-8", .completed, [note])], viewer: owner, now: at(200))
         #expect(done.newAgents.isEmpty)
         #expect(done.finished == ["spl-8"])
     }
 
-    @Test("A comment made while an agent runs waits, and is handled once it ends")
-    func whileRunning() {
+    @Test("The situation the poll planned is checked against the state when the session ends")
+    func currentSituation() {
+        let run = AgentRun(issueId: "spl-9", identifier: "SPL-9", branchName: "linear/spl-9", sessionId: "s", queuedAt: at(0))
+        var workspaceState = WorkspaceState()
+        #expect(workspaceState.situation(of: "spl-9", planned: .open) == .open)
+        #expect(workspaceState.situation(of: "spl-9", planned: .running) == .running)
+
+        // An agent started since the poll.
+        workspaceState.inFlight["spl-9"] = run
+        #expect(workspaceState.situation(of: "spl-9", planned: .open) == .running)
+
+        // It ended since, with a pull request, or without one.
+        workspaceState.inFlight["spl-9"] = nil
+        workspaceState.pendingMerges["spl-9"] = PendingMerge(run)
+        #expect(workspaceState.situation(of: "spl-9", planned: .running) == .pullRequest)
+        workspaceState.pendingMerges["spl-9"] = nil
+        workspaceState.endedAgents["spl-9"] = EndedAgent(issueId: "spl-9", identifier: "SPL-9", branchName: "linear/spl-9", startedAt: at(0))
+        #expect(workspaceState.situation(of: "spl-9", planned: .running) == .agentEnded)
+        #expect(workspaceState.situation(of: "spl-9", planned: .done) == .done)
+    }
+
+    @Test("A request made while an agent runs waits, reaches the next agent after it ends, and stops no agent")
+    func whileRunning() throws {
         var run = AgentRun(issueId: "spl-9", identifier: "SPL-9", branchName: "linear/spl-9", sessionId: "s", queuedAt: at(0))
         run.launchedAt = at(10)
         run.pid = 1
         let note = comment("c", "Use the new API", at: at(100))
-        let inputs = CommentTriage.Inputs(runs: [run])
-        #expect(CommentTriage.issueIds(inputs).isEmpty)
+        #expect(CommentTriage.issueIds(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [run], ledgers: [:], found: [], foundSince: nil),
+            now: at(1000)).isEmpty)
+        // The poll found the comment: a session decides what it is.
+        let inputs = CommentTriage.Inputs(proposals: [], pendingMerges: [], ended: [], runs: [run], ledgers: [:], found: ["spl-9"], foundSince: at(50))
+        #expect(CommentTriage.issueIds(inputs, now: at(1000)) == ["spl-9"])
         let during = CommentTriage.plan(inputs, issues: [issue("spl-9", .started, [note])], viewer: owner, now: at(200))
+        #expect(during.issueAnswers.map(\.situation) == [.running])
         #expect(during.reviews.isEmpty && during.newAgents.isEmpty)
         #expect(during.baselines["spl-9"] == CommentLedger(since: at(10)))
 
+        // The session found a request: it waits while the agent runs.
+        var ledger = try #require(during.baselines["spl-9"])
+        ledger.wait([FreshComment(comment: note)], issue: "SPL-9")
+        let still = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [run], ledgers: ["spl-9": ledger], found: ["spl-9"], foundSince: nil),
+            issues: [issue("spl-9", .started, [note])],
+            viewer: owner, now: at(250))
+        #expect(still.issueAnswers.isEmpty && still.reviews.isEmpty && still.newAgents.isEmpty)
+        #expect(CommentTriage.issueIds(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [run], ledgers: ["spl-9": ledger], found: [], foundSince: nil),
+            now: at(10 + 2 * 86400)).isEmpty)
+
         // It ended with a pull request: the review agent takes the comment.
         let after = CommentTriage.plan(
-            .init(pendingMerges: [PendingMerge(run)], ledgers: during.baselines), issues: [issue("spl-9", .started, [note])],
+            .init(proposals: [], pendingMerges: [PendingMerge(run)], ended: [], runs: [], ledgers: ["spl-9": ledger], found: [], foundSince: nil),
+            issues: [issue("spl-9", .started, [note])],
             viewer: owner, now: at(300))
         #expect(after.reviews["spl-9"]?.fresh.map(\.comment.id) == ["c"])
 
         // It ended with none: a new agent takes it.
         let ended = EndedAgent(issueId: "spl-9", identifier: "SPL-9", branchName: "linear/spl-9", startedAt: at(10))
         let without = CommentTriage.plan(
-            .init(ended: [ended], ledgers: during.baselines), issues: [issue("spl-9", .started, [note])], viewer: owner, now: at(300))
+            .init(proposals: [], pendingMerges: [], ended: [ended], runs: [], ledgers: ["spl-9": ledger], found: [], foundSince: nil),
+            issues: [issue("spl-9", .started, [note])], viewer: owner, now: at(300))
         #expect(without.newAgents.map(\.issueId) == ["spl-9"])
+
+        // Handed to the agent, it waits no more.
+        ledger.handle([FreshComment(comment: note)], at: at(300))
+        #expect(ledger.waiting.isEmpty)
+        #expect(ledger.fresh([note], viewer: owner).isEmpty)
+    }
+
+    @Test("A request that waited for an agent whose issue was then done goes to a session again")
+    func waitedThenDone() {
+        let note = comment("c", "Use the new API", at: at(100))
+        var ledger = CommentLedger(since: at(0))
+        ledger.wait([FreshComment(comment: note)], issue: "SPL-9")
+        let inputs = CommentTriage.Inputs(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: ["spl-9": ledger], found: [], foundSince: nil)
+        #expect(CommentTriage.issueIds(inputs, now: at(1000)) == ["spl-9"])
+        let plan = CommentTriage.plan(inputs, issues: [issue("spl-9", .completed, [note])], viewer: owner, now: at(300))
+        #expect(plan.issueAnswers.map(\.situation) == [.done])
+        #expect(plan.watched.contains("spl-9"))
+    }
+
+    // MARK: Every issue of the watched teams
+
+    private func handMade(
+        _ comments: [LinearThreadComment], id: LinearIssue.ID = "tem-30", state: LinearStateType = .unstarted,
+        labels: [String] = ["Needs human"]
+    ) -> IssueComments {
+        IssueComments(
+            id: id, identifier: .init(rawValue: id.rawValue.uppercased()), stateType: state, comments: comments, stateName: "Todo",
+            title: "Create the App Store Connect API keys", description: "Steps in the App Store Connect web UI.", labels: labels.map(LinearLabel.Name.init(rawValue:)),
+            teamId: "team", url: "https://linear.app/t/issue/\(id.rawValue.uppercased())")
+    }
+
+    private func editable(_ issue: IssueComments, labels: [String]? = nil) -> EditableIssue {
+        EditableIssue(
+            id: issue.id, identifier: issue.identifier.rawValue, description: issue.description, updatedAt: at(0),
+            labels: labels ?? issue.labels.map(\.rawValue), stateType: issue.stateType, teamId: "team")
+    }
+
+    @Test("A question on a hand-made Needs human issue is answered, and the issue gets the replied label")
+    func handMadeQuestion() async throws {
+        let question = comment("q", "Can these steps be terminal commands or a script?", at: at(100))
+        let tem30 = handMade([question])
+        let plan = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: [:], found: ["tem-30"], foundSince: at(0)),
+            issues: [tem30], viewer: owner, now: at(200))
+        #expect(plan.issueAnswers.count == 1)
+        let answer = try #require(plan.issueAnswers.first)
+        #expect(answer.situation == .open)
+        #expect(plan.baselines["tem-30"] == CommentLedger(since: at(0)))
+
+        let asked = CommentQuestion(answer, since: at(0))
+        let prompt = CommentAnswerPrompt.render(asked, openIssues: [], namedIssues: [])
+        #expect(prompt.contains("TEM-30: Create the App Store Connect API keys"))
+        #expect(prompt.contains("Labels: Needs human"))
+        #expect(prompt.contains("No agent of superlinear's works on it."))
+
+        let linear = CommentLinear(issues: [editable(tem30)])
+        _ = try await CommentResponder(linear: linear, specDocumentURL: nil).answer(
+            asked, situation: .open, with: CommentAnswer(kind: .question, answer: "Yes: `asc keys create`.", revision: nil, title: nil), proposal: nil)
+        #expect(await linear.writes == ["reply q", "label tem-30 \(CommentResponder.repliedLabel)"])
+        #expect(await linear.replies.first?.body == CommentMarker.reply("Yes: `asc keys create`."))
+    }
+
+    @Test("A request for a change on a Todo issue edits its description and says so; a hands-off issue is not changed")
+    func todoChange() async throws {
+        let request = comment("r", "Write the steps as a script", at: at(100))
+        let todo = handMade([request], id: "spl-20", labels: [])
+        let asked = CommentQuestion(
+            try #require(CommentTriage.plan(
+                .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: [:], found: ["spl-20"], foundSince: at(0)),
+                issues: [todo], viewer: owner, now: at(200))
+                .issueAnswers.first),
+            since: at(0))
+        let answer = CommentAnswer(kind: .change, answer: "Made the steps a script.", revision: "Run `scripts/keys.sh`.", title: nil)
+
+        let linear = CommentLinear(issues: [editable(todo)])
+        _ = try await CommentResponder(linear: linear, specDocumentURL: nil).answer(asked, situation: .open, with: answer, proposal: nil)
+        #expect(await linear.issues["spl-20"]?.description == "Run `scripts/keys.sh`.")
+        #expect(await linear.writes == ["edit spl-20", "reply r", "label spl-20 \(CommentResponder.repliedLabel)"])
+        #expect(await linear.replies.first?.body.contains(CommentResponder.describedNote) == true)
+
+        let handsOff = CommentLinear(issues: [editable(todo, labels: [ProposalEngine.handsOffLabel])])
+        _ = try await CommentResponder(linear: handsOff, specDocumentURL: nil).answer(asked, situation: .open, with: answer, proposal: nil)
+        #expect(await handsOff.writes == ["reply r"])
+        #expect(await handsOff.replies.first?.body.contains(CommentResponder.handsOffNote) == true)
+    }
+
+    @Test("A request on a done issue makes one createIssue proposal, linked in the reply")
+    func doneRequest() async throws {
+        let request = comment("r", "Also cover the Fly tokens", at: at(100))
+        let done = handMade([request], id: "spl-12", state: .completed, labels: [])
+        let plan = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: [:], found: ["spl-12"], foundSince: at(0)),
+            issues: [done], viewer: owner, now: at(200))
+        #expect(plan.issueAnswers.map(\.situation) == [.done])
+        let asked = CommentQuestion(try #require(plan.issueAnswers.first), since: at(0))
+        let answer = try CommentAnswer.parse(
+            #"{"kind": "change", "answer": "Done in #12; the Fly tokens are new work.", "title": "Store the Fly deploy tokens", "revision": "Store them in 1Password."}"#)
+
+        let draft = try #require(CommentQuestion.issueDraft(answer, issue: done, comment: request))
+        #expect(draft.payload == .createIssue(
+            teamId: "team", projectId: nil, title: "Store the Fly deploy tokens", description: "Store them in 1Password.", relatedIssueId: "spl-12"))
+        #expect(draft.source.kind == .comment)
+
+        var proposal = Proposal(draft, trust: .review, id: "p-new", now: at(210))
+        proposal.post = ProposalPost(
+            form: .triageIssue, issueId: "new", issueIdentifier: "SPL-60", url: "https://linear.app/t/issue/SPL-60", postedAt: at(220))
+        let linear = CommentLinear(issues: [editable(done)])
+        _ = try await CommentResponder(linear: linear, specDocumentURL: nil).answer(asked, situation: .done, with: answer, proposal: proposal)
+        let body = try #require(await linear.replies.first?.body)
+        #expect(body.contains("Done in #12"))
+        #expect(body.contains("[SPL-60](https://linear.app/t/issue/SPL-60)"))
+        #expect(await linear.writes == ["reply r", "label spl-12 \(CommentResponder.repliedLabel)"])
+
+        // No description from the session: no proposal.
+        #expect(CommentQuestion.issueDraft(CommentAnswer(kind: .change, answer: "?", revision: nil, title: nil), issue: done, comment: request) == nil)
+    }
+
+    @Test("A note such as thanks gets no reply; a request for an agent may have no answer; a question must")
+    func notes() throws {
+        let thanks = try CommentAnswer.parse(#"{"kind": "note", "answer": ""}"#)
+        #expect(thanks.kind == .note && !thanks.replies)
+        let handed = try CommentAnswer.parse(#"{"kind": "change", "answer": "", "revision": null}"#)
+        #expect(!handed.replies)
+        #expect(throws: CommentAnswerError.self) { try CommentAnswer.parse(#"{"kind": "question", "answer": ""}"#) }
+        // Answers from before kinds still read.
+        #expect(try CommentAnswer.parse(#"{"answer": "Yes", "revision": null}"#) == CommentAnswer(kind: nil, answer: "Yes", revision: nil, title: nil))
+    }
+
+    @Test("The 👀 reaction is added once per comment")
+    func reactionOnce() async throws {
+        let linear = CommentLinear(issues: [])
+        let asked = CommentQuestion(
+            subject: .issue(handMade([]), situation: .open), comment: FreshComment(comment: comment("q", "How?", at: at(10))),
+            thread: [], key: "tem-30", since: at(0))
+        let seen = try #require(try await CommentResponder.markSeen(asked, ledger: nil, linear: linear))
+        #expect(seen.reacted == ["q"])
+        let again = try await CommentResponder.markSeen(asked, ledger: try State.decodedLedger(seen), linear: linear)
+        #expect(again == nil)
+        #expect(await linear.writes == ["react q eyes"])
+    }
+
+    @Test("Another user's comment is skipped with a line for the log, as is one on a team not watched")
+    func skippedComments() {
+        let other = comment("o", "Someone else's question", by: "someone", at: at(100))
+        let plan = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: [:], found: ["tem-30"], foundSince: at(0)),
+            issues: [handMade([other])], viewer: owner, now: at(200))
+        #expect(plan.issueAnswers.isEmpty)
+        #expect(plan.skipped == ["Skipping Someone's comment o on TEM-30: only the owner's comments are handled"])
+
+        let hits = [
+            OwnerCommentHit(id: "a", body: "A question", issueId: "tem-30", identifier: "TEM-30", teamId: "team"),
+            OwnerCommentHit(id: "b", body: "Elsewhere", issueId: "x-1", identifier: "X-1", teamId: "other"),
+            OwnerCommentHit(id: "c", body: CommentMarker.reply("Mine"), issueId: "tem-31", identifier: "TEM-31", teamId: "team"),
+            OwnerCommentHit(id: "d", body: "On a document", issueId: nil, identifier: nil, teamId: nil),
+        ]
+        let found = CommentTriage.found(hits, teamIds: ["team"], backfill: false, excluded: [])
+        #expect(found.issueIds == ["tem-30"])
+        #expect(found.skipped == ["Skipping the owner's comment b on X-1: its team is not watched"])
+        // With no teams set, every team is watched.
+        #expect(CommentTriage.found(hits, teamIds: [], backfill: false, excluded: []).issueIds == ["tem-30", "x-1"])
+    }
+
+    @Test("The first poll after the upgrade answers comments the old rule skipped, since the first ledger")
+    func backfill() throws {
+        let formatter = ISO8601DateFormatter()
+        let installed = try #require(formatter.date(from: "2026-10-17T20:00:00Z"))
+        let asked = try #require(formatter.date(from: "2026-10-18T19:32:35Z"))
+        let ledgers: [CommentLedger.Key: CommentLedger] = [
+            "tem-15": CommentLedger(since: installed), "document:spec": CommentLedger(since: installed.addingTimeInterval(60)),
+        ]
+        let start = CommentTriage.backfillStart(ledgers, now: asked.addingTimeInterval(86400))
+        #expect(start == installed)
+        #expect(CommentTriage.backfillStart([:], now: asked) == asked)
+
+        let hits = [
+            OwnerCommentHit(id: "q", body: "Can these be terminal commands?", issueId: "tem-30", identifier: "TEM-30", teamId: "team"),
+            OwnerCommentHit(id: "w", body: "Use the new API", issueId: "tem-7", identifier: "TEM-7", teamId: "team"),
+        ]
+        let found = CommentTriage.found(hits, teamIds: ["team"], backfill: true, excluded: ["tem-7"])
+        #expect(found.issueIds == ["tem-30"])
+
+        let question = comment("q", "Can these be terminal commands?", at: asked)
+        let older = comment("old", "From before superlinear answered comments", at: installed.addingTimeInterval(-60))
+        let plan = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: ledgers, found: found.issueIds, foundSince: start),
+            issues: [handMade([older, question])], viewer: owner,
+            now: asked.addingTimeInterval(86400))
+        #expect(plan.issueAnswers.map(\.comment.comment.id) == ["q"])
+    }
+
+    @Test("An issue whose ledger is less than a day old is read again, so a comment queued at a restart is found")
+    func recentLedgers() {
+        let ledgers: [CommentLedger.Key: CommentLedger] = ["tem-30": CommentLedger(since: at(100))]
+        #expect(CommentTriage.issueIds(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: ledgers, found: [], foundSince: nil),
+            now: at(200)) == ["tem-30"])
+        #expect(CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: ledgers, found: [], foundSince: nil),
+            issues: [], viewer: owner, now: at(200)).watched == ["tem-30"])
+        #expect(CommentTriage.issueIds(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: ledgers, found: [], foundSince: nil),
+            now: at(100 + CommentTriage.recentLedger + 1)).isEmpty)
+    }
+
+    @Test("A comment superlinear replied to already is not answered again when its issue is watched anew")
+    func repliedAlready() {
+        let question = comment("q", "How?", at: at(100))
+        let reply = comment("r", CommentMarker.reply("Like this."), at: at(110), parent: "q")
+        let plan = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: [:], found: ["tem-30"], foundSince: at(0)),
+            issues: [handMade([question, reply])], viewer: owner, now: at(200))
+        #expect(plan.issueAnswers.isEmpty)
+    }
+
+    @Test("Ledgers of issues handled lately are kept for edits; waiting comments decode from the state file")
+    func ledgerRetention() throws {
+        var ledger = CommentLedger(since: at(0))
+        ledger.handle([FreshComment(comment: comment("q", "How?", at: at(10)))], at: at(20))
+        ledger.wait([FreshComment(comment: comment("w", "Use the new API", at: at(30)))], issue: "SPL-9")
+        ledger.reacted = ["q"]
+        let decoded = try State.decodedLedger(ledger)
+        #expect(decoded == ledger)
+
+        var old = CommentLedger(since: at(0))
+        old.handle([FreshComment(comment: comment("q", "How?", at: at(10)))], at: at(20))
+        let recent = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: ["recent": old], found: [], foundSince: nil),
+            issues: [], viewer: owner, now: at(86400))
+        #expect(recent.watched.contains("recent"))
+        let stale = CommentTriage.plan(
+            .init(proposals: [], pendingMerges: [], ended: [], runs: [], ledgers: ["stale": old], found: [], foundSince: nil),
+            issues: [], viewer: owner, now: at(20 + CommentTriage.ledgerRetention + 1))
+        #expect(!stale.watched.contains("stale"))
+
+        let json = #"{"since":"2026-10-17T00:00:00Z","handled":{"q":"How?"}}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let fromBefore = try decoder.decode(CommentLedger.self, from: Data(json.utf8))
+        #expect(fromBefore.waiting.isEmpty && fromBefore.reacted.isEmpty && fromBefore.handledAt == nil)
+    }
+
+    @Test("superlinear status lists the requests that wait for an agent")
+    func statusWaiting() {
+        var state = State()
+        state.waitComments(
+            [FreshComment(comment: LinearThreadComment(
+                id: "w", body: "Use the new API\nand say why", userId: owner, createdAt: at(30), url: "https://linear.app/c/w"))],
+            key: "spl-9", since: at(0), identifier: "SPL-9", workspace: "w")
+        let waiting = state.waitingComments(workspace: "w")
+        #expect(waiting.map(\.summary) == ["Use the new API"])
+        let report = WorkspaceReport(name: "w", entries: [], commentsWaiting: waiting, warnings: [])
+        let text = report.rendered(now: at(100))
+        #expect(text.contains(WorkspaceReport.Heading.commentsWaiting))
+        #expect(text.contains("SPL-9  Use the new API"))
+        #expect(text.contains("https://linear.app/c/w"))
+        #expect(report.filtered(to: [.done]).commentsWaiting.isEmpty)
     }
 
     // MARK: Rules
@@ -282,7 +609,7 @@ struct OwnerCommentTests {
             comment("applied", "**Applied 2026-10-17T20:31:00Z.** superlinear proposed to cancel this issue.", at: at(40)),
         ]
         let plan = CommentTriage.plan(
-            .init(proposals: [triageProposal()], pendingMerges: [pending("spl-7")]),
+            .init(proposals: [triageProposal()], pendingMerges: [pending("spl-7")], ended: [], runs: [], ledgers: [:], found: [], foundSince: nil),
             issues: [issue("tem-15", .triage, comments), issue("spl-7", .started, comments)], viewer: owner, now: at(100))
         #expect(plan.answers.isEmpty)
         #expect(plan.reviews.isEmpty)
@@ -292,7 +619,7 @@ struct OwnerCommentTests {
     func edited() {
         var ledger = CommentLedger(since: at(0))
         let original = comment("c", "Make it optional", at: at(10))
-        ledger.handle([FreshComment(comment: original)])
+        ledger.handle([FreshComment(comment: original)], at: at(20))
         #expect(ledger.fresh([original], viewer: owner).isEmpty)
 
         var changed = original
@@ -308,7 +635,7 @@ struct OwnerCommentTests {
     func oldComments() {
         let old = comment("old", "A question from before the upgrade", at: at(-100))
         let plan = CommentTriage.plan(
-            .init(proposals: [triageProposal()], pendingMerges: [pending("spl-7")]),
+            .init(proposals: [triageProposal()], pendingMerges: [pending("spl-7")], ended: [], runs: [], ledgers: [:], found: [], foundSince: nil),
             issues: [issue("tem-15", .triage, [old]), issue("spl-7", .started, [old])], viewer: owner, now: at(100))
         #expect(plan.answers.isEmpty && plan.reviews.isEmpty)
     }
@@ -318,15 +645,17 @@ struct OwnerCommentTests {
         let question = comment("q", "How long would it take?", at: at(10))
         var state = State()
         let first = CommentTriage.plan(
-            .init(proposals: [triageProposal()]), issues: [issue("tem-15", .triage, [question])], viewer: owner, now: at(20))
+            .init(proposals: [triageProposal()], pendingMerges: [], ended: [], runs: [], ledgers: [:], found: [], foundSince: nil),
+            issues: [issue("tem-15", .triage, [question])], viewer: owner, now: at(20))
         state.recordCommentWatch(first, workspace: "w")
         #expect(first.answers.count == 1)
-        state.handleComments(first.answers.map(\.comment), key: "tem-15", since: at(0), workspace: "w")
+        state.handleComments(first.answers.map(\.comment), key: "tem-15", since: at(0), workspace: "w", now: at(30))
 
         let restarted = try State.decoded(from: state.encoded())
         let ledgers = restarted.workspaces["w"]?.commentLedgers ?? [:]
         let again = CommentTriage.plan(
-            .init(proposals: [triageProposal()], ledgers: ledgers), issues: [issue("tem-15", .triage, [question])], viewer: owner, now: at(30))
+            .init(proposals: [triageProposal()], pendingMerges: [], ended: [], runs: [], ledgers: ledgers, found: [], foundSince: nil),
+            issues: [issue("tem-15", .triage, [question])], viewer: owner, now: at(30))
         #expect(again.answers.isEmpty)
     }
 
@@ -403,9 +732,9 @@ struct OwnerCommentTests {
 
     @Test("The session's answer is read alone, in a code block, or after other text")
     func parse() throws {
-        #expect(try CommentAnswer.parse(#"{"answer": "Yes.", "revision": null}"#) == CommentAnswer(answer: "Yes."))
-        #expect(try CommentAnswer.parse("Here it is:\n```json\n{\"answer\": \"Yes.\", \"revision\": \"new\"}\n```") == CommentAnswer(answer: "Yes.", revision: "new"))
-        #expect(try CommentAnswer.parse("I looked. {\"answer\": \"Yes.\", \"revision\": \"  \"}") == CommentAnswer(answer: "Yes."))
+        #expect(try CommentAnswer.parse(#"{"answer": "Yes.", "revision": null}"#) == CommentAnswer(kind: nil, answer: "Yes.", revision: nil, title: nil))
+        #expect(try CommentAnswer.parse("Here it is:\n```json\n{\"answer\": \"Yes.\", \"revision\": \"new\"}\n```") == CommentAnswer(kind: nil, answer: "Yes.", revision: "new", title: nil))
+        #expect(try CommentAnswer.parse("I looked. {\"answer\": \"Yes.\", \"revision\": \"  \"}") == CommentAnswer(kind: nil, answer: "Yes.", revision: nil, title: nil))
         #expect(throws: CommentAnswerError.self) { try CommentAnswer.parse("No JSON here") }
         #expect(throws: CommentAnswerError.self) { try CommentAnswer.parse(#"{"answer": " "}"#) }
         #expect(throws: CommentAnswerError.self) { try CommentAnswer.parse(#"{"answer": "*Written by superlinear.*\n\n"}"#) }
@@ -426,7 +755,7 @@ struct OwnerCommentTests {
             subject: .proposal(triageProposal(), issueId: "tem-15"),
             comment: FreshComment(comment: comment("q", "Add (a)", at: at(10))), thread: [], key: "tem-15", since: at(0))
         let reply = try await CommentResponder(linear: linear, specDocumentURL: nil)
-            .answer(question, about: triageProposal(), with: CommentAnswer(answer: answer.answer, revision: "New text"), now: at(20))
+            .answer(question, about: triageProposal(), with: CommentAnswer(kind: nil, answer: answer.answer, revision: "New text", title: nil), now: at(20))
         #expect(reply.revised != nil)
         let body = try #require(await linear.replies.first?.body)
         #expect(body.components(separatedBy: CommentMarker.line).count == 2)
@@ -457,7 +786,7 @@ struct OwnerCommentTests {
         #expect(text.contains("Source: agent session session for TEM-3"))
         #expect(text.contains("Earlier note"))
         #expect(text.contains("What would it cost?"))
-        #expect(text.contains(#"{"answer": "<your answer>", "revision": null}"#))
+        #expect(text.contains(#"{"kind": "question", "answer": "<your answer>", "revision": null}"#))
         #expect(text.contains("the whole new description of the proposed issue"))
         #expect(text.contains("superlinear adds the line \"\(CommentMarker.line)\" at the start of the reply"))
         #expect(!CommentSessionRunner.allowedTools.contains("Write"))
@@ -549,5 +878,15 @@ struct OwnerCommentTests {
         let found = StartedIssueSweep.endedWithoutPullRequest(
             issues: issues, pullRequests: [], processed: ["a", "b", "c"], tracked: ["b"]) { $0 == "SPL-3" }
         #expect(found.map(\.identifier) == ["SPL-1"])
+    }
+}
+
+private extension State {
+    /// The ledger as the state file keeps it, written and read again.
+    static func decodedLedger(_ ledger: CommentLedger) throws -> CommentLedger? {
+        var state = State()
+        state.workspaces["w"] = WorkspaceState()
+        state.workspaces["w"]?.commentLedgers["k"] = ledger
+        return try State.decoded(from: state.encoded()).workspaces["w"]?.commentLedgers["k"]
     }
 }
