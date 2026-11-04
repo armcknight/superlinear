@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] 2026-11-03
+
 ### Added
 
 - The owner's comments on every issue of the watched teams are handled,
