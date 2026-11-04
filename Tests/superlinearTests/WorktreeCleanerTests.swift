@@ -28,4 +28,34 @@ struct WorktreeCleanerTests {
         ])
         #expect(WorktreeCleaner.linkedWorktrees("worktree /repo\nHEAD 1\nbranch refs/heads/main\n").isEmpty)
     }
+
+    // `work finish` deletes ignored files before it finds changes, so the
+    // sweep must see them first; ignored files alone are not changes.
+    @Test("A worktree with an edit or an untracked file has changes; one with only ignored files does not")
+    func changes() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: repo) }
+        func git(_ arguments: String...) { _ = Git.run(Array(arguments), in: repo) }
+        git("init", "-q")
+        git("config", "user.email", "t@t")
+        git("config", "user.name", "t")
+        try "a\n".write(toFile: "\(repo)/a.txt", atomically: true, encoding: .utf8)
+        try ".env\n".write(toFile: "\(repo)/.gitignore", atomically: true, encoding: .utf8)
+        git("add", ".")
+        git("commit", "-q", "-m", "c")
+        #expect(!WorktreeCleaner.hasChanges(worktree: repo))
+
+        try "KEY=1\n".write(toFile: "\(repo)/.env", atomically: true, encoding: .utf8)
+        #expect(!WorktreeCleaner.hasChanges(worktree: repo))
+
+        try "b\n".write(toFile: "\(repo)/b.txt", atomically: true, encoding: .utf8)
+        #expect(WorktreeCleaner.hasChanges(worktree: repo))
+        try FileManager.default.removeItem(atPath: "\(repo)/b.txt")
+
+        try "changed\n".write(toFile: "\(repo)/a.txt", atomically: true, encoding: .utf8)
+        #expect(WorktreeCleaner.hasChanges(worktree: repo))
+
+        #expect(WorktreeCleaner.hasChanges(worktree: "\(repo)/missing"))
+    }
 }

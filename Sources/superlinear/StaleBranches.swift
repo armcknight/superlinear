@@ -148,3 +148,16 @@ enum StaleBranches {
         }
     }
 }
+
+extension StaleBranches {
+    /// The stale branches that can be removed without losing anything: those
+    /// whose pull request merged, with no commit after the head it merged.
+    /// Branches with no pull request, or a closed one, or commits a merge left
+    /// out, stay for you to decide.
+    static func removable(_ stale: [StaleBranch]) -> [StaleBranch] {
+        stale.filter { branch in
+            guard case .merged = branch.reason else { return false }
+            return branch.unpushedCommits == 0
+        }
+    }
+}

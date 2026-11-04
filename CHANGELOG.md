@@ -309,6 +309,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Merged branches and their worktrees that a merge could not remove, such
+  as worktrees with submodules, are removed later: the worktree sweep, at
+  startup and every 24 hours, runs `work finish` on each local branch whose
+  pull request merged and that has no commit after the merged head. Branches
+  with no pull request, a closed one, commits a merge left out, or a worktree
+  with changes not committed, are left for you, as `status` lists them.
 - A comment in a pull request's conversation that starts with an
   @-mention, such as the `@sentry review` an agent posts as you, no longer
   queues a review agent that has nothing to do.

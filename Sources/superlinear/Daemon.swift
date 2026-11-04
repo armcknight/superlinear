@@ -97,6 +97,9 @@ actor Daemon {
             group.addTask {
                 await self.runClaudePauseLoop()
             }
+            group.addTask {
+                await self.runWorktreeSweepLoop()
+            }
             try await group.waitForAll()
         }
     }
@@ -604,19 +607,43 @@ actor Daemon {
         }
     }
 
-    /// The startup sweep: cleans every worktree whose agent is not running and
+    /// The worktree sweep, at startup and then every `worktreeSweepInterval`:
+    /// removes merged branches and their worktrees that nothing would be lost
+    /// with, then cleans every other worktree whose agent is not running and
     /// whose build output has sat idle, and DerivedData of removed worktrees.
     /// Runs in the background, so polling starts at once.
     private func sweepWorktrees() {
         for workspace in config.workspaces {
             let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+            let workspaceState = state.workspaces[workspace.name]
             let running = Set(state.runs(workspace: workspace.name).filter { !$0.isQueued }.map(\.branchName))
+            // Queued and running agents, and merge watches, which remove their
+            // own worktree when the merge is seen.
+            let tracked = Set(state.runs(workspace: workspace.name).map(\.branchName))
+                .union((workspaceState?.pendingMerges.values).map { $0.map(\.branchName) } ?? [])
             Task.detached {
-                let (freed, errors) = await WorktreeCleaner().sweep(repoPath: repoPath, running: running)
+                let cleaner = WorktreeCleaner()
+                let (removed, removeErrors) = await cleaner.finishMerged(repoPath: repoPath, skip: tracked)
+                for line in removed { await self.log(line, workspace: workspace.name) }
+                for line in removeErrors where await self.firstReport("[\(workspace.name)] \(line)") {
+                    await self.log(line + " (logged once; tried again at each sweep)", workspace: workspace.name)
+                }
+                let (freed, errors) = await cleaner.sweep(repoPath: repoPath, running: running)
                 for line in freed + errors {
                     await self.log(line, workspace: workspace.name)
                 }
             }
+        }
+    }
+
+    /// How often the worktree sweep runs again after startup.
+    static let worktreeSweepInterval: TimeInterval = 24 * 60 * 60
+
+    private func runWorktreeSweepLoop() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(Self.worktreeSweepInterval))
+            guard !Task.isCancelled else { return }
+            sweepWorktrees()
         }
     }
 

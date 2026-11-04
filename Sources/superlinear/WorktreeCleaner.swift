@@ -44,6 +44,57 @@ struct WorktreeCleaner: Sendable {
         try await summary(of: ["work", "clean", branch], in: repoPath)
     }
 
+    /// The retroactive part of the startup sweep: removes, with `work
+    /// finish`, each local branch and worktree whose pull request merged and
+    /// that has no commit after the merged head, unless an agent's run or a
+    /// merge watch has it (`skip`). The removal at a merge is tried once, so
+    /// this also clears those it could not do, such as worktrees with
+    /// submodules before `work` could remove them. `work finish` itself
+    /// refuses a worktree with changes, or with submodule work that would be
+    /// lost, and that refusal is returned as an error.
+    func finishMerged(repoPath: String, skip: Set<String>) async -> (removed: [String], errors: [String]) {
+        let protected = StaleBranches.protectedBranches(repoPath: repoPath)
+        let branches = StaleBranches.localBranches(repoPath: repoPath).filter { !protected.contains($0.name) }
+        guard !branches.isEmpty else { return ([], []) }
+        let pullRequests: [PullRequest]
+        do {
+            pullRequests = try PullRequest.list(in: repoPath)
+        } catch {
+            return ([], ["Could not list pull requests to find merged branches: \(error)"])
+        }
+        let stale = StaleBranches.find(
+            branches: branches, pullRequests: pullRequests, protected: protected, inFlight: skip,
+            worktreesRoot: "\(repoPath)/worktrees"
+        )
+        let worktrees = Dictionary(uniqueKeysWithValues: branches.compactMap { b in b.worktree.map { (b.name, $0) } })
+        var removed: [String] = []
+        var errors: [String] = []
+        for branch in StaleBranches.removable(StaleBranches.countUnpushed(stale, repoPath: repoPath)) {
+            // `work finish` deletes a worktree's ignored files, such as .env,
+            // before it finds that the worktree has changes and stops, so a
+            // worktree with changes, in it or in its submodules, is left alone.
+            if let worktree = worktrees[branch.branch], Self.hasChanges(worktree: worktree) {
+                errors.append("Left merged \(branch.branch) in place: its worktree has changes not committed (\(worktree))")
+                continue
+            }
+            do {
+                _ = try await checker.run(["work", "finish", branch.branch], in: repoPath)
+                removed.append("Removed \(branch.branch), \(branch.detail())")
+            } catch {
+                errors.append("Could not remove merged \(branch.branch): \(error)")
+            }
+        }
+        return (removed, errors)
+    }
+
+    /// Whether the worktree has changes that are not committed, in its files
+    /// or its submodules. Ignored files do not count. A worktree git cannot
+    /// read counts as having changes.
+    static func hasChanges(worktree: String) -> Bool {
+        guard let status = Git.run(["status", "--porcelain", "--ignore-submodules=none"], in: worktree) else { return true }
+        return !status.isEmpty
+    }
+
     /// The startup sweep for one repository. `running` holds the branches of
     /// agents running now, whose worktrees are left alone. Returns `work`'s
     /// summary lines for what was freed.

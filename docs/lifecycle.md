@@ -189,7 +189,7 @@ When the limit is used up, or a payment fails, GitHub starts no jobs in private 
 <a id="merge"></a>
 ## The merge and completion
 
-When the pull request merges, the issue moves to its team's first completed state in Linear, unless it is already completed, canceled or marked a duplicate, and `work finish <branch>` removes the worktree and the local branch. If Linear cannot be updated, the next poll tries again. With Linear's GitHub integration installed for the repository, Linear moves the issue to done when the pull request merges, by default; without it, the daemon does.
+When the pull request merges, the issue moves to its team's first completed state in Linear, unless it is already completed, canceled or marked a duplicate, and `work finish <branch>` removes the worktree and the local branch. If that fails, the daemon's [worktree sweep](operations.md#disk-space) tries again at its next run. If Linear cannot be updated, the next poll tries again. With Linear's GitHub integration installed for the repository, Linear moves the issue to done when the pull request merges, by default; without it, the daemon does.
 
 A task is completed only when both its pull request is merged and its Linear issue is done.
 
