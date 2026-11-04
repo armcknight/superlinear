@@ -17,6 +17,15 @@ struct ConfigTests {
         let workspace = try #require(config.workspaces.first)
         #expect(workspace.teamIds == [])
         #expect(workspace.pollIntervalSeconds == 60)
+        #expect(workspace.githubIssues == false)
+    }
+
+    @Test("GitHub issues are worked on only when asked")
+    func githubIssues() throws {
+        let config = try decode("""
+        {"workspaces": [{"name": "w", "apiKey": "k", "repoPath": "~/r", "githubIssues": true}]}
+        """)
+        #expect(try #require(config.workspaces.first).githubIssues)
     }
 
     @Test("The agent limit defaults, and cannot go below one")

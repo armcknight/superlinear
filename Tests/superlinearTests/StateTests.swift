@@ -83,13 +83,25 @@ struct StateTests {
             issueId: "SL-3", identifier: "SL-3", branchName: "c",
             reviewsHandledThrough: Date(timeIntervalSince1970: 1_700_000_200), conflictAttempt: nil, stack: nil
         ), workspace: "w")
+        state.recordRun(AgentRun(
+            issueId: "github:4", identifier: "GH-4", branchName: "github/gh-4", sessionId: "t", gitHubIssue: 4
+        ), workspace: "w")
+        state.awaitMerge(
+            PendingMerge(issueId: "github:5", identifier: "GH-5", branchName: "github/gh-5", reviewsHandledThrough: nil, conflictAttempt: nil, stack: nil, gitHubIssue: 5),
+            workspace: "w"
+        )
+        let since = state.gitHubIssuesSince(workspace: "w", now: Date(timeIntervalSince1970: 1_700_000_200))
         try state.save(to: url)
 
         let restored = State.load(from: url)
         #expect(restored.isProcessed("SL-1", workspace: "w"))
         #expect(restored.lastPollTimestamp(workspace: "w").timeIntervalSince1970 == 1_700_000_000)
-        #expect(restored.runs(workspace: "w") == state.runs(workspace: "w"))
-        #expect(restored.pendingMerges(workspace: "w") == state.pendingMerges(workspace: "w"))
+        let byIssue = { (runs: [AgentRun]) in runs.sorted { $0.issueId < $1.issueId } }
+        #expect(byIssue(restored.runs(workspace: "w")) == byIssue(state.runs(workspace: "w")))
+        let mergesByIssue = { (merges: [PendingMerge]) in merges.sorted { $0.issueId < $1.issueId } }
+        #expect(mergesByIssue(restored.pendingMerges(workspace: "w")) == mergesByIssue(state.pendingMerges(workspace: "w")))
+        var reloaded = restored
+        #expect(reloaded.gitHubIssuesSince(workspace: "w") == since)
     }
 
     @Test("A state file from before runs were tracked still loads")

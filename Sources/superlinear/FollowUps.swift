@@ -18,9 +18,10 @@ struct FollowUp: Codable, Sendable, Equatable {
     /// The proposal of a new issue for it, in the team of the issue the agent
     /// worked on. `relatedIssueId` is the issue it follows from: its
     /// `relatedIssue`, or else the agent's own issue, so that a match with an
-    /// open issue becomes a relation between the two.
+    /// open issue becomes a relation between the two. A GitHub issue's agent
+    /// has no Linear issue, so its follow-up may follow from none.
     func draft(
-        teamId: LinearTeam.ID, relatedIssueId: LinearIssue.ID, agentIssue: LinearIssue.Identifier, source: ProposalSource
+        teamId: LinearTeam.ID, relatedIssueId: LinearIssue.ID?, agentIssue: LinearIssue.Identifier, source: ProposalSource
     ) -> ProposalDraft {
         var lines = [description, "", "Kind: \(kind.rawValue)", "", "Evidence:", "", evidence]
         if let relatedIssue { lines += ["", "Related to \(relatedIssue)."] }

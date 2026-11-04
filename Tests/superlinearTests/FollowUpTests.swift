@@ -122,6 +122,18 @@ struct FollowUpProposalTests {
         #expect(draft.source == source)
     }
 
+    @Test("A GitHub issue's follow-up has no Linear issue to follow from")
+    func draftWithoutIssue() {
+        let draft = entry.draft(teamId: "team", relatedIssueId: nil, agentIssue: "GH-3", source: source)
+        guard case .createIssue(let teamId, _, _, let description, let related) = draft.payload else {
+            Issue.record("Expected a new issue, got \(draft.payload)")
+            return
+        }
+        #expect(teamId == "team")
+        #expect(related == nil)
+        #expect(description.contains("Found by the agent working on GH-3."))
+    }
+
     @Test("The source names the agent's session, issue and pull request")
     func sourceLinks() throws {
         #expect(source.line == "Source: agent session abc for SPL-12, https://github.com/o/r/pull/7")
@@ -282,6 +294,20 @@ struct AddedTodoTests {
         #expect(teamId == "team")
         #expect(related == "i12")
         #expect(description.contains("`Sources/A.swift:11`"))
+    }
+
+    @Test("A TODO from a GitHub issue's pull request follows from no Linear issue")
+    func draftWithoutIssue() {
+        let todos = AddedTodos.parse(diff: diff)
+        let pullRequest = PullRequest(number: 7, url: "https://github.com/o/r/pull/7", state: .merged)
+        let draft = AddedTodos.draft(todos[0], pullRequest: pullRequest, agentIssue: "GH-3", issueId: nil, teamId: "team")
+        #expect(draft.source == ProposalSource(kind: .pullRequest, value: pullRequest.url, issue: "GH-3"))
+        guard case .createIssue(let teamId, _, _, _, let related) = draft.payload else {
+            Issue.record("Expected a new issue")
+            return
+        }
+        #expect(teamId == "team")
+        #expect(related == nil)
     }
 
     @Test("A long title is cut short")

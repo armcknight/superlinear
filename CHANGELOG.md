@@ -279,6 +279,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   running or queued, under their own "Addressing review" section, and their
   pull requests under "Awaiting review" as "agent addressing review" in place
   of GitHub's review state.
+- Agents can work from the repository's GitHub issues too. With
+  `"githubIssues": true` on a workspace, each poll queues the open issues you
+  opened since the option went on, and any issue on which you comment
+  `/superlinear-do`. Their agents read the issue with `gh`, open a pull
+  request that closes it, and the daemon closes the issue on the merge if
+  GitHub has not. Review and conflict agents on their pull requests also
+  read the issue from GitHub. GitHub issue polls pause with the rest of the
+  GitHub work during a rate limit. Their agents' follow-ups, and the TODOs
+  their merged pull requests add, are proposed in the workspace's proposal
+  team, as they have no Linear issue. `superlinear status` lists them as
+  `GH-<number>`.
 
 ### Removed
 

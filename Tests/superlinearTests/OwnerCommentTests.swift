@@ -276,6 +276,14 @@ struct OwnerCommentTests {
         #expect(done.finished == ["spl-8"])
     }
 
+    @Test("A GitHub issue's pull request awaiting its merge has no comments to read in Linear")
+    func gitHubIssue() {
+        let inputs = CommentTriage.Inputs(
+            proposals: [], pendingMerges: [pending("spl-8"), pending(GitHubIssue.issueId(number: 4))], ended: [], runs: [],
+            ledgers: [:], found: [], foundSince: nil)
+        #expect(CommentTriage.issueIds(inputs, now: at(0)) == ["spl-8"])
+    }
+
     @Test("The situation the poll planned is checked against the state when the session ends")
     func currentSituation() {
         let run = AgentRun(issueId: "spl-9", identifier: "SPL-9", branchName: "linear/spl-9", sessionId: "s", queuedAt: at(0))

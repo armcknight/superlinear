@@ -14,6 +14,7 @@ This is a config with every key set, each to its default where it has one:
       "repoPath": "~/Code/my-repo",
       "teamIds": [],
       "pollIntervalSeconds": 60,
+      "githubIssues": false,
       "selection": "new",
       "readyStates": ["unstarted"],
       "humanLabels": ["Needs human", "Spike"],
@@ -49,6 +50,7 @@ Each workspace pairs one Linear workspace with one repository. List several to w
 | <a id="repo-path"></a>`repoPath` | required | `"repoPath": "~/Code/statustician"` | The repository agents work in. `~` is expanded. |
 | <a id="team-ids"></a>`teamIds` | `[]` | `"teamIds": ["210bd4b4-545d-459e-9e58-4207281ca011"]` | The Linear team IDs to watch. Empty means every team in the workspace. |
 | <a id="poll-interval-seconds"></a>`pollIntervalSeconds` | `60` | `"pollIntervalSeconds": 120` | Seconds between polls. |
+| <a id="github-issues"></a>`githubIssues` | `false` | `"githubIssues": true` | Also work on the repository's GitHub issues that you open or comment `/superlinear-do` on. See [GitHub issues](lifecycle.md#github-issues). |
 | <a id="selection"></a>`selection` | `"new"` | `"selection": "ready"` | Which issues start agents: `"new"`, those created since the last poll, or `"ready"`, every issue in `readyStates`. See [Selection](lifecycle.md#selection). |
 | <a id="ready-states"></a>`readyStates` | `["unstarted"]` | `"readyStates": ["unstarted", "backlog"]` | In `ready` mode, the Linear state types that mean "build this": any of `triage`, `backlog`, `unstarted`, `started`, `completed`, `canceled` and `duplicate`, usually `unstarted` (Todo). A state name such as `"Todo"` is an error. |
 | <a id="human-labels"></a>`humanLabels` | `["Needs human", "Spike"]` | `"humanLabels": ["Needs human"]` | Labels that keep an issue for a person: no agent starts on it. Matched in any case. See [The ready gate](lifecycle.md#ready-gate). |

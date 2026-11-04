@@ -392,10 +392,11 @@ enum CommentTriage {
     /// pull request, those with requests that wait for an agent, those the
     /// poll found the owner's comments on, and those with recent ledgers.
     /// Issues with a run are left until it ends, unless a proposal waits on
-    /// them or the owner commented.
+    /// them or the owner commented. GitHub issues have no comments in Linear.
     static func issueIds(_ inputs: Inputs, now: Date) -> [LinearIssue.ID] {
         let running = Set(inputs.runs.map(\.issueId))
-        let agents = inputs.pendingMerges.map { LinearIssue.ID(rawValue: $0.issueId) } + inputs.ended.map(\.issueId)
+        let agents = inputs.pendingMerges.filter { GitHubIssue.number(ofIssueId: $0.issueId) == nil }
+            .map { LinearIssue.ID(rawValue: $0.issueId) } + inputs.ended.map(\.issueId)
         let waiting = inputs.ledgers.filter { !$0.key.isDocument && !$0.value.waiting.isEmpty }
             .map { LinearIssue.ID(rawValue: $0.key.rawValue) }
         let recent = inputs.ledgers.filter { !$0.key.isDocument && isRecent($0.value, now: now) }

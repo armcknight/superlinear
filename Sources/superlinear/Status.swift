@@ -288,7 +288,9 @@ struct WorkspaceReport: Sendable {
         for category: TaskCategory, run: AgentRun?, issue: LinearIssueStatus?,
         pullRequest: PullRequest?, pending: PendingMerge?, runner: AgentRunner
     ) -> String? {
-        let linearState = issue.map { "Linear: \($0.state.name)" }
+        let issueState = issue.map { issue in
+            "\(GitHubIssue.number(ofIssueId: issue.id) == nil ? "Linear" : "GitHub"): \(issue.state.name)"
+        }
         switch category {
         case .running:
             guard let run else { return nil }
@@ -319,11 +321,11 @@ struct WorkspaceReport: Sendable {
             let stacked = (run?.stack ?? pending?.stack).map { ", stacked on #\($0.number)" } ?? ""
             return (pullRequest.isDraft == true ? "\(pullRequest.url) (draft)" : pullRequest.url) + stacked
         case .merged:
-            return [pullRequest?.url, linearState].compactMap { $0 }.joined(separator: ", ")
+            return [pullRequest?.url, issueState].compactMap { $0 }.joined(separator: ", ")
         case .completed:
             return pullRequest?.url
         case .noPullRequest, .closed:
-            return [linearState, pullRequest.map { "\($0.url) (closed)" }].compactMap { $0 }.joined(separator: ", ")
+            return [issueState, pullRequest.map { "\($0.url) (closed)" }].compactMap { $0 }.joined(separator: ", ")
         }
     }
 
@@ -533,11 +535,25 @@ struct WorkspaceReport: Sendable {
 
         var issues: [LinearIssueStatus] = []
         let ids = Array(workspaceState.processedIssueIds.union(workspaceState.inFlight.keys)).sorted()
-        if !ids.isEmpty {
+        let linearIds = ids.filter { GitHubIssue.number(ofIssueId: $0) == nil }
+        if !linearIds.isEmpty {
             do {
-                issues = try await LinearClient(apiKey: workspace.apiKey).fetchIssues(ids: ids)
+                issues = try await LinearClient(apiKey: workspace.apiKey).fetchIssues(ids: linearIds)
             } catch {
                 warnings.append("Could not fetch issues from Linear: \(error)")
+            }
+        }
+        // GitHub's issues stand in for Linear's, for those the daemon took
+        // from GitHub.
+        var gitHubIssues: [LinearIssueStatus] = []
+        if workspace.githubIssues || linearIds.count < ids.count {
+            let repoPath = NSString(string: workspace.repoPath).expandingTildeInPath
+            do {
+                gitHubIssues = try GitHubIssueClient.allIssues(in: repoPath).map(\.status)
+                let processed = Set(ids)
+                issues += gitHubIssues.filter { processed.contains($0.id) }
+            } catch {
+                warnings.append("Could not list GitHub issues: \(error)")
             }
         }
 
@@ -560,7 +576,7 @@ struct WorkspaceReport: Sendable {
             let open = try ReviewablePullRequest.listOpen(in: repoPath)
             let identifiers = Array(Set(open.flatMap(\.issueIdentifiers)))
             let linked = try await LinearClient(apiKey: workspace.apiKey).fetchIssues(identifiers: identifiers)
-            reviews = ReviewEntry.entries(pullRequests: open, issues: linked)
+            reviews = ReviewEntry.entries(pullRequests: open, issues: linked + gitHubIssues)
             if !workspaceState.pendingMerges.isEmpty {
                 do {
                     let login = try await PullRequestChecker().viewerLogin(repoPath: repoPath)

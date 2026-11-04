@@ -16,10 +16,12 @@ struct PendingMerge: Codable, Sendable, Equatable {
     var conflictAttempt: ConflictAttempt?
     /// The pull request this one is stacked on, if any.
     var stack: StackBase?
+    /// The GitHub issue's number, when the issue comes from GitHub.
+    var gitHubIssue: Int? = nil
 
     init(
         issueId: String, identifier: LinearIssue.Identifier, branchName: String,
-        reviewsHandledThrough: Date?, conflictAttempt: ConflictAttempt?, stack: StackBase?
+        reviewsHandledThrough: Date?, conflictAttempt: ConflictAttempt?, stack: StackBase?, gitHubIssue: Int? = nil
     ) {
         self.issueId = issueId
         self.identifier = identifier
@@ -27,6 +29,7 @@ struct PendingMerge: Codable, Sendable, Equatable {
         self.reviewsHandledThrough = reviewsHandledThrough
         self.conflictAttempt = conflictAttempt
         self.stack = stack
+        self.gitHubIssue = gitHubIssue
     }
 
     /// The watch that follows a run once its agent ends. Reviews from after
@@ -40,7 +43,8 @@ struct PendingMerge: Codable, Sendable, Equatable {
             issueId: run.issueId, identifier: run.identifier, branchName: run.branchName,
             reviewsHandledThrough: run.conflict.map { $0.reviewsHandledThrough ?? started } ?? started,
             conflictAttempt: run.conflict?.attempt,
-            stack: run.stack
+            stack: run.stack,
+            gitHubIssue: run.gitHubIssue
         )
     }
 }
