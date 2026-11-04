@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `make uninstall` removes the local build from `~/.local/bin`, so a Homebrew
+  install takes over. When the launch agent runs the local build, it removes
+  the agent and registers it again from the Homebrew binary, if the cask is
+  installed. Config, state and logs are kept.
+
 ## [2.0.0] 2026-11-03
 
 ### Added

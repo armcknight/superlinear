@@ -22,7 +22,7 @@ make load     # build, install into ~/.local/bin, then register the agent
 
 `superlinear install` writes `~/Library/LaunchAgents/com.armcknight.superlinear.plist` and loads it, pointing the agent at whichever binary you ran it from. Re-running it reloads. `superlinear uninstall` stops the agent and removes it. With the cask, the daemon follows Homebrew itself: within a minute of `brew upgrade` it exits and launchd restarts it on the new version, and a few minutes after `brew uninstall` it removes its own agent. A daemon that launchd runs from `~/.local/bin/superlinear` is restarted by `make install` itself, with `launchctl kickstart -k`, as launchd's own restart of a replaced binary can fail with `OS_REASON_CODESIGNING`. Agents in flight carry on through the restart.
 
-If both installs are present, the local build wins. `superlinear install` from the Homebrew binary leaves an agent that runs an existing local build in place; pass `--force` to replace it. The agent runs one binary, so a new build of the other kind does not restart the daemon: to switch, run `superlinear install` from the binary to switch to. `superlinear status` shows which binary the daemon runs. `superlinear --version` tells them apart: a local build appends the commit, as in `1.1.0+d0a4bc2`, plus `.dirty` when the working tree had uncommitted or untracked changes.
+If both installs are present, the local build wins. `superlinear install` from the Homebrew binary leaves an agent that runs an existing local build in place; pass `--force` to replace it. The agent runs one binary, so a new build of the other kind does not restart the daemon: to switch, run `superlinear install` from the binary to switch to. To go back to Homebrew from a local build, run `make uninstall`: it deletes `~/.local/bin/superlinear` and moves the agent to the Homebrew binary. `superlinear status` shows which binary the daemon runs. `superlinear --version` tells them apart: a local build appends the commit, as in `1.1.0+d0a4bc2`, plus `.dirty` when the working tree had uncommitted or untracked changes.
 
 The agent is generated rather than checked in because launchd expands neither `~` nor `$HOME` inside a plist — every path in it has to be absolute, so no single file can serve every machine. The cask cannot do this either: Homebrew has no launchd support for casks, and the `service` stanza installs to `~/Library/Services`, which is the Services menu, not an agent.
 
@@ -136,6 +136,7 @@ The command reads the state file, asks Linear for the state of each issue the da
 | `test` | Run the unit tests. |
 | `check-docs` | Check that the relative links and anchors in the README and `docs/` resolve, and that `docs/anchors.md` lists every anchor. CI runs it. |
 | `install` | Build with the git commit in the version, then copy the binary to `~/.local/bin`. Warns when another `superlinear` shadows it in `PATH`. |
+| `uninstall` | Remove the local build from `~/.local/bin`. If the launch agent runs it, remove the agent, then register it again from the Homebrew binary when the cask is installed. Config, state and logs are kept. |
 | `load` | Install, then register and start the launch agent. |
 | `unload` | Stop the launch agent and remove it. |
 | `reload` | `unload` then `load`. |
