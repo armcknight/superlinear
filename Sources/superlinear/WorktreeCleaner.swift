@@ -45,7 +45,7 @@ struct WorktreeCleaner: Sendable {
     }
 
     /// The retroactive part of the startup sweep: removes, with `work
-    /// finish`, each local branch and worktree whose pull request merged and
+    /// finish`, each worktree under `worktrees/` and its branch whose pull request merged and
     /// that has no commit after the merged head, unless an agent's run or a
     /// merge watch has it (`skip`). The removal at a merge is tried once, so
     /// this also clears those it could not do, such as worktrees with
@@ -69,7 +69,10 @@ struct WorktreeCleaner: Sendable {
         let worktrees = Dictionary(uniqueKeysWithValues: branches.compactMap { b in b.worktree.map { (b.name, $0) } })
         var removed: [String] = []
         var errors: [String] = []
-        for branch in StaleBranches.removable(StaleBranches.countUnpushed(stale, repoPath: repoPath)) {
+        // Only branches with a worktree that `work start` made: a branch alone
+        // takes no space, and may be one of your own.
+        let made = stale.filter { worktrees[$0.branch]?.hasPrefix("\(repoPath)/worktrees/") == true }
+        for branch in StaleBranches.removable(StaleBranches.countUnpushed(made, repoPath: repoPath)) {
             // `work finish` deletes a worktree's ignored files, such as .env,
             // before it finds that the worktree has changes and stops, so a
             // worktree with changes, in it or in its submodules, is left alone.
