@@ -35,6 +35,33 @@ struct StaleBranchesTests {
         #expect(stale.map(\.pullRequestHead) == ["sha2", "sha3", nil])
     }
 
+    // The sweep removes these with no one asking, so only a merged branch with
+    // nothing after its merged head may be among them.
+    @Test("Only merged branches with nothing after the merged head are removable")
+    func removable() {
+        func stale(_ name: String, _ reason: StaleBranch.Reason, unpushed: Int) -> StaleBranch {
+            StaleBranch(branch: name, reason: reason, hasWorktree: true, lastCommit: nil, unpushedCommits: unpushed)
+        }
+        let all = [
+            stale("merged", .merged(1), unpushed: 0),
+            stale("merged-then-more", .merged(2), unpushed: 2),
+            stale("closed", .closed(3), unpushed: 0),
+            stale("no-pr", .noPullRequest, unpushed: 0),
+        ]
+        #expect(StaleBranches.removable(all).map(\.branch) == ["merged"])
+    }
+
+    // A merge watch removes its own worktree, so the sweep leaves it alone.
+    @Test("Branches the daemon tracks are not stale, so the sweep does not remove them")
+    func trackedSkipped() {
+        let stale = StaleBranches.find(
+            branches: [branch("watched"), branch("done")],
+            pullRequests: [pullRequest(1, "watched", .merged), pullRequest(2, "done", .merged)],
+            protected: [], inFlight: ["watched"], worktreesRoot: root
+        )
+        #expect(StaleBranches.removable(stale).map(\.branch) == ["done"])
+    }
+
     // A branch of your own, without a worktree work made, is left alone.
     @Test("A branch without a pull request is stale only with a worktree under worktrees/")
     func ownBranches() {
